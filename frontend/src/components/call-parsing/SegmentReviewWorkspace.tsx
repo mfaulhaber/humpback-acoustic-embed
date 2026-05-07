@@ -696,7 +696,6 @@ export function SegmentReviewWorkspace({
         <div className="rounded-md border">
           <ReviewToolbar
             region={selectedRegion}
-            eventCount={regionEvents.length}
             pendingChangeCount={pendingChangeCount}
             isDirty={isDirty}
             addMode={addMode}

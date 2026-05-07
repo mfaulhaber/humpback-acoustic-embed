@@ -61,12 +61,8 @@ interface DetectionSourcePickerProps {
 
 function EmbeddingCell({
   status,
-  onEmbed,
-  isEmbedding,
 }: {
   status: DetectionEmbeddingJobStatus | undefined;
-  onEmbed: () => void;
-  isEmbedding: boolean;
 }) {
   if (!status) return <span className="text-muted-foreground">—</span>;
 
@@ -330,13 +326,6 @@ export function DetectionSourcePicker({
                         {showEmbeddingColumns ? (
                           <EmbeddingCell
                             status={embStatus}
-                            onEmbed={() =>
-                              enqueueMutation.mutate({
-                                detectionJobId: j.id,
-                                modelVersion,
-                              })
-                            }
-                            isEmbedding={enqueueMutation.isPending}
                           />
                         ) : (
                           <span className="text-muted-foreground">—</span>

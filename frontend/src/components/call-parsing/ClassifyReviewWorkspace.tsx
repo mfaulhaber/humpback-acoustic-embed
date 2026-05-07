@@ -11,7 +11,6 @@ import {
   useUpsertEventBoundaryCorrections,
   useEventClassifierModels,
   useCreateClassifierTrainingJob,
-  useCreateClassificationJob,
 } from "@/hooks/queries/useCallParsing";
 import { useHydrophones } from "@/hooks/queries/useClassifier";
 import { regionTileUrl } from "@/api/client";
@@ -217,8 +216,7 @@ export function ClassifyReviewWorkspace({
   const { data: segJobs = [] } = useSegmentationJobs();
   const { data: regionJobs = [] } = useRegionDetectionJobs();
   const { data: hydrophones = [] } = useHydrophones();
-  const { data: classifierModels = [], refetch: refetchModels } =
-    useEventClassifierModels();
+  const { refetch: refetchModels } = useEventClassifierModels();
 
   const completeJobs = useMemo(
     () => classifyJobs.filter((j) => j.status === "complete"),
@@ -290,7 +288,6 @@ export function ClassifyReviewWorkspace({
     setPendingBoundaryCorrections(new Map());
     setCurrentEventIndex(0);
     setActiveTrainingJobId(null);
-    setTrainingStartedAt(null);
     setRetrainError(null);
   }, [selectedJobId]);
 
@@ -691,16 +688,6 @@ export function ClassifyReviewWorkspace({
     setCurrentEventIndex((i) => Math.min(navigableEvents.length - 1, i + 1));
   }, [navigableEvents.length]);
 
-  // Mark as negative (type correction)
-  const markNegative = useCallback(() => {
-    if (!currentEvent) return;
-    setPendingCorrections((prev) => {
-      const next = new Map(prev);
-      next.set(currentEvent.eventId, null);
-      return next;
-    });
-  }, [currentEvent]);
-
   // Delete event (boundary correction)
   const handleDeleteEvent = useCallback(() => {
     if (!currentEvent) return;
@@ -945,12 +932,10 @@ export function ClassifyReviewWorkspace({
   const [activeTrainingJobId, setActiveTrainingJobId] = useState<string | null>(
     null,
   );
-  const [trainingStartedAt, setTrainingStartedAt] = useState<Date | null>(null);
   const [retrainError, setRetrainError] = useState<string | null>(null);
   const [correctionsOnly, setCorrectionsOnly] = useState(true);
 
   const createTraining = useCreateClassifierTrainingJob();
-  const createClassifyJob = useCreateClassificationJob();
 
   const handleRetrain = useCallback(() => {
     if (!selectedJobId) return;
@@ -967,7 +952,6 @@ export function ClassifyReviewWorkspace({
       {
         onSuccess: (data) => {
           setActiveTrainingJobId(data.id);
-          setTrainingStartedAt(new Date());
           toast({
             title: "Training job started",
             description: "The model will train in the background.",
@@ -992,35 +976,6 @@ export function ClassifyReviewWorkspace({
     const interval = setInterval(() => void refetchModels(), 3000);
     return () => clearInterval(interval);
   }, [isPolling, refetchModels]);
-
-  const newModelReady = useMemo(() => {
-    if (!activeTrainingJobId || !trainingStartedAt) return null;
-    // Find a model created after we started training
-    return (
-      classifierModels.find((m) => {
-        return new Date(m.created_at) > trainingStartedAt;
-      }) ?? null
-    );
-  }, [activeTrainingJobId, trainingStartedAt, classifierModels]);
-
-  const handleReclassify = useCallback(() => {
-    if (!segJob || !newModelReady) return;
-    createClassifyJob.mutate(
-      {
-        event_segmentation_job_id: segJob.id,
-        vocalization_model_id: newModelReady.id,
-      },
-      {
-        onSuccess: () => {
-          toast({
-            title: "Classification job created",
-            description:
-              "Select it from the job list when complete.",
-          });
-        },
-      },
-    );
-  }, [segJob, newModelReady, createClassifyJob]);
 
   // Label for job selector
   const jobLabel = useCallback(

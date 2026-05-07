@@ -5,8 +5,10 @@ import json
 import uuid
 from pathlib import Path
 
-import pyarrow as pa
-import pyarrow.parquet as pq
+from tests.helpers.embeddings import (
+    write_detection_embeddings_parquet,
+    write_legacy_embedding_set_parquet,
+)
 
 # Epoch anchors for test fixtures.
 # 2024-06-15T08:00:00Z — generic base for non-filename-anchored tests.
@@ -24,32 +26,6 @@ def _autoresearch_fixture_dir() -> Path:
         / "autoresearch"
         / "explicit-negatives"
     )
-
-
-def _write_embedding_set_parquet(path: Path, rows: list[list[float]]) -> None:
-    table = pa.table(
-        {
-            "row_index": pa.array(list(range(len(rows))), type=pa.int32()),
-            "embedding": pa.array(rows, type=pa.list_(pa.float32())),
-        }
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, str(path))
-
-
-def _write_detection_embeddings_parquet(
-    path: Path,
-    row_ids: list[str],
-    rows: list[list[float]],
-) -> None:
-    table = pa.table(
-        {
-            "row_id": pa.array(row_ids, type=pa.string()),
-            "embedding": pa.array(rows, type=pa.list_(pa.float32())),
-        }
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, str(path))
 
 
 async def _import_promotable_candidate(client, app_settings) -> dict:
@@ -71,8 +47,8 @@ async def _import_promotable_candidate(client, app_settings) -> dict:
     )
     artifact_dir = app_settings.storage_root / "candidate-fixtures" / "artifacts"
 
-    _write_embedding_set_parquet(pos_path, [[2.0, 2.0], [2.5, 2.5]])
-    _write_detection_embeddings_parquet(
+    write_legacy_embedding_set_parquet(pos_path, [[2.0, 2.0], [2.5, 2.5]])
+    write_detection_embeddings_parquet(
         det_path,
         row_ids=["neg-1", "neg-2"],
         rows=[[-2.0, -2.0], [-2.5, -2.5]],
@@ -2266,7 +2242,7 @@ async def _seed_detection_manifest_fixtures(app_settings):
         app_settings.storage_root, dj_id, model_version
     )
     emb_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_detection_embeddings_parquet(
+    write_detection_embeddings_parquet(
         emb_path,
         row_ids=["r1", "r2"],
         rows=[[0.1] * 4, [0.2] * 4],
@@ -2869,7 +2845,7 @@ async def _seed_legacy_embedding_fixtures(
     legacy_emb_path = (
         detection_dir(app_settings.storage_root, dj_id) / "detection_embeddings.parquet"
     )
-    _write_detection_embeddings_parquet(
+    write_detection_embeddings_parquet(
         legacy_emb_path,
         row_ids=["r1", "r2"],
         rows=[[0.1] * 4, [0.2] * 4],

@@ -4,11 +4,7 @@ import asyncio
 import json
 import queue
 import threading
-from pathlib import Path
 from types import SimpleNamespace
-
-import pyarrow as pa
-import pyarrow.parquet as pq
 
 from humpback.database import create_session_factory
 from humpback.models.classifier import (
@@ -25,32 +21,10 @@ from humpback.workers.classifier_worker import (
     run_hydrophone_detection_job,
     run_training_job,
 )
-
-
-def _write_embedding_set_parquet(path: Path, rows: list[list[float]]) -> None:
-    table = pa.table(
-        {
-            "row_index": pa.array(list(range(len(rows))), type=pa.int32()),
-            "embedding": pa.array(rows, type=pa.list_(pa.float32())),
-        }
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, str(path))
-
-
-def _write_detection_embeddings_parquet(
-    path: Path,
-    row_ids: list[str],
-    rows: list[list[float]],
-) -> None:
-    table = pa.table(
-        {
-            "row_id": pa.array(row_ids, type=pa.string()),
-            "embedding": pa.array(rows, type=pa.list_(pa.float32())),
-        }
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, str(path))
+from tests.helpers.embeddings import (
+    write_detection_embeddings_parquet,
+    write_legacy_embedding_set_parquet,
+)
 
 
 async def test_hydrophone_extraction_uses_archive_playback_builder_with_default_cache_path(
@@ -885,11 +859,11 @@ async def test_run_training_job_from_autoresearch_candidate_manifest(
         / det_job_id
         / "detection_embeddings.parquet"
     )
-    _write_embedding_set_parquet(
+    write_legacy_embedding_set_parquet(
         pos_path,
         rows=[[2.0, 2.0], [2.5, 2.5]],
     )
-    _write_detection_embeddings_parquet(
+    write_detection_embeddings_parquet(
         det_path,
         row_ids=["neg-1", "neg-2"],
         rows=[[-2.0, -2.0], [-2.5, -2.5]],
@@ -1068,20 +1042,14 @@ async def test_run_training_job_candidate_replay_with_pca_and_calibration(
     n_pos = 30
     n_neg = 30
 
-    # Write positive embedding-set parquet
+    # Write positive legacy embedding-set parquet
     pos_path = tmp_path / "embeddings" / "pos.parquet"
     pos_embeddings = rng.randn(n_pos, dim).astype(np.float32)
-    pos_table = pa.table(
-        {
-            "row_index": pa.array(list(range(n_pos)), type=pa.int32()),
-            "embedding": pa.array(
-                [row.tolist() for row in pos_embeddings],
-                type=pa.list_(pa.float32(), dim),
-            ),
-        }
+    write_legacy_embedding_set_parquet(
+        pos_path,
+        rows=[row.tolist() for row in pos_embeddings],
+        fixed_size=True,
     )
-    pos_path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(pos_table, str(pos_path))
 
     # Write negative detection parquet (row_id format)
     det_job_id = "det-job-pca"
@@ -1093,7 +1061,7 @@ async def test_run_training_job_candidate_replay_with_pca_and_calibration(
     )
     neg_embeddings = rng.randn(n_neg, dim).astype(np.float32) - 2.0
     neg_row_ids = [f"neg-{i}" for i in range(n_neg)]
-    _write_detection_embeddings_parquet(
+    write_detection_embeddings_parquet(
         det_path,
         row_ids=neg_row_ids,
         rows=[row.tolist() for row in neg_embeddings],
@@ -1248,17 +1216,11 @@ async def test_run_training_job_candidate_replay_linear_svm_verified(
     # metrics converge to perfect classification on the train split.
     pos_path = tmp_path / "embeddings" / "pos.parquet"
     pos_embeddings = rng.randn(n_pos, dim).astype(np.float32) + 3.0
-    pos_table = pa.table(
-        {
-            "row_index": pa.array(list(range(n_pos)), type=pa.int32()),
-            "embedding": pa.array(
-                [row.tolist() for row in pos_embeddings],
-                type=pa.list_(pa.float32(), dim),
-            ),
-        }
+    write_legacy_embedding_set_parquet(
+        pos_path,
+        rows=[row.tolist() for row in pos_embeddings],
+        fixed_size=True,
     )
-    pos_path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(pos_table, str(pos_path))
 
     det_job_id = "det-job-svm"
     det_path = (
@@ -1269,7 +1231,7 @@ async def test_run_training_job_candidate_replay_linear_svm_verified(
     )
     neg_embeddings = rng.randn(n_neg, dim).astype(np.float32) - 3.0
     neg_row_ids = [f"neg-{i}" for i in range(n_neg)]
-    _write_detection_embeddings_parquet(
+    write_detection_embeddings_parquet(
         det_path,
         row_ids=neg_row_ids,
         rows=[row.tolist() for row in neg_embeddings],
@@ -1545,7 +1507,7 @@ async def test_run_training_job_detection_manifest(
 
     # Write detection embeddings at the model-versioned path.
     emb_path = detection_embeddings_path(settings.storage_root, dj.id, model_version)
-    _write_detection_embeddings_parquet(
+    write_detection_embeddings_parquet(
         emb_path,
         row_ids=["r1", "r2", "r3", "r4"],
         rows=[

@@ -11,9 +11,6 @@ to verify that the worker:
 from __future__ import annotations
 
 import json
-import math
-import struct
-import wave
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -35,23 +32,10 @@ from humpback.storage import (
     ensure_dir,
 )
 from humpback.workers.detection_embedding_worker import run_detection_embedding_job
+from tests.helpers.audio import write_sine_wav
 
 _BASE_EPOCH = 1635756600.0
 _SAMPLE_RATE = 32000
-
-
-def _write_wav(path: Path, duration: float = 10.0, sample_rate: int = _SAMPLE_RATE):
-    n_samples = int(sample_rate * duration)
-    samples = [
-        int(32767 * math.sin(2 * math.pi * 440 * i / sample_rate))
-        for i in range(n_samples)
-    ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(struct.pack(f"<{n_samples}h", *samples))
 
 
 _ROW_COUNTER = 0
@@ -109,7 +93,12 @@ async def test_full_mode_writes_model_versioned_parquet(app_settings):
 
     audio_folder = app_settings.storage_root / "audio"
     audio_folder.mkdir(parents=True, exist_ok=True)
-    _write_wav(audio_folder / "20211101T085000Z.wav", duration=10.0)
+    write_sine_wav(
+        audio_folder / "20211101T085000Z.wav",
+        duration_sec=10.0,
+        sample_rate=_SAMPLE_RATE,
+        amplitude=1.0,
+    )
 
     det_job_id = await _setup_detection_job(sf, app_settings, audio_folder)
 
@@ -165,7 +154,12 @@ async def test_full_mode_idempotent_when_complete(app_settings):
 
     audio_folder = app_settings.storage_root / "audio"
     audio_folder.mkdir(parents=True, exist_ok=True)
-    _write_wav(audio_folder / "20211101T085000Z.wav", duration=10.0)
+    write_sine_wav(
+        audio_folder / "20211101T085000Z.wav",
+        duration_sec=10.0,
+        sample_rate=_SAMPLE_RATE,
+        amplitude=1.0,
+    )
 
     det_job_id = await _setup_detection_job(sf, app_settings, audio_folder)
 

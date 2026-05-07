@@ -11,7 +11,7 @@ The web UI is a React SPA in the `frontend/` directory, built with:
 | Styling | Tailwind CSS |
 | Component Library | shadcn/ui (Radix primitives, copy-paste model in `frontend/src/components/ui/`) |
 | Server State | TanStack Query (polling, caching, mutations) |
-| Charts | react-plotly.js (wraps Plotly.js basic dist) |
+| Charts | react-plotly.js / Plotly.js |
 | Icons | lucide-react |
 | API Client | Hand-rolled typed fetch wrapper (`frontend/src/api/client.ts`) |
 
@@ -20,11 +20,13 @@ The web UI is a React SPA in the `frontend/` directory, built with:
 **Sequence Models retained components:**
 - `ContinuousEmbeddingJobsPage`, `ContinuousEmbeddingCreateForm`, `ContinuousEmbeddingJobTable`, and `ContinuousEmbeddingDetailPage` are the active Sequence Models UI surface.
 - `frontend/src/api/sequenceModels.ts` exports only Continuous Embedding types, fetchers, and TanStack Query hooks.
-- `DiscreteSequenceBar` remains as a generic state/token timeline strip. Props include `mode: "rows" | "single-row"`, `numLabels`, `colorPalette`, and `tooltipFormatter?`.
-- `RegionNavBar` and `SpanNavBar` remain as reusable navigation controls for future region/span visualizations.
+- `DiscreteSequenceBar` remains as a generic future-use state/token timeline strip. Props include `mode: "rows" | "single-row"`, `numLabels`, `colorPalette`, and `tooltipFormatter?`.
+- `RegionNavBar` and `SpanNavBar` remain as reusable future-use navigation controls for region/span visualizations.
 - `LABEL_COLORS` + `labelColor(idx, total)` in `constants.ts` provide deterministic colors for state or motif visualizations.
-- `MotifHighlightOverlay`, `MotifTimelineLegend`, and `colorForMotifKey()` remain as visualization primitives. They use local timeline/motif types and do not import retired Sequence Models API types.
-- `CollapsiblePanelCard` remains available as a generic collapsible card helper for future Sequence Models panels.
+- `MotifHighlightOverlay`, `MotifTimelineLegend`, and `colorForMotifKey()` remain as generic visualization primitives. They use local timeline/motif types and do not import retired Sequence Models API types.
+- `CollapsiblePanelCard` remains available as a generic future-use collapsible card helper.
+- `frontend/src/components/timeline/index.ts` is retained as a generic timeline barrel for future shared timeline imports.
+- These generic primitives are intentionally retained despite no active route importing all of them; their focused tests are the reuse contract.
 
 **Timeline tiles**: Frontend consumers keep the existing URL contracts:
 classifier timelines request `timelineTileUrl`, and region-backed timelines
@@ -61,14 +63,14 @@ frontend/
     ├── components/
     │   ├── ui/                  (shadcn primitives)
     │   ├── layout/              (AppShell, TopNav, SideNav, Breadcrumbs)
-    │   ├── call-parsing/        (DetectionPage, RegionJobForm, RegionJobTable, RegionJobSummary, RegionDetectionTimeline, SegmentPage, SegmentJobForm, SegmentJobTable, SegmentJobDetail, SegmentReviewWorkspace, RegionTable, ClassifyReviewWorkspace, WindowClassifyReviewWorkspace, EventDetailPanel, RegionTable, SegmentTrainingPage, FeedbackTrainingJobTable, SegmentModelTable)
-    │   ├── classifier/          (TrainingTab, AutoresearchCandidatesSection, HydrophoneTab, LabelingTab, EmbeddingsPage, DetectionTab, BulkDeleteDialog)
+    │   ├── call-parsing/        (DetectionPage, RegionJobForm, RegionJobTable, RegionDetectionTimeline, SegmentPage, SegmentJobForm, SegmentJobTable, SegmentJobDetail, SegmentReviewWorkspace, RegionTable, ClassifyReviewWorkspace, ClassifyTrainingPage, ClassifyTrainingJobTable, WindowClassifyPage, WindowClassifyReviewWorkspace, WindowClassifyJobForm, WindowClassifyJobTable, EventDetailPanel, SegmentTrainingPage, TrainingDatasetTable, SegmentModelTable, ClassifyModelTable)
+    │   ├── classifier/          (TrainingTab, AutoresearchCandidatesSection, HydrophoneTab, LabelingTab, EmbeddingsPage, DetectionSourcePicker, ActiveEmbeddingBanner, BulkDeleteDialog)
     │   ├── vocalization/        (VocalizationTrainingTab, VocabularyManager, VocalizationTrainForm, VocalizationModelList, VocalizationLabelingTab, SourceSelector, InferencePanel, LabelingWorkspace, RetrainFooter, TrainingDataView, VocalizationClusteringPage, VocalizationClusteringDetail)
-    │   ├── sequence-models/     (ContinuousEmbeddingJobsPage, ContinuousEmbeddingCreateForm, ContinuousEmbeddingJobTable, ContinuousEmbeddingDetailPage, DiscreteSequenceBar, RegionNavBar, SpanNavBar, MotifTimelineLegend, CollapsiblePanelCard)
+    │   ├── sequence-models/     (ContinuousEmbeddingJobsPage, ContinuousEmbeddingCreateForm, ContinuousEmbeddingJobTable, ContinuousEmbeddingDetailPage, plus retained generic primitives: DiscreteSequenceBar, RegionNavBar, SpanNavBar, MotifTimelineLegend, CollapsiblePanelCard)
     │   ├── timeline/            (ClassifierTimeline, Spectrogram, TileCanvas, TimelineProvider, PlaybackControls, ZoomSelector, OverlayToggles, EditToggle, EditToolbar, EventNav, DetectionOverlay, VocalizationOverlay, RegionOverlay, RegionEditOverlay, EventBarOverlay, RegionBandOverlay, MotifHighlightOverlay, LabelEditor, LabelToolbar, VocLabelEditor, VocLabelPopover, VocLabelToolbar, etc.)
     │   ├── admin/               (AdminTab, ModelRegistry, ModelScanner, DatabaseAdmin)
-    │   └── shared/              (FolderTree, FolderBrowser, StatusBadge, MessageToast, DateRangePickerUtc)
-    └── utils/                   (format.ts, audio.ts)
+    │   └── shared/              (ComputeDeviceBadge, DatabaseErrorBanner, FolderBrowser, StatusBadge, MessageToast, DateRangePickerUtc)
+    └── utils/                   (format.ts)
 ```
 
 ## Dev Workflow

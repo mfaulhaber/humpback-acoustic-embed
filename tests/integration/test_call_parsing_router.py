@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
-import struct
-import wave
 from pathlib import Path
 
 import numpy as np
@@ -38,22 +35,9 @@ from humpback.schemas.call_parsing import (
     SegmentationFeatureConfig,
 )
 from humpback.storage import ensure_dir
+from tests.helpers.audio import write_sine_wav
 
 BASE = "/call-parsing"
-
-
-def _write_sine_wav(path: Path, duration_sec: float, sample_rate: int = 16000) -> None:
-    n = int(sample_rate * duration_sec)
-    samples = [
-        int(32767 * 0.7 * math.sin(2 * math.pi * 440 * i / sample_rate))
-        for i in range(n)
-    ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "w") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        wf.writeframes(struct.pack(f"<{n}h", *samples))
 
 
 def _synthetic_classifier() -> Pipeline:
@@ -83,7 +67,7 @@ async def _seed_source_fixtures(
         storage_root = Path(app_settings.storage_root)
         audio_dir = storage_root / "audio_src"
         audio_path = audio_dir / "router-fixture.wav"
-        _write_sine_wav(audio_path, duration_sec=12.0)
+        write_sine_wav(audio_path, duration_sec=12.0)
         filename = audio_path.name
         source_folder: str | None = str(audio_dir)
         vector_dim = 64
@@ -267,7 +251,7 @@ async def _seed_complete_pass1_and_segmentation_model(
     storage_root = Path(app_settings.storage_root)
     audio_dir = storage_root / "audio_src"
     audio_path = audio_dir / "seg-fixture.wav"
-    _write_sine_wav(audio_path, duration_sec=4.0)
+    write_sine_wav(audio_path, duration_sec=4.0)
 
     checkpoint_path, model_config = _save_tiny_checkpoint(storage_root)
 

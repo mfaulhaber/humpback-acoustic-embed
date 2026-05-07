@@ -4,8 +4,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
@@ -16,32 +14,10 @@ from humpback.classifier.trainer import (
     map_autoresearch_config_to_training_parameters,
     train_binary_classifier,
 )
-
-
-def _write_embedding_set_parquet(path: Path, rows: list[list[float]]) -> None:
-    table = pa.table(
-        {
-            "row_index": pa.array(list(range(len(rows))), type=pa.int32()),
-            "embedding": pa.array(rows, type=pa.list_(pa.float32())),
-        }
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, str(path))
-
-
-def _write_detection_embeddings_parquet(
-    path: Path,
-    row_ids: list[str],
-    rows: list[list[float]],
-) -> None:
-    table = pa.table(
-        {
-            "row_id": pa.array(row_ids, type=pa.string()),
-            "embedding": pa.array(rows, type=pa.list_(pa.float32())),
-        }
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, str(path))
+from tests.helpers.embeddings import (
+    write_detection_embeddings_parquet,
+    write_legacy_embedding_set_parquet,
+)
 
 
 def test_train_basic():
@@ -457,11 +433,11 @@ def test_load_manifest_split_embeddings_supports_mixed_sources(
     """Manifest loader should resolve row_index and row_id training examples."""
     es_path = tmp_path / "embedding_set.parquet"
     det_path = tmp_path / "detections" / "job-1" / "detection_embeddings.parquet"
-    _write_embedding_set_parquet(
+    write_legacy_embedding_set_parquet(
         es_path,
         rows=[[2.0, 2.0], [2.5, 2.5]],
     )
-    _write_detection_embeddings_parquet(
+    write_detection_embeddings_parquet(
         det_path,
         row_ids=["neg-1", "neg-2"],
         rows=[[-2.0, -2.0], [-2.5, -2.5]],
@@ -521,11 +497,11 @@ def test_load_manifest_split_data_returns_full_context(tmp_path: Path) -> None:
 
     es_path = tmp_path / "embedding_set.parquet"
     det_path = tmp_path / "detections" / "job-1" / "detection_embeddings.parquet"
-    _write_embedding_set_parquet(
+    write_legacy_embedding_set_parquet(
         es_path,
         rows=[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]],
     )
-    _write_detection_embeddings_parquet(
+    write_detection_embeddings_parquet(
         det_path,
         row_ids=["neg-1", "neg-2", "neg-3"],
         rows=[[-1.0, -2.0], [-3.0, -4.0], [-5.0, -6.0]],

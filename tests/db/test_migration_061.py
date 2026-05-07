@@ -2,56 +2,24 @@
 
 from __future__ import annotations
 
-import asyncio
 import sqlite3
 from pathlib import Path
 
 from alembic import command
-from alembic.config import Config
 
 import humpback.models.call_parsing  # noqa: F401  - register tables
 import humpback.models.sequence_models  # noqa: F401
-from humpback.database import Base, create_engine
-
-
-def _db_url(db_path: Path) -> str:
-    return f"sqlite+aiosqlite:///{db_path}"
-
-
-async def _create_db(db_path: Path) -> None:
-    engine = create_engine(_db_url(db_path))
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-    finally:
-        await engine.dispose()
-
-
-def _alembic_config(db_path: Path) -> Config:
-    repo_root = Path(__file__).resolve().parents[2]
-    config = Config(str(repo_root / "alembic.ini"))
-    config.set_main_option("script_location", str(repo_root / "alembic"))
-    config.set_main_option("sqlalchemy.url", _db_url(db_path))
-    return config
-
-
-def _columns(db_path: Path, table: str) -> dict[str, dict]:
-    """Return ``{name: {nullable, default, type}}`` from ``PRAGMA table_info``."""
-    conn = sqlite3.connect(db_path)
-    try:
-        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    finally:
-        conn.close()
-    return {
-        r[1]: {"type": r[2], "notnull": bool(r[3]), "default": r[4], "pk": bool(r[5])}
-        for r in rows
-    }
+from tests.helpers.migrations import (
+    alembic_config,
+    create_current_schema_db_sync,
+    sqlite_columns,
+)
 
 
 def _stamp_pre_061(db_path: Path) -> None:
     """Build the schema at revision 060 (pre-061) for the round-trip."""
-    asyncio.run(_create_db(db_path))
-    cfg = _alembic_config(db_path)
+    create_current_schema_db_sync(db_path)
+    cfg = alembic_config(db_path)
     command.stamp(cfg, "060")
     # Roll the schema back to match 060: drop the columns 061 will add,
     # so the upgrade has work to do. ``Base.metadata.create_all`` already
@@ -122,15 +90,15 @@ def test_upgrade_adds_new_columns(tmp_path: Path) -> None:
     db_path = tmp_path / "test.db"
     _stamp_pre_061(db_path)
 
-    cols_pre = _columns(db_path, "continuous_embedding_jobs")
+    cols_pre = sqlite_columns(db_path, "continuous_embedding_jobs")
     assert "region_detection_job_id" not in cols_pre
     assert "chunk_size_seconds" not in cols_pre
     assert cols_pre["window_size_seconds"]["notnull"] is True
 
-    cfg = _alembic_config(db_path)
+    cfg = alembic_config(db_path)
     command.upgrade(cfg, "061")
 
-    cols_post = _columns(db_path, "continuous_embedding_jobs")
+    cols_post = sqlite_columns(db_path, "continuous_embedding_jobs")
     expected_new = {
         "region_detection_job_id",
         "chunk_size_seconds",
@@ -150,7 +118,7 @@ def test_upgrade_adds_new_columns(tmp_path: Path) -> None:
     for c in ("window_size_seconds", "hop_seconds", "pad_seconds"):
         assert cols_post[c]["notnull"] is False, f"{c} should be nullable post-061"
 
-    hmm_cols = _columns(db_path, "hmm_sequence_jobs")
+    hmm_cols = sqlite_columns(db_path, "hmm_sequence_jobs")
     expected_hmm = {
         "training_mode",
         "event_core_overlap_threshold",
@@ -176,11 +144,11 @@ def test_upgrade_adds_new_columns(tmp_path: Path) -> None:
 def test_downgrade_removes_new_columns(tmp_path: Path) -> None:
     db_path = tmp_path / "test.db"
     _stamp_pre_061(db_path)
-    cfg = _alembic_config(db_path)
+    cfg = alembic_config(db_path)
     command.upgrade(cfg, "061")
     command.downgrade(cfg, "060")
 
-    cols_post = _columns(db_path, "continuous_embedding_jobs")
+    cols_post = sqlite_columns(db_path, "continuous_embedding_jobs")
     forbidden = {
         "region_detection_job_id",
         "chunk_size_seconds",
@@ -198,7 +166,7 @@ def test_downgrade_removes_new_columns(tmp_path: Path) -> None:
             f"{c} should be NOT NULL after downgrade"
         )
 
-    hmm_cols = _columns(db_path, "hmm_sequence_jobs")
+    hmm_cols = sqlite_columns(db_path, "hmm_sequence_jobs")
     forbidden_hmm = {
         "training_mode",
         "event_core_overlap_threshold",
