@@ -18,6 +18,8 @@ _20250615T080000Z = 1749974400.0
 # 2025-07-02T08:01:18Z — matches "20250702T080118Z" in fixture filenames.
 _20250702T080118Z = 1751443278.0
 
+CANDIDATES = "/classifier/hyperparameter/candidates"
+
 
 def _autoresearch_fixture_dir() -> Path:
     return (
@@ -177,7 +179,7 @@ async def _import_promotable_candidate(client, app_settings) -> dict:
     )
 
     resp = await client.post(
-        "/classifier/autoresearch-candidates/import",
+        f"{CANDIDATES}/import",
         json={
             "name": "Promotable Candidate",
             "manifest_path": str(manifest_path),
@@ -277,7 +279,7 @@ async def test_import_autoresearch_candidate_success(client, app_settings):
     fixture_dir = _autoresearch_fixture_dir()
 
     resp = await client.post(
-        "/classifier/autoresearch-candidates/import",
+        f"{CANDIDATES}/import",
         json={
             "name": "Explicit Negatives Phase 1",
             "manifest_path": str(fixture_dir / "manifest.json"),
@@ -309,14 +311,14 @@ async def test_import_autoresearch_candidate_success(client, app_settings):
     assert data["metric_deltas"]["test"]["fp"] == -92.0
     assert data["source_counts"]["split_counts"]["train"] > 0
 
-    list_resp = await client.get("/classifier/autoresearch-candidates")
+    list_resp = await client.get(CANDIDATES)
     assert list_resp.status_code == 200
     listed = list_resp.json()
     assert len(listed) == 1
     assert listed[0]["id"] == data["id"]
     assert listed[0]["name"] == "Explicit Negatives Phase 1"
 
-    detail_resp = await client.get(f"/classifier/autoresearch-candidates/{data['id']}")
+    detail_resp = await client.get(f"{CANDIDATES}/{data['id']}")
     assert detail_resp.status_code == 200
     detail = detail_resp.json()
     assert detail["id"] == data["id"]
@@ -327,7 +329,7 @@ async def test_import_autoresearch_candidate_missing_manifest(client):
     fixture_dir = _autoresearch_fixture_dir()
 
     resp = await client.post(
-        "/classifier/autoresearch-candidates/import",
+        f"{CANDIDATES}/import",
         json={
             "manifest_path": str(fixture_dir / "missing-manifest.json"),
             "best_run_path": str(fixture_dir / "phase1" / "best_run.json"),
@@ -345,7 +347,7 @@ async def test_import_autoresearch_candidate_rejects_malformed_best_run(
     malformed.write_text("{not valid json")
 
     resp = await client.post(
-        "/classifier/autoresearch-candidates/import",
+        f"{CANDIDATES}/import",
         json={
             "manifest_path": str(fixture_dir / "manifest.json"),
             "best_run_path": str(malformed),
@@ -363,7 +365,7 @@ async def test_import_autoresearch_candidate_rejects_malformed_optional_comparis
     malformed.write_text(json.dumps({"not": "a comparison"}))
 
     resp = await client.post(
-        "/classifier/autoresearch-candidates/import",
+        f"{CANDIDATES}/import",
         json={
             "manifest_path": str(fixture_dir / "manifest.json"),
             "best_run_path": str(fixture_dir / "phase1" / "best_run.json"),
@@ -380,7 +382,7 @@ async def test_import_autoresearch_candidate_accepts_comparison_summary_fixture(
     fixture_dir = _autoresearch_fixture_dir()
 
     resp = await client.post(
-        "/classifier/autoresearch-candidates/import",
+        f"{CANDIDATES}/import",
         json={
             "name": "Summary Comparison Candidate",
             "manifest_path": str(fixture_dir / "manifest.json"),
@@ -404,7 +406,7 @@ async def test_import_autoresearch_candidate_accepts_comparison_summary_fixture(
 
 
 async def test_get_autoresearch_candidate_not_found(client):
-    resp = await client.get("/classifier/autoresearch-candidates/nonexistent")
+    resp = await client.get(f"{CANDIDATES}/nonexistent")
     assert resp.status_code == 404
 
 
@@ -414,7 +416,7 @@ async def test_create_training_job_from_promotable_autoresearch_candidate(
     candidate = await _import_promotable_candidate(client, app_settings)
 
     resp = await client.post(
-        f"/classifier/autoresearch-candidates/{candidate['id']}/training-jobs",
+        f"{CANDIDATES}/{candidate['id']}/training-jobs",
         json={"new_model_name": "candidate-backed-model", "notes": "ship it"},
     )
     assert resp.status_code == 201
@@ -429,9 +431,7 @@ async def test_create_training_job_from_promotable_autoresearch_candidate(
     assert data["source_comparison_context"]["candidate_id"] == candidate["id"]
     assert data["source_comparison_context"]["notes"] == "ship it"
 
-    detail_resp = await client.get(
-        f"/classifier/autoresearch-candidates/{candidate['id']}"
-    )
+    detail_resp = await client.get(f"{CANDIDATES}/{candidate['id']}")
     assert detail_resp.status_code == 200
     detail = detail_resp.json()
     assert detail["status"] == "training"
@@ -469,7 +469,7 @@ async def test_blocked_autoresearch_candidate_cannot_create_training_job(
     )
 
     import_resp = await client.post(
-        "/classifier/autoresearch-candidates/import",
+        f"{CANDIDATES}/import",
         json={
             "name": "Blocked Hard-Negative Candidate",
             "manifest_path": str(fixture_dir / "manifest.json"),
@@ -481,7 +481,7 @@ async def test_blocked_autoresearch_candidate_cannot_create_training_job(
     assert candidate["status"] == "blocked"
 
     promote_resp = await client.post(
-        f"/classifier/autoresearch-candidates/{candidate['id']}/training-jobs",
+        f"{CANDIDATES}/{candidate['id']}/training-jobs",
         json={"new_model_name": "should-fail"},
     )
     assert promote_resp.status_code == 400
@@ -516,7 +516,7 @@ async def test_import_linear_svm_candidate_is_promotable(client, app_settings):
     )
 
     import_resp = await client.post(
-        "/classifier/autoresearch-candidates/import",
+        f"{CANDIDATES}/import",
         json={
             "name": "Promotable Linear SVM Candidate",
             "manifest_path": str(fixture_dir / "manifest.json"),

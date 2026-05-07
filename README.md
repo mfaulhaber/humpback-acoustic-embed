@@ -130,10 +130,9 @@ to the legacy `static/index.html`.
 Deployment-specific runtime settings should live in a repo-root `.env` copied
 from [`.env.example`](/Users/michael/development/humpback-acoustic-embed/.env.example).
 The `humpback-api` and `humpback-worker` entrypoints load that absolute
-repo-root file explicitly, and [`scripts/deploy.sh`](/Users/michael/development/humpback-acoustic-embed/scripts/deploy.sh)
-sources the same file before resolving `TF_EXTRA`. Direct `Settings()`
-construction remains hermetic and does not read cwd `.env` files. For
-Cloudflare tunnel access, keep `HUMPBACK_API_HOST=0.0.0.0` and set
+repo-root file explicitly. Direct `Settings()` construction remains hermetic
+and does not read cwd `.env` files. For Cloudflare tunnel access, keep
+`HUMPBACK_API_HOST=0.0.0.0` and set
 `HUMPBACK_ALLOWED_HOSTS=*.trycloudflare.com,localhost,127.0.0.1`. Production
 host validation is enforced in FastAPI; Vite `allowedHosts` is only relevant to
 `npm run dev`.
@@ -510,10 +509,10 @@ Training uses GPU when available (Metal on Apple Silicon), respecting the
 | GET | `/clustering/jobs/{id}/refinement` | Get metric learning refinement report |
 | GET | `/clustering/clusters/{id}/assignments` | Get assignments |
 | POST | `/classifier/training-jobs` | Queue classifier training job |
-| POST | `/classifier/autoresearch-candidates/import` | Import an autoresearch artifact bundle for review |
-| GET | `/classifier/autoresearch-candidates` | List imported autoresearch candidates |
-| GET | `/classifier/autoresearch-candidates/{id}` | Get candidate detail with comparison previews |
-| POST | `/classifier/autoresearch-candidates/{id}/training-jobs` | Promote a reviewed candidate into a manifest-backed training job |
+| POST | `/classifier/hyperparameter/candidates/import` | Import an autoresearch artifact bundle for review |
+| GET | `/classifier/hyperparameter/candidates` | List imported autoresearch candidates |
+| GET | `/classifier/hyperparameter/candidates/{id}` | Get candidate detail with comparison previews |
+| POST | `/classifier/hyperparameter/candidates/{id}/training-jobs` | Promote a reviewed candidate into a manifest-backed training job |
 | GET | `/classifier/training-jobs` | List training jobs |
 | GET | `/classifier/training-jobs/{id}` | Get training job |
 | GET | `/classifier/models` | List trained classifier models |
@@ -654,18 +653,6 @@ Labeled-sample extraction outputs:
 - Positive extraction writes the classifier-selected 5-second seed window plus any adjacent
   5-second extensions that pass the configured support threshold (`positive_extract_filename`);
   negative extraction keeps the labeled clip bounds.
-
-## Utilities
-
-`uv run python scripts/convert_audio_to_flac.py <path> [<path> ...]` converts `.wav` and `.mp3` files to sibling `.flac` files in place. Use `--verify-samples` to compare decoded source/output audio and fail if the sample rate, sample count, or max absolute error exceeds the built-in tolerance.
-
-`uv run python scripts/repair_hydrophone_extract_lengths.py` dry-runs imported hydrophone
-extracts whose compact UTC clip filenames span the configured 5-second window but whose stored
-audio is still short by `1..64` samples. It also fixes legacy hydrophone extracts whose files
-still end in `.wav` even though their on-disk bytes are FLAC. Add `--apply` to rewrite the FLAC,
-regenerate the PNG sidecar, and refresh the matching `audio_files` metadata.
-
----
 
 ## Testing
 

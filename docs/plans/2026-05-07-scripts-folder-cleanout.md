@@ -41,10 +41,10 @@
 - Delete: `tests/scripts/test_migrate_sequence_model_timestamps.py`
 
 **Acceptance criteria:**
-- [ ] `git ls-files scripts` lists only `scripts/bootstrap_classifier.py`, `scripts/bootstrap_event_classifier_dataset.py`, and `scripts/bootstrap_segmentation_dataset.py`.
-- [ ] No test imports a removed `scripts.*` module.
-- [ ] The three retained bootstrap scripts are not modified except for formatting if a tool requires it.
-- [ ] Bootstrap script tests still cover the retained scripts.
+- [x] `git ls-files scripts` lists only `scripts/bootstrap_classifier.py`, `scripts/bootstrap_event_classifier_dataset.py`, and `scripts/bootstrap_segmentation_dataset.py`.
+- [x] No test imports a removed `scripts.*` module.
+- [x] The three retained bootstrap scripts are not modified except for formatting if a tool requires it.
+- [x] Bootstrap script tests still cover the retained scripts.
 
 **Tests needed:**
 - Run the retained bootstrap script unit tests.
@@ -62,11 +62,11 @@
 - Modify: `frontend/e2e/classifier-training.spec.ts`
 
 **Acceptance criteria:**
-- [ ] The old `/classifier/autoresearch-candidates/*` router is no longer included in the classifier API.
-- [ ] Tests no longer assert that the old alias endpoints work.
-- [ ] Candidate import, list, detail, delete, search-result import, and promotion coverage uses canonical `/classifier/hyperparameter/*` paths.
-- [ ] Candidate-backed replay training and candidate provenance behavior are unchanged.
-- [ ] Frontend route mocks use the same canonical candidate paths as `frontend/src/api/client.ts`.
+- [x] The old `/classifier/autoresearch-candidates/*` router is no longer included in the classifier API.
+- [x] Tests no longer assert that the old alias endpoints work.
+- [x] Candidate import, list, detail, delete, search-result import, and promotion coverage uses canonical `/classifier/hyperparameter/*` paths.
+- [x] Candidate-backed replay training and candidate provenance behavior are unchanged.
+- [x] Frontend route mocks use the same canonical candidate paths as `frontend/src/api/client.ts`.
 
 **Tests needed:**
 - Run hyperparameter and classifier integration tests that cover candidate import and promotion.
@@ -82,10 +82,10 @@
 - Modify: `README.md`
 
 **Acceptance criteria:**
-- [ ] `src/humpback/services/timeline_export.py` remains unchanged unless implementation discovers a necessary import cleanup.
-- [ ] `POST /classifier/detection-jobs/{job_id}/timeline/export` remains documented as the supported timeline export path.
-- [ ] Docs no longer say timeline export is available through `scripts/export_timeline.py`.
-- [ ] Timeline export service tests still pass.
+- [x] `src/humpback/services/timeline_export.py` remains unchanged unless implementation discovers a necessary import cleanup.
+- [x] `POST /classifier/detection-jobs/{job_id}/timeline/export` remains documented as the supported timeline export path.
+- [x] Docs no longer say timeline export is available through `scripts/export_timeline.py`.
+- [x] Timeline export service tests still pass.
 
 **Tests needed:**
 - Run timeline export unit tests and timeline API integration tests.
@@ -100,10 +100,10 @@
 - Modify: `docs/reference/storage-layout.md`
 
 **Acceptance criteria:**
-- [ ] `cleanup_manifests_dir` is removed if no non-script callers remain.
-- [ ] `path_within_root` is removed if no non-script callers remain.
-- [ ] Storage docs no longer describe cleanup manifests as produced by deleted scripts.
-- [ ] Storage tests remain aligned with the active storage helper surface.
+- [x] `cleanup_manifests_dir` is removed if no non-script callers remain.
+- [x] `path_within_root` is removed if no non-script callers remain.
+- [x] Storage docs no longer describe cleanup manifests as produced by deleted scripts.
+- [x] Storage tests remain aligned with the active storage helper surface.
 
 **Tests needed:**
 - Run storage unit tests.
@@ -121,10 +121,10 @@
 - Modify: `docs/reference/call-parsing-api.md`
 
 **Acceptance criteria:**
-- [ ] Current docs no longer advertise deleted operator scripts, migration scripts, cleanup scripts, or old alias endpoints.
-- [ ] Current docs retain references to the three retained bootstrap scripts where those references describe active bootstrap behavior.
-- [ ] Historical specs, plans, ADRs, and migrations are left alone unless a current-doc reference points users at deleted runtime scripts.
-- [ ] README deployment wording no longer depends on `scripts/deploy.sh`.
+- [x] Current docs no longer advertise deleted operator scripts, migration scripts, cleanup scripts, or old alias endpoints.
+- [x] Current docs retain references to the three retained bootstrap scripts where those references describe active bootstrap behavior.
+- [x] Historical specs, plans, ADRs, and migrations are left alone unless a current-doc reference points users at deleted runtime scripts.
+- [x] README deployment wording no longer depends on `scripts/deploy.sh`.
 
 **Tests needed:**
 - Run reference searches for `scripts/` and `/classifier/autoresearch-candidates` in current docs.

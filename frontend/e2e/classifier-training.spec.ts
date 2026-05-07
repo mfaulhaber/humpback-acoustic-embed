@@ -728,11 +728,11 @@ async function mockAutoresearchCandidateApi(page: import("@playwright/test").Pag
     });
   });
 
-  await page.route("**/classifier/autoresearch-candidates**", async (route) => {
+  await page.route("**/classifier/hyperparameter/candidates**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
 
-    if (pathname === "/classifier/autoresearch-candidates/import") {
+    if (pathname === "/classifier/hyperparameter/candidates/import") {
       const body = parseRouteBody(route);
       const importedId = "candidate-imported";
       const importedSummary = buildVendoredPhase1CandidateSummary({
@@ -768,7 +768,7 @@ async function mockAutoresearchCandidateApi(page: import("@playwright/test").Pag
       return;
     }
 
-    if (pathname === "/classifier/autoresearch-candidates") {
+    if (pathname === "/classifier/hyperparameter/candidates") {
       await route.fulfill({
         status: 200,
         contentType: "application/json",

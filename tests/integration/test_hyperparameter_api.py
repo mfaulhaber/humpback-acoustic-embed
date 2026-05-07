@@ -346,10 +346,9 @@ async def test_import_candidate_requires_complete_search(
 
 
 # ---------------------------------------------------------------------------
-# Candidate endpoints (relocated)
+# Candidate endpoints
 # ---------------------------------------------------------------------------
 
-OLD_CANDIDATES = "/classifier/autoresearch-candidates"
 NEW_CANDIDATES = f"{BASE}/candidates"
 
 
@@ -361,31 +360,9 @@ async def test_new_candidate_list_endpoint(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_old_candidate_list_still_works(client: AsyncClient) -> None:
-    resp = await client.get(OLD_CANDIDATES)
-    assert resp.status_code == 200
-    assert isinstance(resp.json(), list)
-
-
-@pytest.mark.asyncio
 async def test_new_candidate_not_found(client: AsyncClient) -> None:
     resp = await client.get(f"{NEW_CANDIDATES}/nonexistent")
     assert resp.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_old_candidate_not_found(client: AsyncClient) -> None:
-    resp = await client.get(f"{OLD_CANDIDATES}/nonexistent")
-    assert resp.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_both_paths_return_same_list(client: AsyncClient) -> None:
-    old_resp = await client.get(OLD_CANDIDATES)
-    new_resp = await client.get(NEW_CANDIDATES)
-    assert old_resp.status_code == 200
-    assert new_resp.status_code == 200
-    assert old_resp.json() == new_resp.json()
 
 
 # ---------------------------------------------------------------------------
