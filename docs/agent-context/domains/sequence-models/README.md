@@ -28,8 +28,10 @@ helpers, or the retained Sequence Models UI.
   viewer.
 - The Event Encoder timeline viewer is read-only. It renders completed
   `event_tokens.parquet` assignments through a dedicated timeline endpoint and
-  uses Call Parsing region tiles/audio for context. Do not treat token labels as
-  globally stable across Event Encoder jobs.
+  uses Call Parsing region tiles/audio for context. Its selected-event feature
+  table is also read-only and uses timeline response descriptor metadata plus
+  `event_vectors.parquet` descriptor-vector values. Do not treat token labels
+  as globally stable across Event Encoder jobs.
 - `DiscreteSequenceBar`, `RegionNavBar`, `SpanNavBar`,
   `MotifTimelineLegend`, `MotifHighlightOverlay`, and `CollapsiblePanelCard`
   are retained generic visualization primitives for future analysis/review
@@ -47,6 +49,10 @@ helpers, or the retained Sequence Models UI.
 - `event_encoders/{job_id}/token_sequences.parquet`
 - `event_encoders/{job_id}/manifest.json`
 - `event_encoders/{job_id}/report.json`
+
+Event Encoder manifests record ordered `descriptor_feature_names`. The active
+non-CRNN descriptor block includes `ridge_log_frequency_slope` and does not
+persist full STFT matrices or ridge traces in Continuous Embedding artifacts.
 
 ## Likely Neighbors
 

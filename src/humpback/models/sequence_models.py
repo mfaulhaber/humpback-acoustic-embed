@@ -72,7 +72,7 @@ class EventEncoderJob(UUIDMixin, TimestampMixin, Base):
     continuous_embedding_job_id: Mapped[str]
     continuous_embedding_signature: Mapped[str] = mapped_column(Text)
     tokenizer_version: Mapped[str] = mapped_column(
-        Text, default="crnn-event-encoder-v1"
+        Text, default="crnn-event-encoder-v2"
     )
     pooling_config_json: Mapped[str] = mapped_column(Text)
     descriptor_config_json: Mapped[str] = mapped_column(Text)

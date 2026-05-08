@@ -99,6 +99,11 @@ export interface EventEncoderDescriptorConfig {
   n_fft?: number;
   hop_length?: number;
   eps?: number;
+  ridge_min_frequency_hz?: number;
+  ridge_max_frequency_hz?: number;
+  ridge_candidate_count?: number;
+  ridge_smoothness_penalty?: number;
+  ridge_peak_prominence_ratio?: number;
 }
 
 export interface EventEncoderPreprocessingConfig {
@@ -154,6 +159,8 @@ export interface EventEncoderTimelineEvent {
   token_confidence: number;
   distance_to_centroid: number;
   second_centroid_distance: number | null;
+  descriptor_values: Record<string, number>;
+  descriptor_vector_values: Record<string, number>;
 }
 
 export interface EventEncoderTimelineResponse {
@@ -164,6 +171,8 @@ export interface EventEncoderTimelineResponse {
   region_detection_job_id: string;
   selected_k: number;
   valid_k_values: number[];
+  descriptor_feature_names: string[];
+  descriptor_feature_units: Record<string, string>;
   job_start_timestamp: number;
   job_end_timestamp: number;
   events: EventEncoderTimelineEvent[];

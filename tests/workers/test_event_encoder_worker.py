@@ -133,15 +133,35 @@ async def test_event_encoder_worker_writes_artifacts(session, settings):
     vectors = pq.read_table(job.event_vectors_path).to_pylist()
     tokens = pq.read_table(job.event_tokens_path).to_pylist()
     sequences = pq.read_table(job.token_sequences_path).to_pylist()
+    vector_columns = pq.read_schema(job.event_vectors_path).names
+    token_columns = pq.read_schema(job.event_tokens_path).names
     manifest = json.loads(Path(job.manifest_path).read_text())
     report = json.loads(Path(job.report_path).read_text())
 
     assert len(vectors) == 3
     assert len(tokens) == 6
     assert len(sequences) == 6
+    assert "ridge_log_frequency_slope" in vector_columns
+    assert "ridge_log_frequency_slope" in token_columns
+    assert "frequency_slope" not in vector_columns
+    assert "frequency_slope" not in token_columns
+    assert "ridge_log_frequency_slope" in vectors[0]
+    assert "ridge_log_frequency_slope" in tokens[0]
+    assert manifest["descriptor_feature_names"] == [
+        "duration",
+        "log_energy",
+        "peak_frequency",
+        "spectral_centroid",
+        "bandwidth",
+        "spectral_entropy",
+        "ridge_log_frequency_slope",
+        "gap_to_previous",
+    ]
     assert manifest["valid_k_values"] == [1, 2]
     assert manifest["invalid_k_values"] == [99]
     assert report["summary"]["encoded_events"] == 3
+    assert report["descriptor_feature_names"] == manifest["descriptor_feature_names"]
+    assert "ridge_log_frequency_slope" in report["descriptor_summary"]
     assert report["token_examples"]["2"]["T00"][0]["event_id"]
     assert (
         event_encoder_dir(settings.storage_root, job.id) / "preprocess.joblib"

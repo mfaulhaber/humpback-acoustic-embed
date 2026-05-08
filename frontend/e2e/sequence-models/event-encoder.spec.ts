@@ -8,6 +8,26 @@ const SILENT_WAV = Buffer.from(
   "UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=",
   "base64",
 );
+const DESCRIPTOR_FEATURE_NAMES = [
+  "duration",
+  "log_energy",
+  "peak_frequency",
+  "spectral_centroid",
+  "bandwidth",
+  "spectral_entropy",
+  "ridge_log_frequency_slope",
+  "gap_to_previous",
+];
+const DESCRIPTOR_FEATURE_UNITS = {
+  duration: "seconds",
+  log_energy: "log power",
+  peak_frequency: "Hz",
+  spectral_centroid: "Hz",
+  bandwidth: "Hz",
+  spectral_entropy: "normalized",
+  ridge_log_frequency_slope: "octaves/s",
+  gap_to_previous: "seconds",
+};
 
 const REGION_JOB = {
   id: "rj-complete-1",
@@ -108,7 +128,7 @@ const QUEUED_JOB = {
   event_source_mode: "raw",
   continuous_embedding_job_id: CRNN_EMBEDDING_JOB.id,
   continuous_embedding_signature: CRNN_EMBEDDING_JOB.encoding_signature,
-  tokenizer_version: "crnn-event-encoder-v1",
+  tokenizer_version: "crnn-event-encoder-v2",
   pooling_config_json:
     '{"enabled_pools":["mean_pool","top_k_pool","start_pool","middle_pool","end_pool"],"top_k_fraction":0.25,"min_overlap_fraction":0.25,"min_chunks_per_event":1}',
   descriptor_config_json:
@@ -202,6 +222,7 @@ const COMPLETE_DETAIL = {
     descriptor_summary: {
       duration: { mean: 1.25, min: 0.8, max: 2.1 },
       spectral_entropy: { mean: 0.42, min: 0.3, max: 0.6 },
+      ridge_log_frequency_slope: { mean: 0.5, min: 0.1, max: 0.9 },
     },
     sequence_preview: {
       "50": ["T17", "T42", "T17", "T08"],
@@ -220,6 +241,8 @@ const TIMELINE_50 = {
   region_detection_job_id: REGION_JOB.id,
   selected_k: 50,
   valid_k_values: [50, 100],
+  descriptor_feature_names: DESCRIPTOR_FEATURE_NAMES,
+  descriptor_feature_units: DESCRIPTOR_FEATURE_UNITS,
   job_start_timestamp: REGION_JOB.start_timestamp,
   job_end_timestamp: REGION_JOB.end_timestamp,
   events: [
@@ -235,6 +258,8 @@ const TIMELINE_50 = {
       token_confidence: 0.812,
       distance_to_centroid: 0.11,
       second_centroid_distance: null,
+      descriptor_values: descriptorValues(0),
+      descriptor_vector_values: descriptorVectorValues(0),
     },
     {
       event_id: "evt-42",
@@ -248,6 +273,8 @@ const TIMELINE_50 = {
       token_confidence: 0.654,
       distance_to_centroid: 0.22,
       second_centroid_distance: 0.5,
+      descriptor_values: descriptorValues(1),
+      descriptor_vector_values: descriptorVectorValues(1),
     },
   ],
 };
@@ -271,11 +298,39 @@ const TIMELINE_100 = {
   ],
 };
 
+const TIMELINE_NO_FEATURES = {
+  ...TIMELINE_50,
+  events: TIMELINE_50.events.map((event) => ({
+    ...event,
+    descriptor_values: {},
+    descriptor_vector_values: {},
+  })),
+};
+
+function descriptorValues(eventIndex: number) {
+  return Object.fromEntries(
+    DESCRIPTOR_FEATURE_NAMES.map((name, index) => [
+      name,
+      eventIndex + index + 0.25,
+    ]),
+  );
+}
+
+function descriptorVectorValues(eventIndex: number) {
+  return Object.fromEntries(
+    DESCRIPTOR_FEATURE_NAMES.map((name, index) => [
+      name,
+      eventIndex + index / 10,
+    ]),
+  );
+}
+
 interface MockState {
   jobs: typeof QUEUED_JOB[];
   lastCreateBody?: CreatePayload;
   timelineRequests?: string[];
   audioRequests?: string[];
+  timelineNoFeatures?: boolean;
 }
 
 interface CreatePayload {
@@ -341,6 +396,13 @@ async function setupMocks(page: Page, state: MockState) {
           return route.fulfill({ status: 409 });
         }
         const selectedK = new URL(url).searchParams.get("k");
+        if (state.timelineNoFeatures) {
+          return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(TIMELINE_NO_FEATURES),
+          });
+        }
         return route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -506,10 +568,26 @@ test.describe("Sequence Models - Event Encoder", () => {
     await expect(page.getByTestId("eej-token-badge-evt-17")).toHaveText("T17");
     await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 1 / 2");
     await expect(page.getByTestId("eej-selected-token")).toHaveText("T17");
+    await expect(page.getByTestId("eej-selected-feature-panel")).toBeVisible();
+    await expect(page.getByTestId("eej-feature-ridge_log_frequency_slope")).toContainText(
+      "6.250",
+    );
+    await expect(page.getByTestId("eej-feature-ridge_log_frequency_slope")).toContainText(
+      "0.600",
+    );
+    await expect(page.getByTestId("eej-feature-ridge_log_frequency_slope")).toContainText(
+      "octaves/s",
+    );
 
     await page.keyboard.press("d");
     await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 2 / 2");
     await expect(page.getByTestId("eej-selected-token")).toHaveText("T42");
+    await expect(page.getByTestId("eej-feature-ridge_log_frequency_slope")).toContainText(
+      "7.250",
+    );
+    await expect(page.getByTestId("eej-feature-ridge_log_frequency_slope")).toContainText(
+      "1.600",
+    );
 
     await page.keyboard.press("a");
     await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 1 / 2");
@@ -519,6 +597,9 @@ test.describe("Sequence Models - Event Encoder", () => {
 
     await page.getByTestId("eej-k-select").selectOption("100");
     await expect(page.getByTestId("eej-selected-token")).toHaveText("T31");
+    await expect(page.getByTestId("eej-feature-ridge_log_frequency_slope")).toContainText(
+      "7.250",
+    );
     expect(state.timelineRequests?.some((url) => url.includes("k=100"))).toBe(
       true,
     );
@@ -529,6 +610,20 @@ test.describe("Sequence Models - Event Encoder", () => {
     );
     await page.getByTestId("eej-event-play").click();
     await audioRequest;
+  });
+
+  test("complete detail page shows unavailable state without selected features", async ({
+    page,
+  }) => {
+    const state: MockState = {
+      jobs: [COMPLETE_JOB],
+      timelineNoFeatures: true,
+    };
+    await setupMocks(page, state);
+    await page.goto(`/app/sequence-models/event-encoder/${COMPLETE_JOB.id}`);
+
+    await expect(page.getByTestId("eej-timeline-panel")).toBeVisible();
+    await expect(page.getByTestId("eej-selected-feature-unavailable")).toBeVisible();
   });
 
   test("failed job surfaces error message on detail", async ({ page }) => {

@@ -27,8 +27,8 @@ from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJo
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob, EventEncoderJob
 from humpback.sequence_models.event_encoder import (
-    DESCRIPTOR_ORDER,
     ChunkEmbedding,
+    DESCRIPTOR_ORDER,
     EventInterval,
     build_event_embedding,
     compute_acoustic_descriptors,
@@ -55,48 +55,51 @@ from humpback.storage import (
 logger = logging.getLogger(__name__)
 
 
-EVENT_VECTOR_SCHEMA = pa.schema(
-    [
-        pa.field("event_id", pa.string(), nullable=False),
-        pa.field("region_id", pa.string(), nullable=False),
-        pa.field("source_sequence_key", pa.string(), nullable=False),
-        pa.field("sequence_index", pa.int32(), nullable=False),
-        pa.field("start_timestamp", pa.float64(), nullable=False),
-        pa.field("end_timestamp", pa.float64(), nullable=False),
-        pa.field("segmentation_confidence", pa.float64(), nullable=False),
-        pa.field("duration", pa.float32(), nullable=False),
-        pa.field("log_energy", pa.float32(), nullable=False),
-        pa.field("peak_frequency", pa.float32(), nullable=False),
-        pa.field("spectral_centroid", pa.float32(), nullable=False),
-        pa.field("bandwidth", pa.float32(), nullable=False),
-        pa.field("spectral_entropy", pa.float32(), nullable=False),
-        pa.field("frequency_slope", pa.float32(), nullable=False),
-        pa.field("gap_to_previous", pa.float32(), nullable=False),
-        pa.field("chunk_count", pa.int32(), nullable=False),
-        pa.field("coverage_fraction", pa.float32(), nullable=False),
-        pa.field("embedding_vector", pa.list_(pa.float32()), nullable=False),
-        pa.field("descriptor_vector", pa.list_(pa.float32()), nullable=False),
-        pa.field("event_vector", pa.list_(pa.float32()), nullable=False),
-    ]
-)
+def _event_vector_schema() -> pa.Schema:
+    return pa.schema(
+        [
+            pa.field("event_id", pa.string(), nullable=False),
+            pa.field("region_id", pa.string(), nullable=False),
+            pa.field("source_sequence_key", pa.string(), nullable=False),
+            pa.field("sequence_index", pa.int32(), nullable=False),
+            pa.field("start_timestamp", pa.float64(), nullable=False),
+            pa.field("end_timestamp", pa.float64(), nullable=False),
+            pa.field("segmentation_confidence", pa.float64(), nullable=False),
+            *[
+                pa.field(name, pa.float32(), nullable=False)
+                for name in DESCRIPTOR_ORDER
+            ],
+            pa.field("chunk_count", pa.int32(), nullable=False),
+            pa.field("coverage_fraction", pa.float32(), nullable=False),
+            pa.field("embedding_vector", pa.list_(pa.float32()), nullable=False),
+            pa.field("descriptor_vector", pa.list_(pa.float32()), nullable=False),
+            pa.field("event_vector", pa.list_(pa.float32()), nullable=False),
+        ]
+    )
 
-EVENT_TOKEN_SCHEMA = pa.schema(
-    [
-        pa.field("k", pa.int32(), nullable=False),
-        pa.field("event_id", pa.string(), nullable=False),
-        pa.field("region_id", pa.string(), nullable=False),
-        pa.field("source_sequence_key", pa.string(), nullable=False),
-        pa.field("sequence_index", pa.int32(), nullable=False),
-        pa.field("start_timestamp", pa.float64(), nullable=False),
-        pa.field("end_timestamp", pa.float64(), nullable=False),
-        pa.field("token_id", pa.int32(), nullable=False),
-        pa.field("token_label", pa.string(), nullable=False),
-        pa.field("distance_to_centroid", pa.float32(), nullable=False),
-        pa.field("second_centroid_distance", pa.float32(), nullable=True),
-        pa.field("token_confidence", pa.float32(), nullable=False),
-        *[pa.field(name, pa.float32(), nullable=False) for name in DESCRIPTOR_ORDER],
-    ]
-)
+
+def _event_token_schema() -> pa.Schema:
+    return pa.schema(
+        [
+            pa.field("k", pa.int32(), nullable=False),
+            pa.field("event_id", pa.string(), nullable=False),
+            pa.field("region_id", pa.string(), nullable=False),
+            pa.field("source_sequence_key", pa.string(), nullable=False),
+            pa.field("sequence_index", pa.int32(), nullable=False),
+            pa.field("start_timestamp", pa.float64(), nullable=False),
+            pa.field("end_timestamp", pa.float64(), nullable=False),
+            pa.field("token_id", pa.int32(), nullable=False),
+            pa.field("token_label", pa.string(), nullable=False),
+            pa.field("distance_to_centroid", pa.float32(), nullable=False),
+            pa.field("second_centroid_distance", pa.float32(), nullable=True),
+            pa.field("token_confidence", pa.float32(), nullable=False),
+            *[
+                pa.field(name, pa.float32(), nullable=False)
+                for name in DESCRIPTOR_ORDER
+            ],
+        ]
+    )
+
 
 TOKEN_SEQUENCE_SCHEMA = pa.schema(
     [
@@ -320,10 +323,18 @@ async def run_event_encoder_job(
         preprocess_path = event_encoder_preprocess_path(settings.storage_root, job_id)
 
         _atomic_write_parquet(
-            pa.Table.from_pylist(vector_rows, schema=EVENT_VECTOR_SCHEMA), vector_path
+            pa.Table.from_pylist(
+                vector_rows,
+                schema=_event_vector_schema(),
+            ),
+            vector_path,
         )
         _atomic_write_parquet(
-            pa.Table.from_pylist(token_rows, schema=EVENT_TOKEN_SCHEMA), token_path
+            pa.Table.from_pylist(
+                token_rows,
+                schema=_event_token_schema(),
+            ),
+            token_path,
         )
         _atomic_write_parquet(
             pa.Table.from_pylist(sequence_rows, schema=TOKEN_SEQUENCE_SCHEMA),
@@ -552,6 +563,21 @@ async def _build_encoded_events(
             n_fft=int(descriptor_config.get("n_fft", 1024)),
             hop_length=int(descriptor_config.get("hop_length", 512)),
             eps=float(descriptor_config.get("eps", 1e-12)),
+            ridge_min_frequency_hz=float(
+                descriptor_config.get("ridge_min_frequency_hz", 100.0)
+            ),
+            ridge_max_frequency_hz=float(
+                descriptor_config.get("ridge_max_frequency_hz", 3000.0)
+            ),
+            ridge_candidate_count=int(
+                descriptor_config.get("ridge_candidate_count", 5)
+            ),
+            ridge_smoothness_penalty=float(
+                descriptor_config.get("ridge_smoothness_penalty", 8.0)
+            ),
+            ridge_peak_prominence_ratio=float(
+                descriptor_config.get("ridge_peak_prominence_ratio", 0.0)
+            ),
         )
         encoded.append(
             _EncodedEvent(
@@ -578,7 +604,8 @@ def _source_sequence_key(region_job: RegionDetectionJob) -> str:
 
 
 def _build_event_vector_rows(
-    encoded_events: list[_EncodedEvent], preprocess
+    encoded_events: list[_EncodedEvent],
+    preprocess,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for i, encoded in enumerate(encoded_events):
@@ -604,7 +631,8 @@ def _build_event_vector_rows(
 
 
 def _build_token_rows(
-    encoded_events: list[_EncodedEvent], tokenization
+    encoded_events: list[_EncodedEvent],
+    tokenization,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     token_rows: list[dict[str, Any]] = []
     sequence_rows: list[dict[str, Any]] = []
@@ -688,6 +716,7 @@ def _build_manifest(
         "pooling_config": json.loads(job.pooling_config_json),
         "descriptor_config": json.loads(job.descriptor_config_json),
         "preprocessing_config": json.loads(job.preprocessing_config_json),
+        "descriptor_feature_names": list(DESCRIPTOR_ORDER),
         "k_values": json.loads(job.k_values_json),
         "valid_k_values": valid_k_values,
         "invalid_k_values": invalid_k_values,
@@ -724,6 +753,7 @@ def _build_report(
         "tokenization": tokenization_summary(tokenization),
         "token_examples": _token_examples(encoded_events, tokenization),
         "descriptor_summary": _descriptor_summary(encoded_events),
+        "descriptor_feature_names": list(DESCRIPTOR_ORDER),
         "sequence_preview": sequence_preview,
     }
 

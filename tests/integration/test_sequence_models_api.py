@@ -7,6 +7,7 @@ from humpback.database import create_engine, create_session_factory
 from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob, EventEncoderJob
+from humpback.sequence_models.event_encoder import DESCRIPTOR_ORDER
 
 
 async def _seed_segmentation_job(app_settings, status: str) -> str:
@@ -77,6 +78,7 @@ async def _seed_event_encoder_timeline_job(
     *,
     status: str = JobStatus.complete.value,
     write_tokens: bool = True,
+    write_vectors: bool = True,
     source_model_version: str = "crnn-call-parsing-pytorch",
 ) -> str:
     engine = create_engine(app_settings.database_url)
@@ -124,7 +126,7 @@ async def _seed_event_encoder_timeline_job(
             event_source_mode="effective",
             continuous_embedding_job_id=continuous.id,
             continuous_embedding_signature=continuous.encoding_signature,
-            tokenizer_version="crnn-event-encoder-v1",
+            tokenizer_version="crnn-event-encoder-v2",
             pooling_config_json="{}",
             descriptor_config_json="{}",
             preprocessing_config_json="{}",
@@ -144,8 +146,15 @@ async def _seed_event_encoder_timeline_job(
             / job.id
             / "event_tokens.parquet"
         )
+        vector_path = (
+            app_settings.storage_root
+            / "event_encoders"
+            / job.id
+            / "event_vectors.parquet"
+        )
         token_path.parent.mkdir(parents=True, exist_ok=True)
         job.event_tokens_path = str(token_path)
+        job.event_vectors_path = str(vector_path)
         if write_tokens:
             rows = [
                 {
@@ -161,6 +170,7 @@ async def _seed_event_encoder_timeline_job(
                     "distance_to_centroid": 0.4,
                     "second_centroid_distance": 0.8,
                     "token_confidence": 0.5,
+                    **_descriptor_payload(offset=1.0),
                 },
                 {
                     "k": 3,
@@ -175,6 +185,7 @@ async def _seed_event_encoder_timeline_job(
                     "distance_to_centroid": 0.2,
                     "second_centroid_distance": None,
                     "token_confidence": 0.75,
+                    **_descriptor_payload(offset=0.0),
                 },
                 {
                     "k": 2,
@@ -189,12 +200,39 @@ async def _seed_event_encoder_timeline_job(
                     "distance_to_centroid": 0.2,
                     "second_centroid_distance": None,
                     "token_confidence": 0.75,
+                    **_descriptor_payload(offset=0.0),
                 },
             ]
             pq.write_table(pa.Table.from_pylist(rows), token_path)
+        if write_vectors:
+            vector_rows = [
+                {
+                    "event_id": "evt-a",
+                    "region_id": "region-1",
+                    "source_sequence_key": "hydrophone:rpi_orcasound_lab",
+                    "sequence_index": 0,
+                    "descriptor_vector": [
+                        0.1 * (i + 1) for i in range(len(DESCRIPTOR_ORDER))
+                    ],
+                },
+                {
+                    "event_id": "evt-b",
+                    "region_id": "region-1",
+                    "source_sequence_key": "hydrophone:rpi_orcasound_lab",
+                    "sequence_index": 1,
+                    "descriptor_vector": [
+                        1.1 + 0.1 * i for i in range(len(DESCRIPTOR_ORDER))
+                    ],
+                },
+            ]
+            pq.write_table(pa.Table.from_pylist(vector_rows), vector_path)
         await session.commit()
         await session.refresh(job)
         return job.id
+
+
+def _descriptor_payload(*, offset: float) -> dict[str, float]:
+    return {name: offset + float(index) for index, name in enumerate(DESCRIPTOR_ORDER)}
 
 
 async def test_create_returns_201_then_200_on_idempotent_resubmit(client, app_settings):
@@ -498,12 +536,30 @@ async def test_get_event_encoder_timeline_defaults_to_lowest_k(client, app_setti
     assert body["event_source_mode"] == "effective"
     assert body["selected_k"] == 2
     assert body["valid_k_values"] == [2, 3]
+    assert body["descriptor_feature_names"] == DESCRIPTOR_ORDER
+    assert body["descriptor_feature_units"]["ridge_log_frequency_slope"] == "octaves/s"
     assert body["job_start_timestamp"] == 2000.0
     assert body["job_end_timestamp"] == 2600.0
     assert [event["event_id"] for event in body["events"]] == ["evt-a", "evt-b"]
     assert body["events"][0]["start_timestamp"] == 2123.5
     assert body["events"][0]["token_label"] == "T00"
     assert body["events"][0]["second_centroid_distance"] is None
+    assert body["events"][0]["descriptor_values"]["ridge_log_frequency_slope"] == 6.0
+    assert (
+        abs(
+            body["events"][0]["descriptor_vector_values"]["ridge_log_frequency_slope"]
+            - 0.7
+        )
+        < 1e-9
+    )
+    assert body["events"][1]["descriptor_values"]["ridge_log_frequency_slope"] == 7.0
+    assert (
+        abs(
+            body["events"][1]["descriptor_vector_values"]["ridge_log_frequency_slope"]
+            - 1.7
+        )
+        < 1e-9
+    )
 
 
 async def test_get_event_encoder_timeline_filters_requested_k(client, app_settings):
@@ -547,6 +603,24 @@ async def test_get_event_encoder_timeline_missing_job_or_artifact(client, app_se
         f"/sequence-models/event-encoders/{job_id}/timeline"
     )
     assert artifact_missing.status_code == 404
+
+
+async def test_get_event_encoder_timeline_tolerates_missing_vector_artifact(
+    client,
+    app_settings,
+):
+    job_id = await _seed_event_encoder_timeline_job(
+        app_settings,
+        write_vectors=False,
+    )
+
+    response = await client.get(f"/sequence-models/event-encoders/{job_id}/timeline")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["descriptor_feature_names"] == DESCRIPTOR_ORDER
+    assert body["events"][0]["descriptor_values"]["ridge_log_frequency_slope"] == 6.0
+    assert body["events"][0]["descriptor_vector_values"] == {}
 
 
 async def test_get_event_encoder_timeline_rejects_non_region_crnn_provenance(

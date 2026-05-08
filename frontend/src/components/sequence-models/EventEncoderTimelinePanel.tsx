@@ -174,6 +174,10 @@ function EventEncoderTimelineBody({
   );
   const selectedEvent = selectedIndex >= 0 ? events[selectedIndex] : null;
   const effectiveIndex = selectedIndex >= 0 ? selectedIndex : selectedListIndex;
+  const featureRows = useMemo(
+    () => buildSelectedFeatureRows(timeline, selectedEvent),
+    [selectedEvent, timeline],
+  );
   const selectedTokenColor = selectedEvent
     ? labelColor(selectedEvent.token_id, Math.max(timeline.selected_k, 1))
     : undefined;
@@ -359,8 +363,104 @@ function EventEncoderTimelineBody({
       <div className="border-t border-border px-2 py-1">
         <ZoomSelector />
       </div>
+      <div className="border-t border-border px-3 py-3">
+        <SelectedEventFeatureTable
+          rows={featureRows}
+          selectedEvent={selectedEvent}
+        />
+      </div>
     </div>
   );
+}
+
+interface FeatureRow {
+  name: string;
+  rawValue: number | null;
+  vectorValue: number | null;
+  unit: string;
+}
+
+function SelectedEventFeatureTable({
+  rows,
+  selectedEvent,
+}: {
+  rows: FeatureRow[];
+  selectedEvent: EventEncoderTimelineEvent | null;
+}) {
+  if (!selectedEvent) {
+    return (
+      <div
+        className="rounded-md border border-dashed p-3 text-xs text-muted-foreground"
+        data-testid="eej-selected-feature-empty"
+      >
+        No event selected.
+      </div>
+    );
+  }
+  if (!rows.length) {
+    return (
+      <div
+        className="rounded-md border border-dashed p-3 text-xs text-muted-foreground"
+        data-testid="eej-selected-feature-unavailable"
+      >
+        Selected event features are unavailable.
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="eej-selected-feature-panel">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <h3 className="text-sm font-semibold">Selected Event Features</h3>
+        <Badge variant="secondary" className="font-mono">
+          {selectedEvent.event_id}
+        </Badge>
+      </div>
+      <table className="w-full text-xs" data-testid="eej-selected-feature-table">
+        <thead>
+          <tr className="border-b text-left">
+            <th className="px-2 py-1 font-medium">feature</th>
+            <th className="px-2 py-1 font-medium">raw value</th>
+            <th className="px-2 py-1 font-medium">vector value</th>
+            <th className="px-2 py-1 font-medium">unit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.name} className="border-b" data-testid={`eej-feature-${row.name}`}>
+              <td className="px-2 py-1 font-mono">{row.name}</td>
+              <td className="px-2 py-1">{formatFeatureValue(row.rawValue)}</td>
+              <td className="px-2 py-1">{formatFeatureValue(row.vectorValue)}</td>
+              <td className="px-2 py-1 text-muted-foreground">{row.unit || "-"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function buildSelectedFeatureRows(
+  timeline: EventEncoderTimelineResponse,
+  selectedEvent: EventEncoderTimelineEvent | null,
+): FeatureRow[] {
+  if (!selectedEvent) return [];
+  return timeline.descriptor_feature_names
+    .map((name) => ({
+      name,
+      rawValue: numericValue(selectedEvent.descriptor_values[name]),
+      vectorValue: numericValue(selectedEvent.descriptor_vector_values[name]),
+      unit: timeline.descriptor_feature_units[name] ?? "",
+    }))
+    .filter((row) => row.rawValue != null || row.vectorValue != null);
+}
+
+function numericValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function formatFeatureValue(value: number | null): string {
+  return value == null ? "-" : value.toFixed(3);
 }
 
 function isTextEntryTarget(target: EventTarget | null): boolean {

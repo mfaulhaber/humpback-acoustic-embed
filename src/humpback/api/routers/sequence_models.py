@@ -13,6 +13,7 @@ from humpback.api.deps import SessionDep, SettingsDep
 from humpback.models.call_parsing import RegionDetectionJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
+from humpback.sequence_models.event_encoder import DESCRIPTOR_ORDER, descriptor_units
 from humpback.schemas.sequence_models import (
     ContinuousEmbeddingJobCreate,
     ContinuousEmbeddingJobDetail,
@@ -215,6 +216,7 @@ async def get_event_encoder_timeline(
         raise HTTPException(status_code=409, detail="region detection job not found")
 
     rows = pq.read_table(token_path).to_pylist()
+    token_schema_names = set(pq.read_schema(token_path).names)
     valid_k_values = sorted({int(row["k"]) for row in rows})
     if not valid_k_values:
         raise HTTPException(
@@ -236,6 +238,15 @@ async def get_event_encoder_timeline(
             str(row["event_id"]),
         ),
     )
+    manifest = _load_json_sidecar(job.manifest_path)
+    descriptor_feature_names = _descriptor_feature_names(
+        manifest,
+        token_schema_names,
+    )
+    vector_features = _load_descriptor_vector_values(
+        job.event_vectors_path,
+        descriptor_feature_names,
+    )
     events = [
         EventEncoderTimelineEvent(
             event_id=str(row["event_id"]),
@@ -253,6 +264,11 @@ async def get_event_encoder_timeline(
                 if row.get("second_centroid_distance") is None
                 else float(row["second_centroid_distance"])
             ),
+            descriptor_values=_descriptor_values(row, descriptor_feature_names),
+            descriptor_vector_values=vector_features.get(
+                _event_vector_key(row),
+                {},
+            ),
         )
         for row in selected_rows
     ]
@@ -267,6 +283,8 @@ async def get_event_encoder_timeline(
         region_detection_job_id=continuous.region_detection_job_id,
         selected_k=selected_k,
         valid_k_values=valid_k_values,
+        descriptor_feature_names=descriptor_feature_names,
+        descriptor_feature_units=descriptor_units(),
         job_start_timestamp=float(region_job.start_timestamp or 0.0),
         job_end_timestamp=float(region_job.end_timestamp or 0.0),
         events=events,
@@ -306,3 +324,65 @@ def _load_json_sidecar(path_value: Optional[str]) -> Optional[dict]:
     except Exception:
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _descriptor_feature_names(
+    manifest: Optional[dict],
+    token_schema_names: set[str],
+) -> list[str]:
+    if manifest is not None:
+        names = manifest.get("descriptor_feature_names")
+        if isinstance(names, list) and all(isinstance(name, str) for name in names):
+            return list(names)
+    inferred = [name for name in DESCRIPTOR_ORDER if name in token_schema_names]
+    return inferred or list(DESCRIPTOR_ORDER)
+
+
+def _load_descriptor_vector_values(
+    event_vectors_path: Optional[str],
+    descriptor_feature_names: list[str],
+) -> dict[tuple[str, int, str], dict[str, float]]:
+    if not event_vectors_path:
+        return {}
+    path = Path(event_vectors_path)
+    if not path.exists():
+        return {}
+    try:
+        rows = pq.read_table(path).to_pylist()
+    except Exception:
+        return {}
+
+    values: dict[tuple[str, int, str], dict[str, float]] = {}
+    for row in rows:
+        vector = row.get("descriptor_vector")
+        if not isinstance(vector, list):
+            continue
+        keyed_values = {
+            name: float(vector[index])
+            for index, name in enumerate(descriptor_feature_names)
+            if index < len(vector) and _is_number(vector[index])
+        }
+        values[_event_vector_key(row)] = keyed_values
+    return values
+
+
+def _descriptor_values(
+    row: dict, descriptor_feature_names: list[str]
+) -> dict[str, float]:
+    return {
+        name: float(row[name])
+        for name in descriptor_feature_names
+        if name in row and _is_number(row[name])
+    }
+
+
+def _event_vector_key(row: dict) -> tuple[str, int, str]:
+    return (
+        str(row.get("source_sequence_key", "")),
+        int(row.get("sequence_index") or 0),
+        str(row.get("event_id", "")),
+    )
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)

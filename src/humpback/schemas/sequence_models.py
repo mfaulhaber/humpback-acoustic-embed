@@ -265,8 +265,18 @@ class EventEncoderDescriptorConfig(BaseModel):
     n_fft: int = 1024
     hop_length: int = 512
     eps: float = 1e-12
+    ridge_min_frequency_hz: float = 100.0
+    ridge_max_frequency_hz: float = 3000.0
+    ridge_candidate_count: int = 5
+    ridge_smoothness_penalty: float = 8.0
+    ridge_peak_prominence_ratio: float = 0.0
 
-    @field_validator("target_sample_rate", "n_fft", "hop_length")
+    @field_validator(
+        "target_sample_rate",
+        "n_fft",
+        "hop_length",
+        "ridge_candidate_count",
+    )
     @classmethod
     def _validate_positive_int(cls, value: int) -> int:
         if value <= 0:
@@ -279,6 +289,30 @@ class EventEncoderDescriptorConfig(BaseModel):
         if value <= 0:
             raise ValueError("eps must be > 0")
         return value
+
+    @field_validator(
+        "ridge_min_frequency_hz",
+        "ridge_max_frequency_hz",
+        "ridge_smoothness_penalty",
+        "ridge_peak_prominence_ratio",
+    )
+    @classmethod
+    def _validate_non_negative_ridge_float(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("ridge descriptor settings must be >= 0")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_ridge_band(self) -> "EventEncoderDescriptorConfig":
+        if self.ridge_min_frequency_hz <= 0:
+            raise ValueError("ridge_min_frequency_hz must be > 0")
+        if self.ridge_max_frequency_hz <= self.ridge_min_frequency_hz:
+            raise ValueError(
+                "ridge_max_frequency_hz must be greater than ridge_min_frequency_hz"
+            )
+        if self.ridge_peak_prominence_ratio > 1:
+            raise ValueError("ridge_peak_prominence_ratio must be <= 1")
+        return self
 
 
 class EventEncoderPreprocessingConfig(BaseModel):
@@ -309,7 +343,7 @@ class EventEncoderJobCreate(BaseModel):
     event_segmentation_job_id: str
     event_source_mode: Literal["raw", "effective"] = "raw"
     continuous_embedding_job_id: str
-    tokenizer_version: str = "crnn-event-encoder-v1"
+    tokenizer_version: str = "crnn-event-encoder-v2"
     pooling: EventEncoderPoolingConfig = Field(
         default_factory=EventEncoderPoolingConfig
     )
@@ -402,6 +436,8 @@ class EventEncoderTimelineEvent(BaseModel):
     token_confidence: float
     distance_to_centroid: float
     second_centroid_distance: Optional[float] = None
+    descriptor_values: dict[str, float] = Field(default_factory=dict)
+    descriptor_vector_values: dict[str, float] = Field(default_factory=dict)
 
 
 class EventEncoderTimelineResponse(BaseModel):
@@ -414,6 +450,8 @@ class EventEncoderTimelineResponse(BaseModel):
     region_detection_job_id: str
     selected_k: int
     valid_k_values: list[int]
+    descriptor_feature_names: list[str] = Field(default_factory=list)
+    descriptor_feature_units: dict[str, str] = Field(default_factory=dict)
     job_start_timestamp: float
     job_end_timestamp: float
     events: list[EventEncoderTimelineEvent]
