@@ -17,22 +17,28 @@ helpers, or the retained Sequence Models UI.
 - `frontend/src/components/sequence-models/`
 - `frontend/src/api/sequenceModels.ts`
 - `frontend/src/components/sequence-models/EventEncoderTimelinePanel.tsx`
+- `frontend/src/components/sequence-models/EventEncoderPianoRollPage.tsx`
 - `frontend/src/components/sequence-models/EventEncoderClusterProjectionPanel.tsx`
 - `frontend/src/components/sequence-models/EventEncoderTokenOverlay.tsx`
 - `frontend/e2e/sequence-models/continuous-embedding.spec.ts`
 - `frontend/e2e/sequence-models/event-encoder.spec.ts`
+- `frontend/e2e/sequence-models/event-encoder-piano-roll.spec.ts`
 
 ## Frontend Scope
 
 - Active Sequence Models UI means Continuous Embedding and Event Encoder jobs,
-  create forms, job tables, detail pages, and the Event Encoder detail timeline
-  viewer.
+  create forms, job tables, detail pages, the Event Encoder detail timeline
+  viewer, and the dedicated Event Encoder piano roll route.
 - The Event Encoder timeline viewer is read-only. It renders completed
   `event_tokens.parquet` assignments through a dedicated timeline endpoint and
   uses Call Parsing region tiles/audio for context. Its selected-event feature
   table is also read-only and uses timeline response descriptor metadata plus
   `event_vectors.parquet` descriptor-vector values. Do not treat token labels
   as globally stable across Event Encoder jobs.
+- The Event Encoder piano roll is also read-only and uses the same timeline
+  endpoint. It renders tokenized events on a time-by-frequency canvas using
+  job-local, k-local token ids, descriptor values, and Call Parsing region
+  audio slices for playback.
 - Event Encoder timeline previous/next navigation can be token-scoped by
   toggling the selected event's token badge. This is a frontend-only affordance
   derived from the currently loaded selected-k timeline rows; it does not hide

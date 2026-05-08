@@ -616,6 +616,11 @@ test.describe("Sequence Models - Event Encoder", () => {
     await expect(page.getByTestId("eej-detail-status")).toHaveText("complete");
     await expect(page.getByTestId("eej-sequence-preview")).toContainText("T17");
     await expect(page.getByTestId("eej-tokenization-table")).toBeVisible();
+    await expect(page.getByTestId("eej-piano-roll-link")).toBeVisible();
+    await expect(page.getByTestId("eej-piano-roll-link")).toHaveAttribute(
+      "href",
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
     await expect(page.getByTestId("eej-exemplar-table")).toContainText(
       "evt-17",
     );
@@ -760,6 +765,7 @@ test.describe("Sequence Models - Event Encoder", () => {
     await expect(page.getByTestId("eej-detail-error-message")).toContainText(
       "could not encode",
     );
+    await expect(page.getByTestId("eej-piano-roll-link")).toHaveCount(0);
     await expect(page.getByTestId("eej-timeline-unavailable")).toBeVisible();
   });
 });

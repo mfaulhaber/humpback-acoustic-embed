@@ -19,11 +19,13 @@ Use these commands for targeted feedback. The final backend gate remains
 - `cd frontend && npx vitest run src/components/sequence-models/eventEncoderTimelineNavigation.test.ts src/components/sequence-models/EventEncoderTokenOverlay.test.tsx`
 - `cd frontend && npx tsc --noEmit`
 - `cd frontend && npx playwright test e2e/sequence-models/event-encoder.spec.ts`
+- `cd frontend && npx playwright test e2e/sequence-models/event-encoder-piano-roll.spec.ts`
 
 ## Frontend Domain
 
 - `cd frontend && npx playwright test e2e/sequence-models/continuous-embedding.spec.ts`
 - `cd frontend && npx playwright test e2e/sequence-models/event-encoder.spec.ts`
+- `cd frontend && npx playwright test e2e/sequence-models/event-encoder-piano-roll.spec.ts`
 - `cd frontend && npx vitest run src/components/sequence-models/eventEncoderTimelineNavigation.test.ts src/components/sequence-models/EventEncoderTokenOverlay.test.tsx`
 - `cd frontend && npx tsc --noEmit`
 

@@ -24,6 +24,7 @@ import { ContinuousEmbeddingJobsPage } from "@/components/sequence-models/Contin
 import { ContinuousEmbeddingDetailPage } from "@/components/sequence-models/ContinuousEmbeddingDetailPage";
 import { EventEncoderJobsPage } from "@/components/sequence-models/EventEncoderJobsPage";
 import { EventEncoderDetailPage } from "@/components/sequence-models/EventEncoderDetailPage";
+import { EventEncoderPianoRollPage } from "@/components/sequence-models/EventEncoderPianoRollPage";
 
 export default function App() {
   return (
@@ -54,6 +55,7 @@ export default function App() {
         <Route path="/app/sequence-models" element={<Navigate to="/app/sequence-models/continuous-embedding" replace />} />
         <Route path="/app/sequence-models/continuous-embedding/:jobId" element={<ContinuousEmbeddingDetailPage />} />
         <Route path="/app/sequence-models/continuous-embedding" element={<ContinuousEmbeddingJobsPage />} />
+        <Route path="/app/sequence-models/event-encoder/:jobId/piano-roll" element={<EventEncoderPianoRollPage />} />
         <Route path="/app/sequence-models/event-encoder/:jobId" element={<EventEncoderDetailPage />} />
         <Route path="/app/sequence-models/event-encoder" element={<EventEncoderJobsPage />} />
         <Route path="/app/admin" element={<AdminTab />} />
