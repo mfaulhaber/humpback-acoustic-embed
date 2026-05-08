@@ -245,6 +245,7 @@ function EventEncoderTimelineBody({
     const handleKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isTextEntryTarget(e.target)) return;
+      if (isNativeButtonActivation(e)) return;
 
       switch (e.code) {
         case "KeyA":
@@ -537,4 +538,10 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
     tag === "SELECT" ||
     target.isContentEditable
   );
+}
+
+function isNativeButtonActivation(event: KeyboardEvent): boolean {
+  if (event.code !== "Space" && event.code !== "Enter") return false;
+  if (!(event.target instanceof HTMLElement)) return false;
+  return event.target.closest("button") != null;
 }

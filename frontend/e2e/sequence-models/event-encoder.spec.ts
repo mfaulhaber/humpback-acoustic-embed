@@ -676,12 +676,14 @@ test.describe("Sequence Models - Event Encoder", () => {
     await page.keyboard.press("a");
     await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 1 / 3");
 
-    await page.getByTestId("eej-token-nav-toggle").click();
+    await page.getByTestId("eej-token-nav-toggle").focus();
+    await page.keyboard.press("Space");
     await expect(page.getByTestId("eej-token-nav-toggle")).toHaveAttribute(
       "aria-pressed",
       "true",
     );
     await expect(page.getByTestId("eej-token-nav-count")).toHaveText("1 / 2");
+    expect(state.audioRequests).toEqual([]);
 
     await page.keyboard.press("d");
     await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 3 / 3");
