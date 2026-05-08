@@ -1,5 +1,7 @@
 """Integration tests for retained Sequence Models / Continuous Embedding APIs."""
 
+import math
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -214,6 +216,7 @@ async def _seed_event_encoder_timeline_job(
                     "descriptor_vector": [
                         0.1 * (i + 1) for i in range(len(DESCRIPTOR_ORDER))
                     ],
+                    "event_vector": [0.0, 0.0, 0.0],
                 },
                 {
                     "event_id": "evt-b",
@@ -223,6 +226,7 @@ async def _seed_event_encoder_timeline_job(
                     "descriptor_vector": [
                         1.1 + 0.1 * i for i in range(len(DESCRIPTOR_ORDER))
                     ],
+                    "event_vector": [2.0, 0.0, 0.0],
                 },
             ]
             pq.write_table(pa.Table.from_pylist(vector_rows), vector_path)
@@ -633,3 +637,77 @@ async def test_get_event_encoder_timeline_rejects_non_region_crnn_provenance(
 
     response = await client.get(f"/sequence-models/event-encoders/{job_id}/timeline")
     assert response.status_code == 409
+
+
+async def test_get_event_encoder_projection_defaults_to_lowest_k_pca(
+    client,
+    app_settings,
+):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+
+    response = await client.get(
+        f"/sequence-models/event-encoders/{job_id}/projection",
+        params={"method": "pca"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["job_id"] == job_id
+    assert body["method"] == "pca"
+    assert body["selected_k"] == 2
+    assert body["valid_k_values"] == [2, 3]
+    assert body["x_axis_label"] == "PC 1"
+    assert body["y_axis_label"] == "PC 2"
+    assert [point["event_id"] for point in body["points"]] == ["evt-a", "evt-b"]
+    assert [point["token_label"] for point in body["points"]] == ["T00", "T01"]
+    assert all(math.isfinite(point["x"]) for point in body["points"])
+    assert all(math.isfinite(point["y"]) for point in body["points"])
+
+
+async def test_get_event_encoder_projection_umap_tiny_fallback(
+    client,
+    app_settings,
+):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+
+    response = await client.get(
+        f"/sequence-models/event-encoders/{job_id}/projection",
+        params={"method": "umap"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["method"] == "umap"
+    assert body["x_axis_label"] == "UMAP 1"
+    assert body["y_axis_label"] == "UMAP 2"
+    assert len(body["points"]) == 2
+    assert all(math.isfinite(point["x"]) for point in body["points"])
+    assert all(math.isfinite(point["y"]) for point in body["points"])
+
+
+async def test_get_event_encoder_projection_rejects_invalid_k(
+    client,
+    app_settings,
+):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+
+    response = await client.get(
+        f"/sequence-models/event-encoders/{job_id}/projection",
+        params={"k": 99, "method": "pca"},
+    )
+
+    assert response.status_code == 422
+
+
+async def test_get_event_encoder_projection_missing_vector_artifact(
+    client,
+    app_settings,
+):
+    job_id = await _seed_event_encoder_timeline_job(
+        app_settings,
+        write_vectors=False,
+    )
+
+    response = await client.get(f"/sequence-models/event-encoders/{job_id}/projection")
+
+    assert response.status_code == 404

@@ -1,7 +1,10 @@
 import { useMemo, useCallback, useRef } from "react";
-import Plot from "react-plotly.js";
 import { useVocClusteringVisualization } from "@/hooks/queries/useVocalization";
 import { detectionAudioSliceUrl } from "@/api/client";
+import {
+  ClusterProjectionPlot,
+  type ClusterProjectionPlotPoint,
+} from "@/components/shared/ClusterProjectionPlot";
 
 const PALETTE = [
   "#3a86ff", "#e63946", "#2a9d8f", "#e9c46a", "#264653",
@@ -23,60 +26,43 @@ export function VocalizationUmapPlot({ jobId }: VocalizationUmapPlotProps) {
   const { data: viz, isLoading } = useVocClusteringVisualization(jobId);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const { traces, layout } = useMemo(() => {
-    if (!viz) return { traces: [] as Plotly.Data[], layout: {} as Partial<Plotly.Layout> };
+  const points = useMemo(() => {
+    if (!viz) return [] as ClusterProjectionPlotPoint<PointCustomData>[];
 
-    const groups = new Map<number, number[]>();
-    for (let i = 0; i < viz.cluster_label.length; i++) {
-      const label = viz.cluster_label[i];
-      if (!groups.has(label)) groups.set(label, []);
-      groups.get(label)!.push(i);
+    const sortedLabels = [...new Set(viz.cluster_label)].sort((a, b) => a - b);
+    const colors = new Map<number, string>();
+    for (const [traceIdx, label] of sortedLabels.entries()) {
+      colors.set(
+        label,
+        label === -1 ? "#b2bec3" : PALETTE[traceIdx % PALETTE.length],
+      );
     }
 
-    const sortedLabels = [...groups.keys()].sort((a, b) => a - b);
-
-    const traces = sortedLabels.map((label, traceIdx) => {
-      const indices = groups.get(label)!;
+    return viz.cluster_label.map((label, index) => {
       const isNoise = label === -1;
       return {
-        x: indices.map((i) => viz.x[i]),
-        y: indices.map((i) => viz.y[i]),
-        mode: "markers" as const,
-        type: "scatter" as const,
-        name: isNoise ? "Noise" : `Cluster ${label}`,
-        marker: {
-          color: isNoise ? "#b2bec3" : PALETTE[traceIdx % PALETTE.length],
-          size: isNoise ? 4 : 7,
-          opacity: isNoise ? 0.4 : 0.8,
+        id: `${viz.detection_job_id[index]}-${viz.embedding_row_index[index]}`,
+        x: viz.x[index],
+        y: viz.y[index],
+        groupKey: String(label),
+        groupLabel: isNoise ? "Noise" : `Cluster ${label}`,
+        color: colors.get(label) ?? PALETTE[0],
+        markerSize: isNoise ? 4 : 7,
+        markerOpacity: isNoise ? 0.4 : 0.8,
+        hoverText: viz.category[index] ?? "",
+        customData: {
+          detectionJobId: viz.detection_job_id[index],
+          startUtc: viz.start_utc?.[index] ?? null,
+          category: viz.category[index] ?? "",
         },
-        text: indices.map((i) => viz.category[i] ?? ""),
-        hoverinfo: "text+name" as const,
-        customdata: indices.map((i) => ({
-          detectionJobId: viz.detection_job_id[i],
-          startUtc: viz.start_utc?.[i] ?? null,
-          category: viz.category[i] ?? "",
-        })),
       };
-    }) as unknown as Plotly.Data[];
-
-    const layout: Partial<Plotly.Layout> = {
-      xaxis: { title: { text: "UMAP 1" } },
-      yaxis: { title: { text: "UMAP 2" } },
-      legend: { x: 1.02, y: 1, orientation: "v" as const },
-      margin: { l: 50, r: 120, t: 20, b: 50 },
-      hovermode: "closest" as const,
-      height: 500,
-    };
-
-    return { traces, layout };
+    });
   }, [viz]);
 
   const handleClick = useCallback(
-    (event: Plotly.PlotMouseEvent) => {
-      const point = event.points[0];
-      if (!point || !point.customdata) return;
-      const cd = point.customdata as unknown as PointCustomData;
-      if (!cd.detectionJobId || cd.startUtc == null) return;
+    (point: ClusterProjectionPlotPoint<PointCustomData>) => {
+      const cd = point.customData;
+      if (!cd?.detectionJobId || cd.startUtc == null) return;
 
       if (!audioRef.current) {
         audioRef.current = new Audio();
@@ -91,13 +77,13 @@ export function VocalizationUmapPlot({ jobId }: VocalizationUmapPlotProps) {
   if (!viz) return <p className="text-sm text-muted-foreground">No visualization data available.</p>;
 
   return (
-    <Plot
-      data={traces}
-      layout={layout}
-      config={{ responsive: true, displayModeBar: false }}
-      onClick={handleClick}
-      useResizeHandler
-      style={{ width: "100%" }}
+    <ClusterProjectionPlot
+      points={points}
+      xAxisTitle="UMAP 1"
+      yAxisTitle="UMAP 2"
+      height={500}
+      emptyMessage="No visualization data available."
+      onPointClick={handleClick}
     />
   );
 }

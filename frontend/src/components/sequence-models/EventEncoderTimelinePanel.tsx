@@ -18,6 +18,7 @@ import { Spectrogram } from "@/components/timeline/spectrogram/Spectrogram";
 import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
 
 import { labelColor } from "./constants";
+import { EventEncoderClusterProjectionPanel } from "./EventEncoderClusterProjectionPanel";
 import { EventEncoderTokenOverlay } from "./EventEncoderTokenOverlay";
 
 interface EventEncoderTimelinePanelProps {
@@ -113,6 +114,7 @@ export function EventEncoderTimelinePanel({ job }: EventEncoderTimelinePanelProp
             scrollOnPlayback={false}
           >
             <EventEncoderTimelineBody
+              job={job}
               timeline={data}
               selectedEventId={selectedEventId}
               selectedListIndex={selectedListIndex}
@@ -153,6 +155,7 @@ function TimelineMessage({
 }
 
 function EventEncoderTimelineBody({
+  job,
   timeline,
   selectedEventId,
   selectedListIndex,
@@ -160,6 +163,7 @@ function EventEncoderTimelineBody({
   onSelectIndex,
   onKChange,
 }: {
+  job: EventEncoderJob;
   timeline: EventEncoderTimelineResponse;
   selectedEventId: string | null;
   selectedListIndex: number;
@@ -367,6 +371,17 @@ function EventEncoderTimelineBody({
         <SelectedEventFeatureTable
           rows={featureRows}
           selectedEvent={selectedEvent}
+        />
+      </div>
+      <div className="border-t border-border px-3 py-3">
+        <EventEncoderClusterProjectionPanel
+          job={job}
+          selectedK={timeline.selected_k}
+          selectedEventId={selectedEventId}
+          onSelectEvent={(eventId) => {
+            const index = events.findIndex((event) => event.event_id === eventId);
+            onSelectEvent(eventId, Math.max(0, index));
+          }}
         />
       </div>
     </div>

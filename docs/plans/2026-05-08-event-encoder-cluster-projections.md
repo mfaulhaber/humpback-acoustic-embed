@@ -17,12 +17,12 @@
 - Modify: `tests/unit/test_clustering_pipeline.py`
 
 **Acceptance criteria:**
-- [ ] Completed Event Encoder jobs expose `GET /sequence-models/event-encoders/{job_id}/projection` with `method=umap|pca` and optional `k`.
-- [ ] The endpoint joins selected token rows to persisted `event_vector` rows without reading current Pass 2 event state.
-- [ ] The endpoint reuses existing PCA/UMAP reduction helpers through a stable two-dimensional projection wrapper.
-- [ ] Invalid `k`, incomplete jobs, missing token artifacts, and missing vector artifacts produce explicit HTTP errors.
-- [ ] PCA and UMAP responses include plot-ready points with token metadata and deterministic coordinates for tiny datasets.
-- [ ] Integration tests cover PCA, UMAP/tiny fallback, invalid `k`, and missing vectors.
+- [x] Completed Event Encoder jobs expose `GET /sequence-models/event-encoders/{job_id}/projection` with `method=umap|pca` and optional `k`.
+- [x] The endpoint joins selected token rows to persisted `event_vector` rows without reading current Pass 2 event state.
+- [x] The endpoint reuses existing PCA/UMAP reduction helpers through a stable two-dimensional projection wrapper.
+- [x] Invalid `k`, incomplete jobs, missing token artifacts, and missing vector artifacts produce explicit HTTP errors.
+- [x] PCA and UMAP responses include plot-ready points with token metadata and deterministic coordinates for tiny datasets.
+- [x] Integration tests cover PCA, UMAP/tiny fallback, invalid `k`, and missing vectors.
 
 **Tests needed:**
 - `uv run pytest tests/unit/test_clustering_pipeline.py -q`
@@ -36,9 +36,9 @@
 - Modify: `frontend/src/api/sequenceModels.ts`
 
 **Acceptance criteria:**
-- [ ] Frontend types model projection methods, response metadata, and projection points.
-- [ ] A fetcher and TanStack query hook request projection data by job id, selected `k`, and projection method.
-- [ ] The projection query stays disabled until the Event Encoder job is complete and a job id is available.
+- [x] Frontend types model projection methods, response metadata, and projection points.
+- [x] A fetcher and TanStack query hook request projection data by job id, selected `k`, and projection method.
+- [x] The projection query stays disabled until the Event Encoder job is complete and a job id is available.
 
 **Tests needed:**
 - TypeScript verification via `cd frontend && npx tsc --noEmit`.
@@ -52,9 +52,9 @@
 - Modify: `frontend/src/components/vocalization/VocalizationUmapPlot.tsx`
 
 **Acceptance criteria:**
-- [ ] Shared Plotly scatter rendering handles grouped points, legends, axis titles, responsive sizing, optional selected-point highlighting, and optional point click handlers.
-- [ ] `VocalizationUmapPlot` adapts existing vocalization visualization data into the shared component.
-- [ ] Vocalization cluster colors, noise styling, and audio-on-click behavior are preserved.
+- [x] Shared Plotly scatter rendering handles grouped points, legends, axis titles, responsive sizing, optional selected-point highlighting, and optional point click handlers.
+- [x] `VocalizationUmapPlot` adapts existing vocalization visualization data into the shared component.
+- [x] Vocalization cluster colors, noise styling, and audio-on-click behavior are preserved.
 
 **Tests needed:**
 - TypeScript verification via `cd frontend && npx tsc --noEmit`.
@@ -69,12 +69,12 @@
 - Modify: `frontend/e2e/sequence-models/event-encoder.spec.ts`
 
 **Acceptance criteria:**
-- [ ] The new panel appears directly beneath Selected Event Features in the Event Encoder timeline viewer.
-- [ ] The selector switches between UMAP and PCA projections.
-- [ ] Plotly traces are grouped by token and use `labelColor(token_id, selected_k)`.
-- [ ] The currently selected event is visually distinguished in the plot.
-- [ ] Loading, empty, and error states match the existing detail page tone.
-- [ ] Playwright coverage verifies panel placement and selector-driven PCA requests.
+- [x] The new panel appears directly beneath Selected Event Features in the Event Encoder timeline viewer.
+- [x] The selector switches between UMAP and PCA projections.
+- [x] Plotly traces are grouped by token and use `labelColor(token_id, selected_k)`.
+- [x] The currently selected event is visually distinguished in the plot.
+- [x] Loading, empty, and error states match the existing detail page tone.
+- [x] Playwright coverage verifies panel placement and selector-driven PCA requests.
 
 **Tests needed:**
 - `cd frontend && npx playwright test e2e/sequence-models/event-encoder.spec.ts`
@@ -89,9 +89,9 @@
 - Modify: `docs/agent-context/domains/vocalization-clustering/README.md`
 
 **Acceptance criteria:**
-- [ ] Sequence Models context mentions the Event Encoder projection endpoint and detail-page cluster projection panel.
-- [ ] Vocalization Clustering context mentions that its UMAP plot uses the shared cluster projection plot component.
-- [ ] The context preserves the artifact-authoritative completed-job rule.
+- [x] Sequence Models context mentions the Event Encoder projection endpoint and detail-page cluster projection panel.
+- [x] Vocalization Clustering context mentions that its UMAP plot uses the shared cluster projection plot component.
+- [x] The context preserves the artifact-authoritative completed-job rule.
 
 **Tests needed:**
 - Documentation-only task; no targeted automated test required.
