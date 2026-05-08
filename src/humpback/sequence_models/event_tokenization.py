@@ -49,6 +49,7 @@ def preprocess_event_features(
     pca_dim: int = 128,
     embedding_weight: float = 1.0,
     descriptor_weight: float = 1.0,
+    descriptor_clip_value: float | None = 3.0,
     random_seed: int = 0,
     eps: float = 1e-12,
 ) -> PreprocessResult:
@@ -69,6 +70,8 @@ def preprocess_event_features(
         raise ValueError("feature weights must be >= 0")
     if embedding_weight == 0 and descriptor_weight == 0:
         raise ValueError("at least one feature weight must be > 0")
+    if descriptor_clip_value is not None and descriptor_clip_value < 0:
+        raise ValueError("descriptor_clip_value must be >= 0")
 
     normalized_pools = (
         _l2_normalize_pool_blocks(
@@ -92,6 +95,12 @@ def preprocess_event_features(
         embedding_vectors = normalized_pools[:, :effective_pca_dim].astype(np.float32)
 
     descriptor_vectors, medians, scales = robust_zscore(descriptors, eps=eps)
+    if descriptor_clip_value is not None:
+        descriptor_vectors = np.clip(
+            descriptor_vectors,
+            -float(descriptor_clip_value),
+            float(descriptor_clip_value),
+        ).astype(np.float32)
     event_vectors = np.concatenate(
         [
             embedding_vectors * float(embedding_weight),

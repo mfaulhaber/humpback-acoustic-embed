@@ -111,6 +111,7 @@ export interface EventEncoderPreprocessingConfig {
   pca_dim?: 64 | 128;
   embedding_weight?: number;
   descriptor_weight?: number;
+  descriptor_clip_value?: number | null;
 }
 
 export interface EventEncoderJob {

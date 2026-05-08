@@ -59,6 +59,46 @@ def test_preprocess_supports_single_event_without_pca_fit():
     assert result.event_vectors.shape == (1, 3)
 
 
+def test_preprocess_clips_descriptor_outliers_after_robust_zscore():
+    result = preprocess_event_features(
+        np.asarray(
+            [
+                [1.0, 0.0],
+                [0.0, 1.0],
+                [1.0, 1.0],
+            ],
+            dtype=np.float32,
+        ),
+        np.asarray([[0.0], [0.1], [100.0]], dtype=np.float32),
+        pool_dim=1,
+        pool_count=2,
+        pca_dim=64,
+        descriptor_clip_value=3.0,
+    )
+
+    assert result.descriptor_vectors[:, 0].max() == pytest.approx(3.0)
+
+
+def test_preprocess_can_disable_descriptor_clipping():
+    result = preprocess_event_features(
+        np.asarray(
+            [
+                [1.0, 0.0],
+                [0.0, 1.0],
+                [1.0, 1.0],
+            ],
+            dtype=np.float32,
+        ),
+        np.asarray([[0.0], [0.1], [100.0]], dtype=np.float32),
+        pool_dim=1,
+        pool_count=2,
+        pca_dim=64,
+        descriptor_clip_value=None,
+    )
+
+    assert result.descriptor_vectors[:, 0].max() > 3.0
+
+
 def test_robust_zscore_uses_median_and_mad_floor():
     scaled, medians, scales = robust_zscore(
         np.asarray(

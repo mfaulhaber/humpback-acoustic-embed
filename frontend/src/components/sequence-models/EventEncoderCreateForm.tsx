@@ -22,6 +22,8 @@ const ALL_POOLS = [
   "end_pool",
 ] as const;
 
+const DEFAULT_DESCRIPTOR_WEIGHT = 0.571;
+
 export function EventEncoderCreateForm() {
   const { data: segJobs = [] } = useSegmentationJobs(0);
   const { data: continuousJobs = [] } = useContinuousEmbeddingJobs(0);
@@ -43,7 +45,9 @@ export function EventEncoderCreateForm() {
   const [minOverlap, setMinOverlap] = useState(0.25);
   const [l2NormalizePools, setL2NormalizePools] = useState(true);
   const [embeddingWeight, setEmbeddingWeight] = useState(1.0);
-  const [descriptorWeight, setDescriptorWeight] = useState(1.0);
+  const [descriptorWeight, setDescriptorWeight] = useState(
+    DEFAULT_DESCRIPTOR_WEIGHT,
+  );
   const [randomSeed, setRandomSeed] = useState(0);
   const [error, setError] = useState<string | null>(null);
 

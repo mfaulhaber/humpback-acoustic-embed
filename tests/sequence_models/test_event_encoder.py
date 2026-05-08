@@ -132,8 +132,143 @@ def test_acoustic_descriptors_identify_sine_peak_frequency():
     assert 0 <= descriptors["spectral_entropy"] <= 1
     assert descriptors["ridge_log_frequency_slope"] == pytest.approx(0.0, abs=0.1)
     assert descriptors["gap_to_previous"] == pytest.approx(1.25)
-    assert vec.shape == (8,)
+    assert vec.shape == (14,)
     assert "frequency_slope" not in descriptors
+
+
+def test_f0_descriptors_track_steady_sine():
+    sample_rate = 16000
+    t = np.arange(sample_rate, dtype=np.float32) / sample_rate
+    audio = np.sin(2.0 * np.pi * 440.0 * t).astype(np.float32)
+
+    descriptors = compute_acoustic_descriptors(
+        audio,
+        sample_rate=sample_rate,
+        n_fft=1024,
+        hop_length=512,
+    )
+
+    assert descriptors["median_f0"] == pytest.approx(440.0, abs=5.0)
+    assert descriptors["f0_range"] == pytest.approx(0.0, abs=20.0)
+    assert descriptors["voicing_fraction"] == pytest.approx(1.0, abs=0.1)
+
+
+def test_f0_descriptors_track_log_chirp_range():
+    sample_rate = 16000
+    audio = _log_chirp(
+        sample_rate=sample_rate,
+        duration=1.0,
+        start_hz=300.0,
+        end_hz=1200.0,
+    )
+
+    descriptors = compute_acoustic_descriptors(
+        audio,
+        sample_rate=sample_rate,
+        n_fft=1024,
+        hop_length=256,
+    )
+
+    assert 300.0 <= descriptors["median_f0"] <= 1200.0
+    assert descriptors["f0_range"] > 100.0
+    assert descriptors["voicing_fraction"] > 0.5
+
+
+def test_f0_descriptors_return_zero_for_empty_and_silent_audio():
+    empty = compute_acoustic_descriptors(
+        np.asarray([], dtype=np.float32), sample_rate=16000
+    )
+    silent = compute_acoustic_descriptors(
+        np.zeros(16000, dtype=np.float32), sample_rate=16000
+    )
+
+    for descriptors in (empty, silent):
+        assert descriptors["median_f0"] == 0.0
+        assert descriptors["f0_range"] == 0.0
+        assert descriptors["voicing_fraction"] == 0.0
+
+
+def test_pulse_descriptors_track_amplitude_modulation_rate():
+    sample_rate = 16000
+    audio = _am_tone(
+        sample_rate=sample_rate,
+        duration=1.0,
+        carrier_hz=500.0,
+        pulse_rate_hz=20.0,
+    )
+
+    descriptors = compute_acoustic_descriptors(
+        audio,
+        sample_rate=sample_rate,
+        n_fft=1024,
+        hop_length=512,
+    )
+
+    assert descriptors["pulse_rate"] == pytest.approx(20.0, abs=1.0)
+    assert abs(descriptors["pulse_rate_slope"]) < 5.0
+
+
+def test_pulse_descriptors_return_zero_for_smooth_tone():
+    sample_rate = 16000
+    t = np.arange(sample_rate, dtype=np.float32) / sample_rate
+    audio = np.sin(2.0 * np.pi * 440.0 * t).astype(np.float32)
+
+    descriptors = compute_acoustic_descriptors(
+        audio,
+        sample_rate=sample_rate,
+        n_fft=1024,
+        hop_length=512,
+    )
+
+    assert descriptors["pulse_rate"] == 0.0
+    assert descriptors["pulse_rate_slope"] == 0.0
+
+
+def test_pulse_rate_slope_tracks_decaying_modulation_rate():
+    sample_rate = 16000
+    duration = 2.0
+    t = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
+    start_rate = 40.0
+    rate_slope = -15.0
+    modulation_phase = 2.0 * np.pi * (start_rate * t + 0.5 * rate_slope * np.square(t))
+    envelope = 1.0 + 0.75 * np.sin(modulation_phase)
+    audio = (envelope * np.sin(2.0 * np.pi * 500.0 * t)).astype(np.float32)
+
+    descriptors = compute_acoustic_descriptors(
+        audio,
+        sample_rate=sample_rate,
+        n_fft=1024,
+        hop_length=512,
+        pulse_min_rate_hz=5.0,
+        pulse_max_rate_hz=80.0,
+        pulse_confidence_threshold=0.1,
+    )
+
+    assert descriptors["pulse_rate"] > 0.0
+    assert descriptors["pulse_rate_slope"] < 0.0
+
+
+def test_pulse_descriptors_return_zero_for_degenerate_audio():
+    sample_rate = 16000
+    empty = compute_acoustic_descriptors(
+        np.asarray([], dtype=np.float32), sample_rate=sample_rate
+    )
+    silent = compute_acoustic_descriptors(
+        np.zeros(sample_rate, dtype=np.float32), sample_rate=sample_rate
+    )
+    very_short = compute_acoustic_descriptors(
+        _am_tone(
+            sample_rate=sample_rate,
+            duration=0.01,
+            carrier_hz=500.0,
+            pulse_rate_hz=20.0,
+        ),
+        sample_rate=sample_rate,
+    )
+
+    for descriptors in (empty, silent, very_short):
+        assert descriptors["pulse_rate"] == 0.0
+        assert descriptors["pulse_rate_slope"] == 0.0
 
 
 def test_ridge_log_frequency_slope_tracks_log_chirp():
@@ -196,6 +331,54 @@ def test_ridge_log_frequency_slope_is_stable_across_harmonics():
     )
 
 
+def test_inflection_count_is_zero_for_ascending_log_chirp():
+    sample_rate = 16000
+    audio = _log_chirp(
+        sample_rate=sample_rate,
+        duration=1.0,
+        start_hz=300.0,
+        end_hz=1200.0,
+    )
+
+    descriptors = compute_acoustic_descriptors(
+        audio,
+        sample_rate=sample_rate,
+        n_fft=1024,
+        hop_length=256,
+    )
+
+    assert descriptors["inflection_count"] == 0.0
+
+
+def test_inflection_count_counts_up_then_down_chirp():
+    sample_rate = 16000
+    audio = np.concatenate(
+        [
+            _log_chirp(
+                sample_rate=sample_rate,
+                duration=0.5,
+                start_hz=300.0,
+                end_hz=1200.0,
+            ),
+            _log_chirp(
+                sample_rate=sample_rate,
+                duration=0.5,
+                start_hz=1200.0,
+                end_hz=300.0,
+            ),
+        ]
+    )
+
+    descriptors = compute_acoustic_descriptors(
+        audio,
+        sample_rate=sample_rate,
+        n_fft=1024,
+        hop_length=256,
+    )
+
+    assert descriptors["inflection_count"] == pytest.approx(np.log(2.0))
+
+
 def test_ridge_log_frequency_slope_returns_finite_zero_for_degenerate_inputs():
     empty = compute_acoustic_descriptors(
         np.asarray([], dtype=np.float32), sample_rate=16000
@@ -213,6 +396,8 @@ def test_ridge_log_frequency_slope_returns_finite_zero_for_degenerate_inputs():
     for descriptors in (empty, silent, invalid_band):
         assert np.isfinite(descriptors["ridge_log_frequency_slope"])
         assert descriptors["ridge_log_frequency_slope"] == 0.0
+        assert np.isfinite(descriptors["inflection_count"])
+        assert descriptors["inflection_count"] == 0.0
         assert descriptor_vector(descriptors).shape == (len(DESCRIPTOR_ORDER),)
 
 
@@ -227,3 +412,16 @@ def _log_chirp(
     slope = np.log(end_hz / start_hz) / duration
     phase = 2.0 * np.pi * start_hz * (np.exp(slope * t) - 1.0) / slope
     return np.sin(phase).astype(np.float32)
+
+
+def _am_tone(
+    *,
+    sample_rate: int,
+    duration: float,
+    carrier_hz: float,
+    pulse_rate_hz: float,
+) -> np.ndarray:
+    t = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
+    envelope = 1.0 + 0.75 * np.sin(2.0 * np.pi * pulse_rate_hz * t)
+    carrier = np.sin(2.0 * np.pi * carrier_hz * t)
+    return (envelope * carrier).astype(np.float32)
