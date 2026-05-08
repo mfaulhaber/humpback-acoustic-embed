@@ -1,4 +1,22 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest *)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(uv run pyright)",
+      "Bash(uv run pyright *)",
+      "Bash(uv run ruff check *)",
+      "Bash(uv run ruff format --check *)",
+      "Bash(npx playwright test *)",
+      "Bash(npx vitest run *)",
+      "Bash(git fetch *)",
+      "Bash(git merge-base *)",
+      "Bash(cd * && npx tsc --noEmit)",
+      "Bash(cd * && npx playwright test *)",
+      "Bash(cd * && npx vitest run *)",
+      "mcp__ccd_session__mark_chapter"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {
