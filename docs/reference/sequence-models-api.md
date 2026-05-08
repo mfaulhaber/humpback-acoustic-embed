@@ -136,6 +136,19 @@ and fits one k-means tokenizer per feasible k.
 - `GET /sequence-models/event-encoders/{id}` returns
   `{ job: EventEncoderJob, manifest: object | null, report: object | null }`.
 
+- `GET /sequence-models/event-encoders/{id}/timeline` returns tokenized events
+  for the Event Encoder detail timeline viewer. The endpoint reads
+  `event_tokens.parquet` from the completed job and treats that artifact as
+  authoritative; it does not reload current raw or effective Pass 2 events.
+  An optional `?k=` filters to one tokenization. If omitted, the lowest valid
+  k in the artifact is selected. Responses include source provenance,
+  `region_detection_job_id`, region job timestamp bounds for tiles/audio,
+  `selected_k`, all available `valid_k_values`, and compact event rows with
+  absolute timestamps, token id/label, confidence, and centroid-distance
+  diagnostics. Missing jobs or token artifacts return `404`, incomplete jobs
+  and corrupt non-`region_crnn` provenance return `409`, and unavailable k
+  values return `422`.
+
 - `POST /sequence-models/event-encoders/{id}/cancel` cancels a queued or
   running job. Terminal jobs return `409`.
 
@@ -157,6 +170,8 @@ scaled descriptor vector, and final event vector.
 `event_tokens.parquet` contains one row per valid k/event with `event_id`,
 timing, `token_id`, `token_label`, `distance_to_centroid`,
 `second_centroid_distance`, `token_confidence`, and descriptors.
+Token ids and labels are job-local and k-local; colors or labels in one Event
+Encoder job should not be interpreted as globally stable vocabulary entries.
 
 `token_sequences.parquet` contains ordered token streams per valid
 `k` and `source_sequence_key`.

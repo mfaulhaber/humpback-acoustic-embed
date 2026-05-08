@@ -386,3 +386,34 @@ class EventEncoderJobDetail(BaseModel):
     job: EventEncoderJobOut
     manifest: Optional[dict[str, Any]] = None
     report: Optional[dict[str, Any]] = None
+
+
+class EventEncoderTimelineEvent(BaseModel):
+    """One tokenized event row for the Event Encoder timeline viewer."""
+
+    event_id: str
+    region_id: str
+    source_sequence_key: str
+    sequence_index: int
+    start_timestamp: float
+    end_timestamp: float
+    token_id: int
+    token_label: str
+    token_confidence: float
+    distance_to_centroid: float
+    second_centroid_distance: Optional[float] = None
+
+
+class EventEncoderTimelineResponse(BaseModel):
+    """Timeline-ready token assignments for a completed Event Encoder job."""
+
+    job_id: str
+    event_segmentation_job_id: str
+    event_source_mode: Literal["raw", "effective"]
+    continuous_embedding_job_id: str
+    region_detection_job_id: str
+    selected_k: int
+    valid_k_values: list[int]
+    job_start_timestamp: float
+    job_end_timestamp: float
+    events: list[EventEncoderTimelineEvent]

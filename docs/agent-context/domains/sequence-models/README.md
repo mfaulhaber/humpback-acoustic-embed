@@ -16,13 +16,20 @@ helpers, or the retained Sequence Models UI.
 - `src/humpback/schemas/sequence_models.py`
 - `frontend/src/components/sequence-models/`
 - `frontend/src/api/sequenceModels.ts`
+- `frontend/src/components/sequence-models/EventEncoderTimelinePanel.tsx`
+- `frontend/src/components/sequence-models/EventEncoderTokenOverlay.tsx`
 - `frontend/e2e/sequence-models/continuous-embedding.spec.ts`
 - `frontend/e2e/sequence-models/event-encoder.spec.ts`
 
 ## Frontend Scope
 
 - Active Sequence Models UI means Continuous Embedding and Event Encoder jobs,
-  create forms, job tables, and detail pages.
+  create forms, job tables, detail pages, and the Event Encoder detail timeline
+  viewer.
+- The Event Encoder timeline viewer is read-only. It renders completed
+  `event_tokens.parquet` assignments through a dedicated timeline endpoint and
+  uses Call Parsing region tiles/audio for context. Do not treat token labels as
+  globally stable across Event Encoder jobs.
 - `DiscreteSequenceBar`, `RegionNavBar`, `SpanNavBar`,
   `MotifTimelineLegend`, `MotifHighlightOverlay`, and `CollapsiblePanelCard`
   are retained generic visualization primitives for future analysis/review

@@ -1,5 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 
+const PNG_1X1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+P+/HgAFeAJ5g5r0ZQAAAABJRU5ErkJggg==",
+  "base64",
+);
+const SILENT_WAV = Buffer.from(
+  "UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=",
+  "base64",
+);
+
 const REGION_JOB = {
   id: "rj-complete-1",
   status: "complete",
@@ -203,9 +212,70 @@ const COMPLETE_DETAIL = {
 
 const FAILED_DETAIL = { job: FAILED_JOB, manifest: null, report: null };
 
+const TIMELINE_50 = {
+  job_id: COMPLETE_JOB.id,
+  event_segmentation_job_id: SEG_JOB.id,
+  event_source_mode: "raw",
+  continuous_embedding_job_id: CRNN_EMBEDDING_JOB.id,
+  region_detection_job_id: REGION_JOB.id,
+  selected_k: 50,
+  valid_k_values: [50, 100],
+  job_start_timestamp: REGION_JOB.start_timestamp,
+  job_end_timestamp: REGION_JOB.end_timestamp,
+  events: [
+    {
+      event_id: "evt-17",
+      region_id: "region-a",
+      source_sequence_key: "hydrophone:rpi_orcasound_lab",
+      sequence_index: 0,
+      start_timestamp: REGION_JOB.start_timestamp + 10,
+      end_timestamp: REGION_JOB.start_timestamp + 12,
+      token_id: 17,
+      token_label: "T17",
+      token_confidence: 0.812,
+      distance_to_centroid: 0.11,
+      second_centroid_distance: null,
+    },
+    {
+      event_id: "evt-42",
+      region_id: "region-a",
+      source_sequence_key: "hydrophone:rpi_orcasound_lab",
+      sequence_index: 1,
+      start_timestamp: REGION_JOB.start_timestamp + 20,
+      end_timestamp: REGION_JOB.start_timestamp + 21,
+      token_id: 42,
+      token_label: "T42",
+      token_confidence: 0.654,
+      distance_to_centroid: 0.22,
+      second_centroid_distance: 0.5,
+    },
+  ],
+};
+
+const TIMELINE_100 = {
+  ...TIMELINE_50,
+  selected_k: 100,
+  events: [
+    {
+      ...TIMELINE_50.events[0],
+      token_id: 5,
+      token_label: "T05",
+      token_confidence: 0.901,
+    },
+    {
+      ...TIMELINE_50.events[1],
+      token_id: 31,
+      token_label: "T31",
+      token_confidence: 0.712,
+    },
+  ],
+};
+
 interface MockState {
   jobs: typeof QUEUED_JOB[];
   lastCreateBody?: CreatePayload;
+  timelineRequests?: string[];
+  audioRequests?: string[];
 }
 
 interface CreatePayload {
@@ -215,6 +285,9 @@ interface CreatePayload {
 }
 
 async function setupMocks(page: Page, state: MockState) {
+  state.timelineRequests ??= [];
+  state.audioRequests ??= [];
+
   await page.route("**/call-parsing/segmentation-jobs**", (route) =>
     route.fulfill({
       status: 200,
@@ -238,6 +311,23 @@ async function setupMocks(page: Page, state: MockState) {
     },
   );
 
+  await page.route("**/call-parsing/region-jobs/*/tile**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "image/png",
+      body: PNG_1X1,
+    }),
+  );
+
+  await page.route("**/call-parsing/region-jobs/*/audio-slice**", (route) => {
+    state.audioRequests?.push(route.request().url());
+    return route.fulfill({
+      status: 200,
+      contentType: "audio/wav",
+      body: SILENT_WAV,
+    });
+  });
+
   await page.route("**/sequence-models/event-encoders**", async (route) => {
     const url = route.request().url();
     const method = route.request().method();
@@ -245,6 +335,18 @@ async function setupMocks(page: Page, state: MockState) {
 
     if (idMatch) {
       const id = idMatch[1];
+      if (url.includes("/timeline")) {
+        state.timelineRequests?.push(url);
+        if (id !== COMPLETE_JOB.id) {
+          return route.fulfill({ status: 409 });
+        }
+        const selectedK = new URL(url).searchParams.get("k");
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(selectedK === "100" ? TIMELINE_100 : TIMELINE_50),
+        });
+      }
       if (url.includes("/cancel")) {
         const job = state.jobs.find((j) => j.id === id);
         if (!job) return route.fulfill({ status: 404 });
@@ -389,6 +491,46 @@ test.describe("Sequence Models - Event Encoder", () => {
     );
   });
 
+  test("complete detail page shows navigable token timeline", async ({ page }) => {
+    const state: MockState = { jobs: [COMPLETE_JOB] };
+    await setupMocks(page, state);
+    await page.goto(`/app/sequence-models/event-encoder/${COMPLETE_JOB.id}`);
+
+    await expect(page.getByTestId("eej-timeline-panel")).toBeVisible();
+    const summaryBox = await page.getByTestId("eej-summary-panel").boundingBox();
+    const timelineBox = await page.getByTestId("eej-timeline-panel").boundingBox();
+    const reportBox = await page.getByTestId("eej-report-panel").boundingBox();
+    expect(summaryBox?.y ?? 0).toBeLessThan(timelineBox?.y ?? 0);
+    expect(timelineBox?.y ?? 0).toBeLessThan(reportBox?.y ?? 0);
+
+    await expect(page.getByTestId("eej-token-badge-evt-17")).toHaveText("T17");
+    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 1 / 2");
+    await expect(page.getByTestId("eej-selected-token")).toHaveText("T17");
+
+    await page.keyboard.press("d");
+    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 2 / 2");
+    await expect(page.getByTestId("eej-selected-token")).toHaveText("T42");
+
+    await page.keyboard.press("a");
+    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 1 / 2");
+
+    await page.getByTestId("eej-event-next").click();
+    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 2 / 2");
+
+    await page.getByTestId("eej-k-select").selectOption("100");
+    await expect(page.getByTestId("eej-selected-token")).toHaveText("T31");
+    expect(state.timelineRequests?.some((url) => url.includes("k=100"))).toBe(
+      true,
+    );
+
+    const audioRequest = page.waitForRequest((request) =>
+      request.url().includes("/call-parsing/region-jobs/") &&
+      request.url().includes("/audio-slice"),
+    );
+    await page.getByTestId("eej-event-play").click();
+    await audioRequest;
+  });
+
   test("failed job surfaces error message on detail", async ({ page }) => {
     const state: MockState = { jobs: [FAILED_JOB] };
     await setupMocks(page, state);
@@ -398,5 +540,6 @@ test.describe("Sequence Models - Event Encoder", () => {
     await expect(page.getByTestId("eej-detail-error-message")).toContainText(
       "could not encode",
     );
+    await expect(page.getByTestId("eej-timeline-unavailable")).toBeVisible();
   });
 });

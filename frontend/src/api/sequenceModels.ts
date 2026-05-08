@@ -142,6 +142,33 @@ export interface EventEncoderJobDetail {
   report: Record<string, unknown> | null;
 }
 
+export interface EventEncoderTimelineEvent {
+  event_id: string;
+  region_id: string;
+  source_sequence_key: string;
+  sequence_index: number;
+  start_timestamp: number;
+  end_timestamp: number;
+  token_id: number;
+  token_label: string;
+  token_confidence: number;
+  distance_to_centroid: number;
+  second_centroid_distance: number | null;
+}
+
+export interface EventEncoderTimelineResponse {
+  job_id: string;
+  event_segmentation_job_id: string;
+  event_source_mode: "raw" | "effective";
+  continuous_embedding_job_id: string;
+  region_detection_job_id: string;
+  selected_k: number;
+  valid_k_values: number[];
+  job_start_timestamp: number;
+  job_end_timestamp: number;
+  events: EventEncoderTimelineEvent[];
+}
+
 export interface CreateContinuousEmbeddingJobRequest {
   event_segmentation_job_id?: string;
   event_source_mode?: "raw" | "effective";
@@ -243,6 +270,16 @@ export function fetchEventEncoderJob(
   return request<EventEncoderJobDetail>(`${EVENT_ENCODER_ROOT}/${jobId}`);
 }
 
+export function fetchEventEncoderTimeline(
+  jobId: string,
+  k?: number | null,
+): Promise<EventEncoderTimelineResponse> {
+  const q = k == null ? "" : `?k=${encodeURIComponent(String(k))}`;
+  return request<EventEncoderTimelineResponse>(
+    `${EVENT_ENCODER_ROOT}/${jobId}/timeline${q}`,
+  );
+}
+
 export function createEventEncoderJob(
   body: CreateEventEncoderJobRequest,
 ): Promise<EventEncoderJob> {
@@ -316,6 +353,18 @@ export function useEventEncoderJob(jobId: string | null) {
       if (!data) return 3000;
       return isEventEncoderJobActive(data.job) ? 3000 : false;
     },
+  });
+}
+
+export function useEventEncoderTimeline(
+  jobId: string | null,
+  k: number | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ["event-encoder-timeline", jobId, k],
+    queryFn: () => fetchEventEncoderTimeline(jobId as string, k),
+    enabled: enabled && jobId != null,
   });
 }
 
