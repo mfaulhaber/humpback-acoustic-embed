@@ -32,6 +32,8 @@ const events: EventEncoderTimelineEvent[] = [
     token_confidence: 0.75,
     distance_to_centroid: 0.2,
     second_centroid_distance: null,
+    descriptor_values: {},
+    descriptor_vector_values: {},
   },
   {
     event_id: "evt-2",
@@ -45,6 +47,8 @@ const events: EventEncoderTimelineEvent[] = [
     token_confidence: 0.55,
     distance_to_centroid: 0.4,
     second_centroid_distance: 0.8,
+    descriptor_values: {},
+    descriptor_vector_values: {},
   },
 ];
 

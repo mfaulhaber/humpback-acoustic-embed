@@ -11,7 +11,10 @@ from humpback.models.call_parsing import (
 )
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
-from humpback.schemas.sequence_models import EventEncoderJobCreate
+from humpback.schemas.sequence_models import (
+    EventEncoderDescriptorConfig,
+    EventEncoderJobCreate,
+)
 from humpback.services.event_encoder_service import (
     CancelEventEncoderTerminalJobError,
     cancel_event_encoder_job,
@@ -188,6 +191,29 @@ async def test_effective_mode_correction_revision_changes_signature(session):
     await session.commit()
 
     second, created = await create_event_encoder_job(session, payload)
+    assert created is True
+    assert second.id != first.id
+    assert second.tokenization_signature != first.tokenization_signature
+
+
+async def test_descriptor_config_changes_signature(session):
+    region, seg = await _seed_seg_job(session)
+    continuous = await _seed_crnn_embedding_job(session, seg, region)
+    base_payload = EventEncoderJobCreate(
+        event_segmentation_job_id=seg.id,
+        continuous_embedding_job_id=continuous.id,
+    )
+    first, _ = await create_event_encoder_job(session, base_payload)
+    first.status = JobStatus.complete.value
+    await session.commit()
+
+    changed_payload = EventEncoderJobCreate(
+        event_segmentation_job_id=seg.id,
+        continuous_embedding_job_id=continuous.id,
+        descriptor=EventEncoderDescriptorConfig(ridge_max_frequency_hz=2500.0),
+    )
+    second, created = await create_event_encoder_job(session, changed_payload)
+
     assert created is True
     assert second.id != first.id
     assert second.tokenization_signature != first.tokenization_signature

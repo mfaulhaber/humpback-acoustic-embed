@@ -8,6 +8,7 @@ from humpback.schemas.sequence_models import (
     ContinuousEmbeddingJobManifest,
     ContinuousEmbeddingRegionSummary,
     ContinuousEmbeddingSpanSummary,
+    EventEncoderDescriptorConfig,
     EventEncoderJobCreate,
     EventEncoderPoolingConfig,
     EventEncoderPreprocessingConfig,
@@ -152,7 +153,7 @@ def test_event_encoder_job_create_defaults():
     )
 
     assert payload.event_source_mode == "raw"
-    assert payload.tokenizer_version == "crnn-event-encoder-v1"
+    assert payload.tokenizer_version == "crnn-event-encoder-v2"
     assert payload.pooling.enabled_pools == [
         "mean_pool",
         "top_k_pool",
@@ -163,6 +164,32 @@ def test_event_encoder_job_create_defaults():
     assert payload.preprocessing.pca_dim == 128
     assert payload.k_values == [50, 100, 200]
     assert payload.random_seed == 0
+
+
+def test_event_encoder_descriptor_config_defaults_include_ridge_settings():
+    config = EventEncoderDescriptorConfig()
+
+    assert config.ridge_min_frequency_hz == 100.0
+    assert config.ridge_max_frequency_hz == 3000.0
+    assert config.ridge_candidate_count == 5
+    assert config.ridge_smoothness_penalty == 8.0
+    assert config.ridge_peak_prominence_ratio == 0.0
+
+
+def test_event_encoder_descriptor_config_rejects_invalid_ridge_settings():
+    with pytest.raises(ValidationError, match="ridge_max_frequency_hz"):
+        EventEncoderDescriptorConfig(
+            ridge_min_frequency_hz=1000.0,
+            ridge_max_frequency_hz=500.0,
+        )
+    with pytest.raises(ValidationError, match="ridge_min_frequency_hz"):
+        EventEncoderDescriptorConfig(ridge_min_frequency_hz=0.0)
+    with pytest.raises(ValidationError, match="descriptor integer"):
+        EventEncoderDescriptorConfig(ridge_candidate_count=0)
+    with pytest.raises(ValidationError, match="ridge descriptor"):
+        EventEncoderDescriptorConfig(ridge_smoothness_penalty=-1.0)
+    with pytest.raises(ValidationError, match="ridge_peak_prominence_ratio"):
+        EventEncoderDescriptorConfig(ridge_peak_prominence_ratio=1.5)
 
 
 def test_event_encoder_job_create_sorts_k_values():

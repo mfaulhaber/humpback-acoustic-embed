@@ -23,3 +23,12 @@
   in the `tokenization_signature`.
 - Event Encoder recomputes event/chunk overlap from timestamps and never treats
   CRNN `nearest_event_id` as authoritative.
+- Completed Event Encoder timeline views are artifact-authoritative: they read
+  the job's token/vector parquet artifacts and do not reload current Pass 2
+  raw or effective events.
+- Event Encoder token ids and `Txx` labels are job-local and k-local, not a
+  stable global vocabulary.
+- The active Event Encoder non-CRNN descriptor order includes
+  `ridge_log_frequency_slope` in place of the retired `frequency_slope`.
+- Event Encoder ridge slope persists only a scalar descriptor value; full STFT
+  matrices are not stored in Continuous Embedding artifacts for this feature.

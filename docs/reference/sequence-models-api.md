@@ -113,14 +113,17 @@ and fits one k-means tokenizer per feasible k.
   Optional fields:
 
   - `event_source_mode`: `"raw"` (default) or `"effective"`.
-  - `tokenizer_version`: default `"crnn-event-encoder-v1"`.
+  - `tokenizer_version`: default `"crnn-event-encoder-v2"`.
   - `pooling.enabled_pools`: defaults to `mean_pool`, `top_k_pool`,
     `start_pool`, `middle_pool`, and `end_pool`.
   - `pooling.top_k_fraction`: default `0.25`.
   - `pooling.min_overlap_fraction`: default `0.25`.
   - `pooling.min_chunks_per_event`: default `1`.
   - `descriptor.target_sample_rate`: default `16000`; `n_fft`: `1024`;
-    `hop_length`: `512`; `eps`: `1e-12`.
+    `hop_length`: `512`; `eps`: `1e-12`;
+    `ridge_min_frequency_hz`: `100.0`; `ridge_max_frequency_hz`: `3000.0`;
+    `ridge_candidate_count`: `5`; `ridge_smoothness_penalty`: `8.0`;
+    `ridge_peak_prominence_ratio`: `0.0`.
   - `preprocessing.l2_normalize_pools`: default `true`.
   - `preprocessing.pca_dim`: `64` or `128`, default `128`.
   - `preprocessing.embedding_weight` and `descriptor_weight`: default `1.0`.
@@ -143,11 +146,17 @@ and fits one k-means tokenizer per feasible k.
   An optional `?k=` filters to one tokenization. If omitted, the lowest valid
   k in the artifact is selected. Responses include source provenance,
   `region_detection_job_id`, region job timestamp bounds for tiles/audio,
-  `selected_k`, all available `valid_k_values`, and compact event rows with
-  absolute timestamps, token id/label, confidence, and centroid-distance
-  diagnostics. Missing jobs or token artifacts return `404`, incomplete jobs
-  and corrupt non-`region_crnn` provenance return `409`, and unavailable k
-  values return `422`.
+  `selected_k`, all available `valid_k_values`, ordered
+  `descriptor_feature_names`, descriptor unit labels, and compact event rows
+  with absolute timestamps, token id/label, confidence, centroid-distance
+  diagnostics, raw `descriptor_values`, and standardized
+  `descriptor_vector_values`. The descriptor vector values are joined from
+  `event_vectors.parquet` by source sequence, sequence index, and event id. If
+  the vector artifact is missing or unreadable, timeline events still render
+  with empty descriptor-vector maps so the detail page can show an unavailable
+  state for selected features. Missing jobs or token artifacts return `404`,
+  incomplete jobs and corrupt non-`region_crnn` provenance return `409`, and
+  unavailable k values return `422`.
 
 - `POST /sequence-models/event-encoders/{id}/cancel` cancels a queued or
   running job. Terminal jobs return `409`.
@@ -163,13 +172,23 @@ artifact paths, error state, and timestamps. Effective-mode signatures include
 the event-boundary correction revision fingerprint, matching ADR-062 raw versus
 effective event semantics.
 
+The active Event Encoder descriptor order is:
+`duration`, `log_energy`, `peak_frequency`, `spectral_centroid`, `bandwidth`,
+`spectral_entropy`, `ridge_log_frequency_slope`, and `gap_to_previous`.
+`ridge_log_frequency_slope` is measured in octaves per second. It is computed
+inside Event Encoder descriptor extraction from each event crop using a
+band-limited ridge tracker over the event STFT; full STFT matrices are not
+persisted in Continuous Embedding artifacts for this feature.
+
 `event_vectors.parquet` contains one row per encoded event with source
 sequence key, sequence index, timestamps, descriptors, pooled embedding vector,
-scaled descriptor vector, and final event vector.
+scaled descriptor vector, and final event vector. Descriptor columns follow the
+active descriptor order and include `ridge_log_frequency_slope`.
 
 `event_tokens.parquet` contains one row per valid k/event with `event_id`,
 timing, `token_id`, `token_label`, `distance_to_centroid`,
-`second_centroid_distance`, `token_confidence`, and descriptors.
+`second_centroid_distance`, `token_confidence`, and descriptors, including
+`ridge_log_frequency_slope`.
 Token ids and labels are job-local and k-local; colors or labels in one Event
 Encoder job should not be interpreted as globally stable vocabulary entries.
 
@@ -177,9 +196,9 @@ Encoder job should not be interpreted as globally stable vocabulary entries.
 `k` and `source_sequence_key`.
 
 `manifest.json` records configs, source job ids, continuous embedding
-provenance, valid and invalid k values, vector dimensions, and encode/skip
-counters.
+provenance, ordered `descriptor_feature_names`, valid and invalid k values,
+vector dimensions, and encode/skip counters.
 
 `report.json` is the UI-friendly summary: encode counts, token distributions,
-closest exemplar event ids per token, descriptor summaries, and a compact token
-sequence preview.
+closest exemplar event ids per token, ordered descriptor feature names,
+descriptor summaries, and a compact token sequence preview.

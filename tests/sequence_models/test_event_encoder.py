@@ -5,6 +5,7 @@ import pytest
 
 from humpback.sequence_models.event_encoder import (
     ChunkEmbedding,
+    DESCRIPTOR_ORDER,
     EventInterval,
     build_event_embedding,
     compute_acoustic_descriptors,
@@ -129,5 +130,100 @@ def test_acoustic_descriptors_identify_sine_peak_frequency():
     assert descriptors["spectral_centroid"] > 0
     assert descriptors["bandwidth"] > 0
     assert 0 <= descriptors["spectral_entropy"] <= 1
+    assert descriptors["ridge_log_frequency_slope"] == pytest.approx(0.0, abs=0.1)
     assert descriptors["gap_to_previous"] == pytest.approx(1.25)
     assert vec.shape == (8,)
+    assert "frequency_slope" not in descriptors
+
+
+def test_ridge_log_frequency_slope_tracks_log_chirp():
+    sample_rate = 16000
+    duration = 1.0
+    audio = _log_chirp(
+        sample_rate=sample_rate,
+        duration=duration,
+        start_hz=300.0,
+        end_hz=1200.0,
+    )
+
+    descriptors = compute_acoustic_descriptors(
+        audio,
+        sample_rate=sample_rate,
+        n_fft=1024,
+        hop_length=256,
+        ridge_min_frequency_hz=100.0,
+        ridge_max_frequency_hz=3000.0,
+    )
+
+    expected = np.log2(1200.0 / 300.0) / duration
+    assert descriptors["ridge_log_frequency_slope"] == pytest.approx(
+        expected,
+        abs=0.5,
+    )
+
+
+def test_ridge_log_frequency_slope_is_stable_across_harmonics():
+    sample_rate = 16000
+    fundamental = _log_chirp(
+        sample_rate=sample_rate,
+        duration=1.0,
+        start_hz=250.0,
+        end_hz=900.0,
+    )
+    harmonic = _log_chirp(
+        sample_rate=sample_rate,
+        duration=1.0,
+        start_hz=500.0,
+        end_hz=1800.0,
+    )
+
+    fundamental_descriptors = compute_acoustic_descriptors(
+        fundamental,
+        sample_rate=sample_rate,
+        n_fft=1024,
+        hop_length=256,
+    )
+    harmonic_descriptors = compute_acoustic_descriptors(
+        harmonic,
+        sample_rate=sample_rate,
+        n_fft=1024,
+        hop_length=256,
+    )
+
+    assert harmonic_descriptors["ridge_log_frequency_slope"] == pytest.approx(
+        fundamental_descriptors["ridge_log_frequency_slope"],
+        abs=0.35,
+    )
+
+
+def test_ridge_log_frequency_slope_returns_finite_zero_for_degenerate_inputs():
+    empty = compute_acoustic_descriptors(
+        np.asarray([], dtype=np.float32), sample_rate=16000
+    )
+    silent = compute_acoustic_descriptors(
+        np.zeros(128, dtype=np.float32), sample_rate=16000
+    )
+    invalid_band = compute_acoustic_descriptors(
+        np.ones(2048, dtype=np.float32),
+        sample_rate=16000,
+        ridge_min_frequency_hz=9000.0,
+        ridge_max_frequency_hz=10000.0,
+    )
+
+    for descriptors in (empty, silent, invalid_band):
+        assert np.isfinite(descriptors["ridge_log_frequency_slope"])
+        assert descriptors["ridge_log_frequency_slope"] == 0.0
+        assert descriptor_vector(descriptors).shape == (len(DESCRIPTOR_ORDER),)
+
+
+def _log_chirp(
+    *,
+    sample_rate: int,
+    duration: float,
+    start_hz: float,
+    end_hz: float,
+) -> np.ndarray:
+    t = np.arange(int(sample_rate * duration), dtype=np.float64) / sample_rate
+    slope = np.log(end_hz / start_hz) / duration
+    phase = 2.0 * np.pi * start_hz * (np.exp(slope * t) - 1.0) / slope
+    return np.sin(phase).astype(np.float32)

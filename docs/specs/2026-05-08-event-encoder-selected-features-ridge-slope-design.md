@@ -36,7 +36,7 @@ plain-Hz artifact where higher harmonics look artificially steeper.
   timeline viewer.
 - Keep the table read-only and tied to the currently selected timeline event.
 - Introduce `ridge_log_frequency_slope` in the Event Encoder descriptor order
-  in place of `frequency_slope` for new jobs.
+  in place of `frequency_slope`.
 - Compute ridge slope from each event crop using an STFT limited to a
   configurable vocalization band.
 - Track multiple per-frame spectral ridge candidates with a smoothness penalty.
@@ -48,9 +48,8 @@ plain-Hz artifact where higher harmonics look artificially steeper.
 
 ### Non-goals
 
-- Do not store full STFT matrices in Continuous Embedding artifacts for v1.
+- Do not store full STFT matrices in Continuous Embedding artifacts.
 - Do not mutate existing Event Encoder artifacts.
-- Do not rewrite old `frequency_slope` jobs.
 - Do not add event editing or token editing to the Event Encoder detail page.
 - Do not expose CRNN pooled embedding dimensions in the selected-feature table.
 - Do not change timeline spectrogram PCEN rendering or playback normalization.
@@ -62,9 +61,11 @@ plain-Hz artifact where higher harmonics look artificially steeper.
 - `compute_acoustic_descriptors()` currently builds an STFT-like magnitude
   spectrogram per event crop and derives `frequency_slope` by fitting Hz over
   time to the single loudest FFT bin per frame.
-- `DESCRIPTOR_ORDER` currently contains:
+- Before this change, `DESCRIPTOR_ORDER` contained:
   `duration`, `log_energy`, `peak_frequency`, `spectral_centroid`,
   `bandwidth`, `spectral_entropy`, `frequency_slope`, and `gap_to_previous`.
+- Existing v1 jobs were deleted before implementation, so no
+  `frequency_slope` artifact compatibility path is required.
 - The worker writes each raw descriptor as a column in both
   `event_vectors.parquet` and `event_tokens.parquet`.
 - The worker writes `descriptor_vector` as the robust-zscored descriptor block
@@ -177,14 +178,9 @@ Backend behavior:
   `(source_sequence_key, sequence_index, event_id)`.
 - If `event_vectors.parquet` is missing or lacks a matching row, return the
   timeline rows with empty descriptor-vector values and let the frontend show a
-  feature-unavailable state for the table. This keeps the timeline usable for
-  partially corrupt historical artifacts.
-- For new jobs, prefer `manifest.descriptor_feature_names` when available.
-- For older jobs without manifest metadata, infer feature names from parquet
-  columns:
-  - if `ridge_log_frequency_slope` exists, use the v2 descriptor order;
-  - otherwise fall back to the v1 descriptor order containing
-    `frequency_slope`.
+  feature-unavailable state for the table.
+- Prefer `manifest.descriptor_feature_names` when available. Otherwise infer
+  feature names from the active Event Encoder descriptor columns.
 - The endpoint should not reload current raw or effective Pass 2 events.
 
 ## 7. Recommended Selected-Feature UI Design
@@ -215,7 +211,6 @@ Units:
 | `spectral_centroid` | Hz |
 | `bandwidth` | Hz |
 | `spectral_entropy` | normalized |
-| `frequency_slope` | Hz/s, old jobs only |
 | `ridge_log_frequency_slope` | octaves/s |
 | `gap_to_previous` | seconds |
 
@@ -256,7 +251,7 @@ Cons:
 - Debugging ridge paths will rely on tests and optional logging unless a future
   trace sidecar is added.
 
-Verdict: recommended for v1.
+Verdict: recommended.
 
 ### Approach B: Add STFT Sidecars To Continuous Embedding Jobs
 
@@ -378,37 +373,24 @@ settings naturally participate in Event Encoder idempotency.
 ## 11. Artifact And Versioning Contract
 
 Because this changes the meaning and name of one vector feature, new jobs should
-use a new default tokenizer version:
+use the default tokenizer version `crnn-event-encoder-v2`.
 
-- old default: `crnn-event-encoder-v1`;
-- new default: `crnn-event-encoder-v2`.
-
-New v2 jobs:
+Event Encoder jobs:
 
 - write `ridge_log_frequency_slope` instead of `frequency_slope`;
-- write descriptor values in the new descriptor order;
+- write descriptor values in the active descriptor order;
 - write `descriptor_feature_names` to `manifest.json`;
 - include `descriptor_feature_names` in `report.json` or make it available via
   the timeline endpoint;
 - expose `ridge_log_frequency_slope` in descriptor summaries.
 
-Old v1 jobs:
-
-- remain readable as completed artifacts;
-- continue to show `frequency_slope` in the descriptor summary and selected
-  feature table;
-- are not rewritten or migrated.
-
 Implementation detail:
 
-- Prefer explicit descriptor orders such as `DESCRIPTOR_ORDER_V1` and
-  `DESCRIPTOR_ORDER_V2`, with `DESCRIPTOR_ORDER` pointing to the active default
-  order only where safe.
-- Worker parquet schemas should be generated from the selected descriptor order
-  rather than hard-coding one global schema if explicit v1 job creation remains
-  supported.
-- If the product chooses not to support creating new v1 jobs, the API should
-  still read v1 artifacts but new submissions should default to v2.
+- Keep a single active `DESCRIPTOR_ORDER`.
+- Do not add a `frequency_slope` read or write compatibility path because the
+  old v1 jobs were deleted before implementation.
+- Worker parquet schemas should be generated from the active descriptor order
+  rather than hard-coding stale descriptor columns.
 
 ## 12. Backend Implementation Outline
 
@@ -428,20 +410,20 @@ types, not database columns.
 
 Steps:
 
-1. Add descriptor order constants for v1 and v2.
+1. Update the active descriptor order to replace `frequency_slope` with
+   `ridge_log_frequency_slope`.
 2. Add ridge descriptor config fields and validators.
 3. Implement pure ridge candidate selection, dynamic-programming path tracking,
    and robust log-frequency slope fitting.
 4. Update `compute_acoustic_descriptors()` to emit
-   `ridge_log_frequency_slope` for v2 descriptor extraction.
+   `ridge_log_frequency_slope`.
 5. Update Event Encoder worker schema construction so descriptor columns follow
    the selected descriptor order.
 6. Write `descriptor_feature_names` into `manifest.json`.
 7. Extend timeline response models with descriptor metadata and per-event
    descriptor maps.
-8. Extend the timeline route to read `event_vectors.parquet`, join descriptor
-   vectors to selected token rows, and preserve compatibility with old v1
-   artifacts.
+8. Extend the timeline route to read `event_vectors.parquet` and join
+   descriptor vectors to selected token rows.
 
 ## 13. Frontend Implementation Outline
 
@@ -484,7 +466,7 @@ Add or update tests in `tests/sequence_models/test_event_encoder.py`:
   `ridge_log_frequency_slope` as the fundamental-dominant chirp.
 - Low-energy, empty, too-short, or invalid-band inputs return finite zero-like
   values.
-- `descriptor_vector()` follows the v2 descriptor order and has the expected
+- `descriptor_vector()` follows the active descriptor order and has the expected
   shape.
 
 ### Worker tests
@@ -492,7 +474,7 @@ Add or update tests in `tests/sequence_models/test_event_encoder.py`:
 Update `tests/workers/test_event_encoder_worker.py`:
 
 - New event vector and token parquet rows include
-  `ridge_log_frequency_slope` and no v2 `frequency_slope` column.
+  `ridge_log_frequency_slope` and no `frequency_slope` column.
 - `manifest.json` records `descriptor_feature_names`.
 - Descriptor summaries include `ridge_log_frequency_slope`.
 
@@ -503,8 +485,6 @@ Update `tests/integration/test_sequence_models_api.py`:
 - Timeline responses include descriptor feature metadata.
 - Timeline event rows include raw descriptor values and standardized vector
   values.
-- Old fixture rows with `frequency_slope` still return selected-feature values
-  without breaking timeline rendering.
 
 ### Frontend tests
 
@@ -513,8 +493,7 @@ Update `frontend/e2e/sequence-models/event-encoder.spec.ts`:
 - Mock timeline rows with descriptor values.
 - Assert the selected-feature panel appears below the timeline viewer.
 - Assert selecting next/previous events updates the feature table.
-- Assert v2 rows display `ridge_log_frequency_slope`.
-- Assert old rows can display `frequency_slope` if returned by the API.
+- Assert rows display `ridge_log_frequency_slope`.
 
 Verification commands:
 
