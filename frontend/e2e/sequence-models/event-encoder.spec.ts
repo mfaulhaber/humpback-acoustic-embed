@@ -276,6 +276,21 @@ const TIMELINE_50 = {
       descriptor_values: descriptorValues(1),
       descriptor_vector_values: descriptorVectorValues(1),
     },
+    {
+      event_id: "evt-17b",
+      region_id: "region-a",
+      source_sequence_key: "hydrophone:rpi_orcasound_lab",
+      sequence_index: 2,
+      start_timestamp: REGION_JOB.start_timestamp + 30,
+      end_timestamp: REGION_JOB.start_timestamp + 31.5,
+      token_id: 17,
+      token_label: "T17",
+      token_confidence: 0.744,
+      distance_to_centroid: 0.16,
+      second_centroid_distance: 0.41,
+      descriptor_values: descriptorValues(2),
+      descriptor_vector_values: descriptorVectorValues(2),
+    },
   ],
 };
 
@@ -294,6 +309,12 @@ const TIMELINE_100 = {
       token_id: 31,
       token_label: "T31",
       token_confidence: 0.712,
+    },
+    {
+      ...TIMELINE_50.events[2],
+      token_id: 5,
+      token_label: "T05",
+      token_confidence: 0.824,
     },
   ],
 };
@@ -616,8 +637,12 @@ test.describe("Sequence Models - Event Encoder", () => {
     expect(timelineBox?.y ?? 0).toBeLessThan(reportBox?.y ?? 0);
 
     await expect(page.getByTestId("eej-token-badge-evt-17")).toHaveText("T17");
-    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 1 / 2");
+    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 1 / 3");
     await expect(page.getByTestId("eej-selected-token")).toHaveText("T17");
+    await expect(page.getByTestId("eej-token-nav-toggle")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     await expect(page.getByTestId("eej-selected-feature-panel")).toBeVisible();
     await expect(page.getByTestId("eej-feature-ridge_log_frequency_slope")).toContainText(
       "6.250",
@@ -639,7 +664,7 @@ test.describe("Sequence Models - Event Encoder", () => {
     expect(featureBox?.y ?? 0).toBeLessThan(projectionBox?.y ?? 0);
 
     await page.keyboard.press("d");
-    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 2 / 2");
+    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 2 / 3");
     await expect(page.getByTestId("eej-selected-token")).toHaveText("T42");
     await expect(page.getByTestId("eej-feature-ridge_log_frequency_slope")).toContainText(
       "7.250",
@@ -649,13 +674,44 @@ test.describe("Sequence Models - Event Encoder", () => {
     );
 
     await page.keyboard.press("a");
-    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 1 / 2");
+    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 1 / 3");
 
+    await page.getByTestId("eej-token-nav-toggle").focus();
+    await page.keyboard.press("Space");
+    await expect(page.getByTestId("eej-token-nav-toggle")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByTestId("eej-token-nav-count")).toHaveText("1 / 2");
+    expect(state.audioRequests).toEqual([]);
+
+    await page.keyboard.press("d");
+    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 3 / 3");
+    await expect(page.getByTestId("eej-selected-token")).toHaveText("T17");
+    await expect(page.getByTestId("eej-token-nav-count")).toHaveText("2 / 2");
+    await expect(page.getByTestId("eej-event-next")).toBeDisabled();
+
+    await page.keyboard.press("a");
+    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 1 / 3");
     await page.getByTestId("eej-event-next").click();
-    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 2 / 2");
+    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 3 / 3");
+    await expect(page.getByTestId("eej-selected-token")).toHaveText("T17");
+
+    await page.getByTestId("eej-token-nav-toggle").click();
+    await expect(page.getByTestId("eej-token-nav-toggle")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await page.keyboard.press("a");
+    await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 2 / 3");
+    await expect(page.getByTestId("eej-selected-token")).toHaveText("T42");
 
     await page.getByTestId("eej-k-select").selectOption("100");
     await expect(page.getByTestId("eej-selected-token")).toHaveText("T31");
+    await expect(page.getByTestId("eej-token-nav-toggle")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     await expect(page.getByTestId("eej-feature-ridge_log_frequency_slope")).toContainText(
       "7.250",
     );

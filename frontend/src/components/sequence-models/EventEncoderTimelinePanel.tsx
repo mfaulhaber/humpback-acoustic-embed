@@ -9,16 +9,21 @@ import {
 } from "@/api/sequenceModels";
 import { regionAudioSliceUrl, regionTileUrl } from "@/api/client";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TimelineProvider } from "@/components/timeline/provider/TimelineProvider";
 import { REVIEW_ZOOM } from "@/components/timeline/provider/types";
 import { useTimelineContext } from "@/components/timeline/provider/useTimelineContext";
 import { Spectrogram } from "@/components/timeline/spectrogram/Spectrogram";
 import { ZoomSelector } from "@/components/timeline/controls/ZoomSelector";
+import { cn } from "@/lib/utils";
 
 import { labelColor } from "./constants";
 import { EventEncoderClusterProjectionPanel } from "./EventEncoderClusterProjectionPanel";
+import {
+  buildTimelineNavigationState,
+  type TimelineNavigationTarget,
+} from "./eventEncoderTimelineNavigation";
 import { EventEncoderTokenOverlay } from "./EventEncoderTokenOverlay";
 
 interface EventEncoderTimelinePanelProps {
@@ -172,12 +177,20 @@ function EventEncoderTimelineBody({
   onKChange: (value: string) => void;
 }) {
   const ctx = useTimelineContext();
+  const [tokenScopedNavigation, setTokenScopedNavigation] = useState(false);
   const events = timeline.events;
-  const selectedIndex = events.findIndex(
-    (event) => event.event_id === selectedEventId,
+  const navigation = useMemo(
+    () =>
+      buildTimelineNavigationState({
+        events,
+        selectedEventId,
+        fallbackIndex: selectedListIndex,
+        tokenScopedNavigation,
+      }),
+    [events, selectedEventId, selectedListIndex, tokenScopedNavigation],
   );
-  const selectedEvent = selectedIndex >= 0 ? events[selectedIndex] : null;
-  const effectiveIndex = selectedIndex >= 0 ? selectedIndex : selectedListIndex;
+  const selectedEvent = navigation.selectedEvent;
+  const effectiveIndex = navigation.eventCounterIndex;
   const featureRows = useMemo(
     () => buildSelectedFeatureRows(timeline, selectedEvent),
     [selectedEvent, timeline],
@@ -187,6 +200,10 @@ function EventEncoderTimelineBody({
     : undefined;
   const lastCenteredRef = useRef<string | null>(null);
 
+  useEffect(() => {
+    setTokenScopedNavigation(false);
+  }, [job.id, timeline.selected_k]);
+
   const centerEvent = useCallback(
     (event: EventEncoderTimelineEvent) => {
       ctx.seekTo((event.start_timestamp + event.end_timestamp) / 2);
@@ -194,15 +211,13 @@ function EventEncoderTimelineBody({
     [ctx],
   );
 
-  const selectIndex = useCallback(
-    (index: number) => {
-      const bounded = Math.max(0, Math.min(events.length - 1, index));
-      const event = events[bounded];
-      if (!event) return;
-      onSelectIndex(bounded);
-      centerEvent(event);
+  const selectNavigationTarget = useCallback(
+    (target: TimelineNavigationTarget<EventEncoderTimelineEvent> | null) => {
+      if (!target) return;
+      onSelectIndex(target.fullIndex);
+      centerEvent(target.event);
     },
-    [centerEvent, events, onSelectIndex],
+    [centerEvent, onSelectIndex],
   );
 
   const toggleSelectedPlayback = useCallback(() => {
@@ -230,15 +245,16 @@ function EventEncoderTimelineBody({
     const handleKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isTextEntryTarget(e.target)) return;
+      if (isNativeButtonActivation(e)) return;
 
       switch (e.code) {
         case "KeyA":
           e.preventDefault();
-          selectIndex(effectiveIndex - 1);
+          selectNavigationTarget(navigation.previous);
           break;
         case "KeyD":
           e.preventDefault();
-          selectIndex(effectiveIndex + 1);
+          selectNavigationTarget(navigation.next);
           break;
         case "Space":
           e.preventDefault();
@@ -264,13 +280,31 @@ function EventEncoderTimelineBody({
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [ctx, effectiveIndex, selectIndex, toggleSelectedPlayback]);
+  }, [ctx, navigation.next, navigation.previous, selectNavigationTarget, toggleSelectedPlayback]);
 
   const tileUrlBuilder = useCallback(
     (_jobId: string, zoomLevel: string, tileIndex: number) =>
       regionTileUrl(timeline.region_detection_job_id, zoomLevel, tileIndex),
     [timeline.region_detection_job_id],
   );
+  const previousTitle =
+    navigation.tokenScoped && selectedEvent
+      ? `Previous ${selectedEvent.token_label} event`
+      : "Previous event";
+  const nextTitle =
+    navigation.tokenScoped && selectedEvent
+      ? `Next ${selectedEvent.token_label} event`
+      : "Next event";
+  const tokenToggleTitle =
+    tokenScopedNavigation && selectedEvent
+      ? "Return to all-event navigation"
+      : selectedEvent
+        ? `Navigate by ${selectedEvent.token_label} token`
+        : undefined;
+  const tokenScopedCount =
+    navigation.tokenScoped && navigation.tokenOccurrenceIndex >= 0
+      ? `${navigation.tokenOccurrenceIndex + 1} / ${navigation.tokenOccurrenceTotal}`
+      : null;
 
   return (
     <div className="rounded-md border" data-testid="eej-timeline-viewer">
@@ -280,9 +314,9 @@ function EventEncoderTimelineBody({
           variant="outline"
           size="icon"
           className="h-8 w-8"
-          disabled={effectiveIndex <= 0}
-          onClick={() => selectIndex(effectiveIndex - 1)}
-          title="Previous event"
+          disabled={!navigation.previous}
+          onClick={() => selectNavigationTarget(navigation.previous)}
+          title={previousTitle}
           data-testid="eej-event-prev"
         >
           <ChevronLeft className="h-4 w-4" />
@@ -292,9 +326,9 @@ function EventEncoderTimelineBody({
           variant="outline"
           size="icon"
           className="h-8 w-8"
-          disabled={effectiveIndex >= events.length - 1}
-          onClick={() => selectIndex(effectiveIndex + 1)}
-          title="Next event"
+          disabled={!navigation.next}
+          onClick={() => selectNavigationTarget(navigation.next)}
+          title={nextTitle}
           data-testid="eej-event-next"
         >
           <ChevronRight className="h-4 w-4" />
@@ -303,17 +337,34 @@ function EventEncoderTimelineBody({
           Event {events.length ? effectiveIndex + 1 : 0} / {events.length}
         </span>
         {selectedEvent ? (
-          <Badge
-            variant="outline"
-            className="font-mono"
+          <button
+            type="button"
+            className={cn(
+              badgeVariants({ variant: "outline" }),
+              "font-mono",
+            )}
             style={{
               borderColor: selectedTokenColor,
               color: selectedTokenColor,
+              backgroundColor: tokenScopedNavigation && selectedTokenColor
+                ? `color-mix(in srgb, ${selectedTokenColor} 16%, transparent)`
+                : undefined,
             }}
-            data-testid="eej-selected-token"
+            aria-pressed={tokenScopedNavigation}
+            title={tokenToggleTitle}
+            onClick={() => setTokenScopedNavigation((value) => !value)}
+            data-testid="eej-token-nav-toggle"
           >
-            {selectedEvent.token_label}
-          </Badge>
+            <span data-testid="eej-selected-token">{selectedEvent.token_label}</span>
+          </button>
+        ) : null}
+        {tokenScopedCount ? (
+          <span
+            className="text-xs text-muted-foreground"
+            data-testid="eej-token-nav-count"
+          >
+            {tokenScopedCount}
+          </span>
         ) : null}
         {selectedEvent ? (
           <span className="text-xs text-muted-foreground" data-testid="eej-selected-confidence">
@@ -487,4 +538,10 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
     tag === "SELECT" ||
     target.isContentEditable
   );
+}
+
+function isNativeButtonActivation(event: KeyboardEvent): boolean {
+  if (event.code !== "Space" && event.code !== "Enter") return false;
+  if (!(event.target instanceof HTMLElement)) return false;
+  return event.target.closest("button") != null;
 }
