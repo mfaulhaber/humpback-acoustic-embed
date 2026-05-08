@@ -14,11 +14,11 @@
 - Create: `frontend/src/components/sequence-models/eventEncoderTimelineNavigation.test.ts`
 
 **Acceptance criteria:**
-- [ ] The helper derives all-event navigation and same-token navigation from the loaded selected-k timeline events without mutating or resorting the array.
-- [ ] Same-token navigation scopes to the currently selected event's `token_id` and returns the selected event's same-token position and same-token total.
-- [ ] Previous and next targets are bounded to the active navigation list and report disabled states at active-list boundaries.
-- [ ] Missing selected events, empty event arrays, and token-scoped mode without a selected event fall back to normal safe disabled behavior.
-- [ ] The helper remains local to the Event Encoder timeline surface and does not introduce a shared token vocabulary abstraction.
+- [x] The helper derives all-event navigation and same-token navigation from the loaded selected-k timeline events without mutating or resorting the array.
+- [x] Same-token navigation scopes to the currently selected event's `token_id` and returns the selected event's same-token position and same-token total.
+- [x] Previous and next targets are bounded to the active navigation list and report disabled states at active-list boundaries.
+- [x] Missing selected events, empty event arrays, and token-scoped mode without a selected event fall back to normal safe disabled behavior.
+- [x] The helper remains local to the Event Encoder timeline surface and does not introduce a shared token vocabulary abstraction.
 
 **Tests needed:**
 - Vitest coverage for normal event navigation, same-token skipping, boundary disabled states, missing selected event fallback, single-token occurrence behavior, and preservation of original event ordering.
@@ -31,12 +31,12 @@
 - Modify: `frontend/src/components/sequence-models/EventEncoderTimelinePanel.tsx`
 
 **Acceptance criteria:**
-- [ ] `EventEncoderTimelineBody` owns `tokenScopedNavigation` local state initialized to off.
-- [ ] Toolbar previous and next buttons select targets through the navigation helper rather than raw full-list index arithmetic.
-- [ ] `A` and `D` keyboard shortcuts use the same active navigation target as the toolbar buttons.
-- [ ] Clicking a timeline event or cluster projection point still selects and centers that event; when token-scoped mode is active, the scope naturally follows the newly selected event's token.
-- [ ] Playback, zoom, pan, selected feature table, k selection, and cluster projection behavior remain otherwise unchanged.
-- [ ] Token-scoped navigation resets to off when the Event Encoder job changes or the selected k changes.
+- [x] `EventEncoderTimelineBody` owns `tokenScopedNavigation` local state initialized to off.
+- [x] Toolbar previous and next buttons select targets through the navigation helper rather than raw full-list index arithmetic.
+- [x] `A` and `D` keyboard shortcuts use the same active navigation target as the toolbar buttons.
+- [x] Clicking a timeline event or cluster projection point still selects and centers that event; when token-scoped mode is active, the scope naturally follows the newly selected event's token.
+- [x] Playback, zoom, pan, selected feature table, k selection, and cluster projection behavior remain otherwise unchanged.
+- [x] Token-scoped navigation resets to off when the Event Encoder job changes or the selected k changes.
 
 **Tests needed:**
 - Playwright coverage for toolbar and keyboard navigation behavior.
@@ -50,13 +50,13 @@
 - Modify: `frontend/src/components/sequence-models/EventEncoderTimelinePanel.tsx`
 
 **Acceptance criteria:**
-- [ ] The selected token display becomes a badge-styled button with `aria-pressed` and `data-testid="eej-token-nav-toggle"`.
-- [ ] The toggle uses the selected token color for border and text, and uses a subtle active background while preserving label readability.
-- [ ] The toggle title communicates the current action, such as navigating by the selected token when inactive and returning to all-event navigation when active.
-- [ ] Previous and next button titles reflect normal mode or token-scoped mode with the selected token label.
-- [ ] In token-scoped mode, a compact occurrence counter shows the selected event's position within the same-token list.
-- [ ] Previous and next controls disable at same-token boundaries; if the selected token occurs once, both are disabled while the mode is active.
-- [ ] The existing selected token label text and confidence display remain visible and compact in the toolbar.
+- [x] The selected token display becomes a badge-styled button with `aria-pressed` and `data-testid="eej-token-nav-toggle"`.
+- [x] The toggle uses the selected token color for border and text, and uses a subtle active background while preserving label readability.
+- [x] The toggle title communicates the current action, such as navigating by the selected token when inactive and returning to all-event navigation when active.
+- [x] Previous and next button titles reflect normal mode or token-scoped mode with the selected token label.
+- [x] In token-scoped mode, a compact occurrence counter shows the selected event's position within the same-token list.
+- [x] Previous and next controls disable at same-token boundaries; if the selected token occurs once, both are disabled while the mode is active.
+- [x] The existing selected token label text and confidence display remain visible and compact in the toolbar.
 
 **Tests needed:**
 - Playwright assertions for `aria-pressed`, active/inactive toggle behavior, same-token occurrence counter, and button disabled states at same-token boundaries.
@@ -69,12 +69,12 @@
 - Modify: `frontend/e2e/sequence-models/event-encoder.spec.ts`
 
 **Acceptance criteria:**
-- [ ] Complete-job timeline mock data includes at least three events where the first and third share a token and the second has a different token.
-- [ ] Existing timeline assertions for panel placement, selected features, cluster projection, k switching, and playback-triggered audio requests still pass.
-- [ ] Normal `D` navigation moves from event 1 to event 2 before the token toggle is active.
-- [ ] Toggling the selected token badge on at event 1 makes `D` and the next button jump to the next event with the same token.
-- [ ] Toggling the selected token badge off restores normal event-by-event navigation.
-- [ ] Changing selected k turns token-scoped navigation off.
+- [x] Complete-job timeline mock data includes at least three events where the first and third share a token and the second has a different token.
+- [x] Existing timeline assertions for panel placement, selected features, cluster projection, k switching, and playback-triggered audio requests still pass.
+- [x] Normal `D` navigation moves from event 1 to event 2 before the token toggle is active.
+- [x] Toggling the selected token badge on at event 1 makes `D` and the next button jump to the next event with the same token.
+- [x] Toggling the selected token badge off restores normal event-by-event navigation.
+- [x] Changing selected k turns token-scoped navigation off.
 
 **Tests needed:**
 - `cd frontend && npx playwright test e2e/sequence-models/event-encoder.spec.ts`
@@ -89,10 +89,10 @@
 - Modify: `docs/agent-context/domains/sequence-models/tests.md`
 
 **Acceptance criteria:**
-- [ ] Frontend reference describes token-scoped navigation as a read-only Event Encoder detail timeline affordance.
-- [ ] Sequence Models domain context mentions that Event Encoder token navigation is selected-k and job-local.
-- [ ] Sequence Models targeted frontend tests include the navigation helper test and Event Encoder Playwright coverage.
-- [ ] Documentation does not imply token labels are stable across jobs or k values.
+- [x] Frontend reference describes token-scoped navigation as a read-only Event Encoder detail timeline affordance.
+- [x] Sequence Models domain context mentions that Event Encoder token navigation is selected-k and job-local.
+- [x] Sequence Models targeted frontend tests include the navigation helper test and Event Encoder Playwright coverage.
+- [x] Documentation does not imply token labels are stable across jobs or k values.
 
 **Tests needed:**
 - Documentation diff review and `git diff --check`.

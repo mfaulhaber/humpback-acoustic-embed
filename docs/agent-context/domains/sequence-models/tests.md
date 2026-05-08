@@ -16,7 +16,7 @@ Use these commands for targeted feedback. The final backend gate remains
 - `uv run pytest tests/sequence_models/test_event_encoder.py tests/unit/test_sequence_models_schemas.py -q`
 - `uv run pytest tests/services/test_event_encoder_service.py tests/workers/test_event_encoder_worker.py -q`
 - `uv run pytest tests/integration/test_sequence_models_api.py -q`
-- `cd frontend && npx vitest run src/components/sequence-models/EventEncoderTokenOverlay.test.tsx`
+- `cd frontend && npx vitest run src/components/sequence-models/eventEncoderTimelineNavigation.test.ts src/components/sequence-models/EventEncoderTokenOverlay.test.tsx`
 - `cd frontend && npx tsc --noEmit`
 - `cd frontend && npx playwright test e2e/sequence-models/event-encoder.spec.ts`
 
@@ -24,7 +24,7 @@ Use these commands for targeted feedback. The final backend gate remains
 
 - `cd frontend && npx playwright test e2e/sequence-models/continuous-embedding.spec.ts`
 - `cd frontend && npx playwright test e2e/sequence-models/event-encoder.spec.ts`
-- `cd frontend && npx vitest run src/components/sequence-models/EventEncoderTokenOverlay.test.tsx`
+- `cd frontend && npx vitest run src/components/sequence-models/eventEncoderTimelineNavigation.test.ts src/components/sequence-models/EventEncoderTokenOverlay.test.tsx`
 - `cd frontend && npx tsc --noEmit`
 
 ## Expansion

@@ -33,6 +33,10 @@ helpers, or the retained Sequence Models UI.
   table is also read-only and uses timeline response descriptor metadata plus
   `event_vectors.parquet` descriptor-vector values. Do not treat token labels
   as globally stable across Event Encoder jobs.
+- Event Encoder timeline previous/next navigation can be token-scoped by
+  toggling the selected event's token badge. This is a frontend-only affordance
+  derived from the currently loaded selected-k timeline rows; it does not hide
+  other events and must not imply token ids are stable across jobs or k values.
 - The Event Encoder cluster projection panel is read-only and artifact-backed.
   Its projection endpoint joins completed `event_tokens.parquet` assignments to
   persisted `event_vectors.parquet` event vectors for the selected job-local
