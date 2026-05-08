@@ -1,5 +1,7 @@
 import numpy as np
 
+ProjectionMethod = str
+
 
 def reduce_umap(
     embeddings: np.ndarray,
@@ -42,6 +44,52 @@ def reduce_pca(
     return pca.fit_transform(embeddings).astype(np.float32)
 
 
+def reduce_projection_2d(
+    embeddings: np.ndarray,
+    *,
+    method: ProjectionMethod = "umap",
+    n_neighbors: int = 15,
+    min_dist: float = 0.1,
+    metric: str = "euclidean",
+    random_state: int = 42,
+) -> np.ndarray:
+    """Return stable two-dimensional projection coordinates.
+
+    ``reduce_umap`` and ``reduce_pca`` may legitimately return fewer than two
+    columns for tiny or one-dimensional inputs. Plot consumers need a stable
+    ``(n, 2)`` shape, so this wrapper pads those degenerate cases with zeros.
+    """
+    values = np.asarray(embeddings, dtype=np.float32)
+    if values.ndim != 2:
+        raise ValueError("embeddings must be a 2D array")
+    if values.shape[0] == 0:
+        return np.zeros((0, 2), dtype=np.float32)
+    if values.shape[0] == 1:
+        return np.zeros((1, 2), dtype=np.float32)
+
+    if method == "pca":
+        reduced = reduce_pca(values, n_components=2, random_state=random_state)
+    elif method == "umap":
+        if values.shape[0] <= 3:
+            reduced = _svd_reduce(values, 2)
+        else:
+            try:
+                reduced = reduce_umap(
+                    values,
+                    n_components=2,
+                    n_neighbors=n_neighbors,
+                    min_dist=min_dist,
+                    metric=metric,
+                    random_state=random_state,
+                )
+            except (TypeError, ValueError):
+                reduced = _svd_reduce(values, 2)
+    else:
+        raise ValueError(f"unsupported projection method: {method}")
+
+    return _ensure_two_columns(reduced, values.shape[0])
+
+
 def _svd_reduce(embeddings: np.ndarray, n_components: int) -> np.ndarray:
     """Simple PCA-like reduction using SVD (no sklearn dependency)."""
     from numpy.linalg import svd
@@ -49,3 +97,15 @@ def _svd_reduce(embeddings: np.ndarray, n_components: int) -> np.ndarray:
     centered = embeddings - embeddings.mean(axis=0)
     U, S, Vt = svd(centered, full_matrices=False)
     return (U[:, :n_components] * S[:n_components]).astype(np.float32)
+
+
+def _ensure_two_columns(values: np.ndarray, n_rows: int) -> np.ndarray:
+    coords = np.asarray(values, dtype=np.float32)
+    if coords.ndim == 1:
+        coords = coords.reshape(n_rows, 1)
+    if coords.shape[1] >= 2:
+        return coords[:, :2].astype(np.float32, copy=False)
+    padded = np.zeros((n_rows, 2), dtype=np.float32)
+    if coords.shape[1] == 1:
+        padded[:, 0] = coords[:, 0]
+    return padded

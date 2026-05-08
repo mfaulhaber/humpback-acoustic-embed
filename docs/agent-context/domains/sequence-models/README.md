@@ -17,6 +17,7 @@ helpers, or the retained Sequence Models UI.
 - `frontend/src/components/sequence-models/`
 - `frontend/src/api/sequenceModels.ts`
 - `frontend/src/components/sequence-models/EventEncoderTimelinePanel.tsx`
+- `frontend/src/components/sequence-models/EventEncoderClusterProjectionPanel.tsx`
 - `frontend/src/components/sequence-models/EventEncoderTokenOverlay.tsx`
 - `frontend/e2e/sequence-models/continuous-embedding.spec.ts`
 - `frontend/e2e/sequence-models/event-encoder.spec.ts`
@@ -32,6 +33,11 @@ helpers, or the retained Sequence Models UI.
   table is also read-only and uses timeline response descriptor metadata plus
   `event_vectors.parquet` descriptor-vector values. Do not treat token labels
   as globally stable across Event Encoder jobs.
+- The Event Encoder cluster projection panel is read-only and artifact-backed.
+  Its projection endpoint joins completed `event_tokens.parquet` assignments to
+  persisted `event_vectors.parquet` event vectors for the selected job-local
+  `k`, then returns UMAP or PCA plot points colored with the same token palette
+  as the timeline overlay.
 - `DiscreteSequenceBar`, `RegionNavBar`, `SpanNavBar`,
   `MotifTimelineLegend`, `MotifHighlightOverlay`, and `CollapsiblePanelCard`
   are retained generic visualization primitives for future analysis/review

@@ -455,3 +455,36 @@ class EventEncoderTimelineResponse(BaseModel):
     job_start_timestamp: float
     job_end_timestamp: float
     events: list[EventEncoderTimelineEvent]
+
+
+EventEncoderProjectionMethod = Literal["umap", "pca"]
+
+
+class EventEncoderProjectionPoint(BaseModel):
+    """One projected Event Encoder event vector for a selected tokenization."""
+
+    event_id: str
+    region_id: str
+    source_sequence_key: str
+    sequence_index: int
+    start_timestamp: float
+    end_timestamp: float
+    token_id: int
+    token_label: str
+    token_confidence: float
+    distance_to_centroid: float
+    second_centroid_distance: Optional[float] = None
+    x: float
+    y: float
+
+
+class EventEncoderProjectionResponse(BaseModel):
+    """Two-dimensional Event Encoder vector projection for a completed job."""
+
+    job_id: str
+    selected_k: int
+    valid_k_values: list[int]
+    method: EventEncoderProjectionMethod
+    x_axis_label: str
+    y_axis_label: str
+    points: list[EventEncoderProjectionPoint]

@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Response
+import numpy as np
 import pyarrow.parquet as pq
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.clustering.reducer import reduce_projection_2d
 from humpback.models.call_parsing import RegionDetectionJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
@@ -22,6 +24,9 @@ from humpback.schemas.sequence_models import (
     EventEncoderJobCreate,
     EventEncoderJobDetail,
     EventEncoderJobOut,
+    EventEncoderProjectionMethod,
+    EventEncoderProjectionPoint,
+    EventEncoderProjectionResponse,
     EventEncoderTimelineEvent,
     EventEncoderTimelineResponse,
 )
@@ -291,6 +296,115 @@ async def get_event_encoder_timeline(
     )
 
 
+@router.get("/event-encoders/{job_id}/projection")
+async def get_event_encoder_projection(
+    job_id: str,
+    session: SessionDep,
+    k: Optional[int] = Query(default=None, gt=0),
+    method: EventEncoderProjectionMethod = Query(default="umap"),
+) -> EventEncoderProjectionResponse:
+    job = await get_event_encoder_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="event encoder job not found")
+    if job.status != JobStatus.complete.value:
+        raise HTTPException(
+            status_code=409,
+            detail=f"event encoder job status is {job.status!r}, not 'complete'",
+        )
+    if not job.event_tokens_path:
+        raise HTTPException(status_code=404, detail="event_tokens.parquet not found")
+    if not job.event_vectors_path:
+        raise HTTPException(status_code=404, detail="event_vectors.parquet not found")
+
+    token_path = Path(job.event_tokens_path)
+    if not token_path.exists():
+        raise HTTPException(status_code=404, detail="event_tokens.parquet not found")
+    vector_path = Path(job.event_vectors_path)
+    if not vector_path.exists():
+        raise HTTPException(status_code=404, detail="event_vectors.parquet not found")
+
+    rows = pq.read_table(token_path).to_pylist()
+    valid_k_values = sorted({int(row["k"]) for row in rows})
+    if not valid_k_values:
+        raise HTTPException(
+            status_code=404, detail="event_tokens.parquet contains no token rows"
+        )
+    selected_k = int(k) if k is not None else valid_k_values[0]
+    if selected_k not in valid_k_values:
+        raise HTTPException(
+            status_code=422,
+            detail=f"k={selected_k} is not available for this event encoder job",
+        )
+
+    selected_rows = sorted(
+        (row for row in rows if int(row["k"]) == selected_k),
+        key=lambda row: (
+            str(row["source_sequence_key"]),
+            float(row["start_timestamp"]),
+            float(row["end_timestamp"]),
+            str(row["event_id"]),
+        ),
+    )
+    vector_values = _load_event_vectors(vector_path)
+    matched: list[tuple[dict, list[float]]] = []
+    for row in selected_rows:
+        vector = vector_values.get(_event_vector_key(row))
+        if vector is not None:
+            matched.append((row, vector))
+    if not matched:
+        raise HTTPException(
+            status_code=404,
+            detail="event_vectors.parquet contains no vectors for selected tokens",
+        )
+
+    try:
+        matrix = np.asarray([vector for _, vector in matched], dtype=np.float32)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="event_vectors.parquet contains inconsistent event_vector dimensions",
+        ) from exc
+
+    coords = reduce_projection_2d(
+        matrix,
+        method=method,
+        random_state=int(job.random_seed),
+    )
+    x_axis_label = "UMAP 1" if method == "umap" else "PC 1"
+    y_axis_label = "UMAP 2" if method == "umap" else "PC 2"
+
+    return EventEncoderProjectionResponse(
+        job_id=job.id,
+        selected_k=selected_k,
+        valid_k_values=valid_k_values,
+        method=method,
+        x_axis_label=x_axis_label,
+        y_axis_label=y_axis_label,
+        points=[
+            EventEncoderProjectionPoint(
+                event_id=str(row["event_id"]),
+                region_id=str(row["region_id"]),
+                source_sequence_key=str(row["source_sequence_key"]),
+                sequence_index=int(row["sequence_index"]),
+                start_timestamp=float(row["start_timestamp"]),
+                end_timestamp=float(row["end_timestamp"]),
+                token_id=int(row["token_id"]),
+                token_label=str(row["token_label"]),
+                token_confidence=float(row["token_confidence"]),
+                distance_to_centroid=float(row["distance_to_centroid"]),
+                second_centroid_distance=(
+                    None
+                    if row.get("second_centroid_distance") is None
+                    else float(row["second_centroid_distance"])
+                ),
+                x=float(coords[index, 0]),
+                y=float(coords[index, 1]),
+            )
+            for index, (row, _) in enumerate(matched)
+        ],
+    )
+
+
 @router.post("/event-encoders/{job_id}/cancel")
 async def cancel_event_encoder(
     job_id: str,
@@ -364,6 +478,31 @@ def _load_descriptor_vector_values(
         }
         values[_event_vector_key(row)] = keyed_values
     return values
+
+
+def _load_event_vectors(path: Path) -> dict[tuple[str, int, str], list[float]]:
+    try:
+        rows = pq.read_table(path).to_pylist()
+    except Exception:
+        return {}
+
+    values: dict[tuple[str, int, str], list[float]] = {}
+    for row in rows:
+        vector = _numeric_vector(row.get("event_vector"))
+        if vector is not None:
+            values[_event_vector_key(row)] = vector
+    return values
+
+
+def _numeric_vector(value) -> list[float] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    result: list[float] = []
+    for item in value:
+        if not _is_number(item):
+            return None
+        result.append(float(item))
+    return result
 
 
 def _descriptor_values(

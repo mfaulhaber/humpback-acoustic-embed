@@ -2,6 +2,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from humpback.clustering.reducer import reduce_projection_2d
 from humpback.clustering.pipeline import (
     ClusteringResult,
     compute_cluster_sizes,
@@ -49,6 +50,33 @@ def test_pipeline_no_umap():
     assert result.reduced_embeddings is None
     # cluster_input should be the original embeddings when no UMAP
     assert result.cluster_input.shape == (30, 64)
+
+
+def test_reduce_projection_2d_pads_degenerate_inputs():
+    one_point = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
+    one_dim = np.array([[1.0], [3.0]], dtype=np.float32)
+
+    assert reduce_projection_2d(one_point, method="pca").shape == (1, 2)
+
+    coords = reduce_projection_2d(one_dim, method="pca")
+    assert coords.shape == (2, 2)
+    np.testing.assert_array_equal(coords[:, 1], np.zeros(2, dtype=np.float32))
+
+
+def test_reduce_projection_2d_umap_tiny_fallback_is_deterministic():
+    embeddings = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    first = reduce_projection_2d(embeddings, method="umap", random_state=7)
+    second = reduce_projection_2d(embeddings, method="umap", random_state=7)
+
+    assert first.shape == (2, 2)
+    np.testing.assert_array_equal(first, second)
 
 
 def test_compute_cluster_sizes():

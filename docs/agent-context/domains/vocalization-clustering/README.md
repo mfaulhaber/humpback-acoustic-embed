@@ -16,7 +16,16 @@ vocalization UI.
 - `src/humpback/workers/clustering_worker.py`
 - `src/humpback/workers/vocalization_worker.py`
 - `frontend/src/components/vocalization/`
+- `frontend/src/components/shared/ClusterProjectionPlot.tsx`
 - `frontend/e2e/vocalization-labeling.spec.ts`
+
+## Frontend Scope
+
+- Vocalization / Clustering detail renders persisted UMAP coordinates through
+  `VocalizationUmapPlot`, which adapts vocalization clustering data into the
+  shared `ClusterProjectionPlot` renderer. Keep vocalization-specific fetching,
+  palette/noise semantics, labels, and audio-on-click behavior in the
+  vocalization adapter rather than the shared component.
 
 ## Artifact Roots
 

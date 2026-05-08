@@ -307,6 +307,35 @@ const TIMELINE_NO_FEATURES = {
   })),
 };
 
+function projectionFor(
+  method: "umap" | "pca",
+  timeline: typeof TIMELINE_50,
+) {
+  return {
+    job_id: COMPLETE_JOB.id,
+    selected_k: timeline.selected_k,
+    valid_k_values: timeline.valid_k_values,
+    method,
+    x_axis_label: method === "umap" ? "UMAP 1" : "PC 1",
+    y_axis_label: method === "umap" ? "UMAP 2" : "PC 2",
+    points: timeline.events.map((event, index) => ({
+      event_id: event.event_id,
+      region_id: event.region_id,
+      source_sequence_key: event.source_sequence_key,
+      sequence_index: event.sequence_index,
+      start_timestamp: event.start_timestamp,
+      end_timestamp: event.end_timestamp,
+      token_id: event.token_id,
+      token_label: event.token_label,
+      token_confidence: event.token_confidence,
+      distance_to_centroid: event.distance_to_centroid,
+      second_centroid_distance: event.second_centroid_distance,
+      x: method === "umap" ? index + 0.25 : index - 0.5,
+      y: method === "umap" ? index * 0.5 : 0,
+    })),
+  };
+}
+
 function descriptorValues(eventIndex: number) {
   return Object.fromEntries(
     DESCRIPTOR_FEATURE_NAMES.map((name, index) => [
@@ -329,6 +358,7 @@ interface MockState {
   jobs: typeof QUEUED_JOB[];
   lastCreateBody?: CreatePayload;
   timelineRequests?: string[];
+  projectionRequests?: string[];
   audioRequests?: string[];
   timelineNoFeatures?: boolean;
 }
@@ -341,6 +371,7 @@ interface CreatePayload {
 
 async function setupMocks(page: Page, state: MockState) {
   state.timelineRequests ??= [];
+  state.projectionRequests ??= [];
   state.audioRequests ??= [];
 
   await page.route("**/call-parsing/segmentation-jobs**", (route) =>
@@ -390,6 +421,25 @@ async function setupMocks(page: Page, state: MockState) {
 
     if (idMatch) {
       const id = idMatch[1];
+      if (url.includes("/projection")) {
+        state.projectionRequests?.push(url);
+        if (id !== COMPLETE_JOB.id) {
+          return route.fulfill({ status: 409 });
+        }
+        const params = new URL(url).searchParams;
+        const selectedK = params.get("k");
+        const method = params.get("method") === "pca" ? "pca" : "umap";
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(
+            projectionFor(
+              method,
+              selectedK === "100" ? TIMELINE_100 : TIMELINE_50,
+            ),
+          ),
+        });
+      }
       if (url.includes("/timeline")) {
         state.timelineRequests?.push(url);
         if (id !== COMPLETE_JOB.id) {
@@ -578,6 +628,15 @@ test.describe("Sequence Models - Event Encoder", () => {
     await expect(page.getByTestId("eej-feature-ridge_log_frequency_slope")).toContainText(
       "octaves/s",
     );
+    await expect(page.getByTestId("eej-cluster-projection-panel")).toBeVisible();
+    await expect(page.getByTestId("eej-cluster-projection-plot")).toBeVisible();
+    const featureBox = await page
+      .getByTestId("eej-selected-feature-panel")
+      .boundingBox();
+    const projectionBox = await page
+      .getByTestId("eej-cluster-projection-panel")
+      .boundingBox();
+    expect(featureBox?.y ?? 0).toBeLessThan(projectionBox?.y ?? 0);
 
     await page.keyboard.press("d");
     await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 2 / 2");
@@ -603,6 +662,16 @@ test.describe("Sequence Models - Event Encoder", () => {
     expect(state.timelineRequests?.some((url) => url.includes("k=100"))).toBe(
       true,
     );
+    expect(
+      state.projectionRequests?.some(
+        (url) => url.includes("k=100") && url.includes("method=umap"),
+      ),
+    ).toBe(true);
+
+    await page.getByTestId("eej-projection-method-select").selectOption("pca");
+    await expect.poll(() =>
+      state.projectionRequests?.some((url) => url.includes("method=pca")),
+    ).toBe(true);
 
     const audioRequest = page.waitForRequest((request) =>
       request.url().includes("/call-parsing/region-jobs/") &&

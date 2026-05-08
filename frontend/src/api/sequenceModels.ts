@@ -178,6 +178,34 @@ export interface EventEncoderTimelineResponse {
   events: EventEncoderTimelineEvent[];
 }
 
+export type EventEncoderProjectionMethod = "umap" | "pca";
+
+export interface EventEncoderProjectionPoint {
+  event_id: string;
+  region_id: string;
+  source_sequence_key: string;
+  sequence_index: number;
+  start_timestamp: number;
+  end_timestamp: number;
+  token_id: number;
+  token_label: string;
+  token_confidence: number;
+  distance_to_centroid: number;
+  second_centroid_distance: number | null;
+  x: number;
+  y: number;
+}
+
+export interface EventEncoderProjectionResponse {
+  job_id: string;
+  selected_k: number;
+  valid_k_values: number[];
+  method: EventEncoderProjectionMethod;
+  x_axis_label: string;
+  y_axis_label: string;
+  points: EventEncoderProjectionPoint[];
+}
+
 export interface CreateContinuousEmbeddingJobRequest {
   event_segmentation_job_id?: string;
   event_source_mode?: "raw" | "effective";
@@ -289,6 +317,18 @@ export function fetchEventEncoderTimeline(
   );
 }
 
+export function fetchEventEncoderProjection(
+  jobId: string,
+  method: EventEncoderProjectionMethod,
+  k?: number | null,
+): Promise<EventEncoderProjectionResponse> {
+  const params = new URLSearchParams({ method });
+  if (k != null) params.set("k", String(k));
+  return request<EventEncoderProjectionResponse>(
+    `${EVENT_ENCODER_ROOT}/${jobId}/projection?${params.toString()}`,
+  );
+}
+
 export function createEventEncoderJob(
   body: CreateEventEncoderJobRequest,
 ): Promise<EventEncoderJob> {
@@ -373,6 +413,19 @@ export function useEventEncoderTimeline(
   return useQuery({
     queryKey: ["event-encoder-timeline", jobId, k],
     queryFn: () => fetchEventEncoderTimeline(jobId as string, k),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useEventEncoderProjection(
+  jobId: string | null,
+  k: number | null,
+  method: EventEncoderProjectionMethod,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ["event-encoder-projection", jobId, k, method],
+    queryFn: () => fetchEventEncoderProjection(jobId as string, method, k),
     enabled: enabled && jobId != null,
   });
 }
