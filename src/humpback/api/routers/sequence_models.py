@@ -7,8 +7,12 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Response
+import pyarrow.parquet as pq
 
 from humpback.api.deps import SessionDep, SettingsDep
+from humpback.models.call_parsing import RegionDetectionJob
+from humpback.models.processing import JobStatus
+from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.schemas.sequence_models import (
     ContinuousEmbeddingJobCreate,
     ContinuousEmbeddingJobDetail,
@@ -17,14 +21,18 @@ from humpback.schemas.sequence_models import (
     EventEncoderJobCreate,
     EventEncoderJobDetail,
     EventEncoderJobOut,
+    EventEncoderTimelineEvent,
+    EventEncoderTimelineResponse,
 )
 from humpback.services.continuous_embedding_service import (
     CancelTerminalJobError,
+    SOURCE_KIND_REGION_CRNN,
     cancel_continuous_embedding_job,
     create_continuous_embedding_job,
     delete_continuous_embedding_job,
     get_continuous_embedding_job,
     list_continuous_embedding_jobs,
+    source_kind_for,
 )
 from humpback.services.event_encoder_service import (
     CancelEventEncoderTerminalJobError,
@@ -156,6 +164,112 @@ async def get_event_encoder(job_id: str, session: SessionDep) -> EventEncoderJob
         job=_to_event_encoder_out(job),
         manifest=manifest,
         report=report,
+    )
+
+
+@router.get("/event-encoders/{job_id}/timeline")
+async def get_event_encoder_timeline(
+    job_id: str,
+    session: SessionDep,
+    k: Optional[int] = Query(default=None, gt=0),
+) -> EventEncoderTimelineResponse:
+    job = await get_event_encoder_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="event encoder job not found")
+    if job.status != JobStatus.complete.value:
+        raise HTTPException(
+            status_code=409,
+            detail=f"event encoder job status is {job.status!r}, not 'complete'",
+        )
+    if not job.event_tokens_path:
+        raise HTTPException(status_code=404, detail="event_tokens.parquet not found")
+
+    token_path = Path(job.event_tokens_path)
+    if not token_path.exists():
+        raise HTTPException(status_code=404, detail="event_tokens.parquet not found")
+
+    continuous = await session.get(
+        ContinuousEmbeddingJob, job.continuous_embedding_job_id
+    )
+    try:
+        source_kind = (
+            source_kind_for(continuous.model_version)
+            if continuous is not None
+            else None
+        )
+    except ValueError:
+        source_kind = None
+    if (
+        continuous is None
+        or continuous.region_detection_job_id is None
+        or source_kind != SOURCE_KIND_REGION_CRNN
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="event encoder timeline requires region_crnn provenance",
+        )
+    region_job = await session.get(
+        RegionDetectionJob, continuous.region_detection_job_id
+    )
+    if region_job is None:
+        raise HTTPException(status_code=409, detail="region detection job not found")
+
+    rows = pq.read_table(token_path).to_pylist()
+    valid_k_values = sorted({int(row["k"]) for row in rows})
+    if not valid_k_values:
+        raise HTTPException(
+            status_code=404, detail="event_tokens.parquet contains no token rows"
+        )
+    selected_k = int(k) if k is not None else valid_k_values[0]
+    if selected_k not in valid_k_values:
+        raise HTTPException(
+            status_code=422,
+            detail=f"k={selected_k} is not available for this event encoder job",
+        )
+
+    selected_rows = sorted(
+        (row for row in rows if int(row["k"]) == selected_k),
+        key=lambda row: (
+            str(row["source_sequence_key"]),
+            float(row["start_timestamp"]),
+            float(row["end_timestamp"]),
+            str(row["event_id"]),
+        ),
+    )
+    events = [
+        EventEncoderTimelineEvent(
+            event_id=str(row["event_id"]),
+            region_id=str(row["region_id"]),
+            source_sequence_key=str(row["source_sequence_key"]),
+            sequence_index=int(row["sequence_index"]),
+            start_timestamp=float(row["start_timestamp"]),
+            end_timestamp=float(row["end_timestamp"]),
+            token_id=int(row["token_id"]),
+            token_label=str(row["token_label"]),
+            token_confidence=float(row["token_confidence"]),
+            distance_to_centroid=float(row["distance_to_centroid"]),
+            second_centroid_distance=(
+                None
+                if row.get("second_centroid_distance") is None
+                else float(row["second_centroid_distance"])
+            ),
+        )
+        for row in selected_rows
+    ]
+
+    return EventEncoderTimelineResponse(
+        job_id=job.id,
+        event_segmentation_job_id=job.event_segmentation_job_id,
+        event_source_mode=(
+            "effective" if job.event_source_mode == "effective" else "raw"
+        ),
+        continuous_embedding_job_id=job.continuous_embedding_job_id,
+        region_detection_job_id=continuous.region_detection_job_id,
+        selected_k=selected_k,
+        valid_k_values=valid_k_values,
+        job_start_timestamp=float(region_job.start_timestamp or 0.0),
+        job_end_timestamp=float(region_job.end_timestamp or 0.0),
+        events=events,
     )
 
 

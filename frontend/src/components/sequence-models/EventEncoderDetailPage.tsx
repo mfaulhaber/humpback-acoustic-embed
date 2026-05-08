@@ -2,6 +2,7 @@ import { Link, useParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useEventEncoderJob } from "@/api/sequenceModels";
+import { EventEncoderTimelinePanel } from "./EventEncoderTimelinePanel";
 
 interface SummaryPayload {
   total_events?: number;
@@ -55,7 +56,7 @@ export function EventEncoderDetailPage() {
         </Link>
       </div>
 
-      <Card>
+      <Card data-testid="eej-summary-panel">
         <CardHeader>
           <CardTitle data-testid="eej-detail-id">{job.id}</CardTitle>
         </CardHeader>
@@ -91,7 +92,9 @@ export function EventEncoderDetailPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <EventEncoderTimelinePanel job={job} />
+
+      <Card data-testid="eej-report-panel">
         <CardHeader>
           <CardTitle>Report</CardTitle>
         </CardHeader>

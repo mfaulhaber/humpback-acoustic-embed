@@ -4,8 +4,8 @@ Read these only when the task needs the detail.
 
 ## Reference Docs
 
-- `docs/reference/sequence-models-api.md` for Continuous Embedding and Event
-  Encoder endpoints.
+- `docs/reference/sequence-models-api.md` for Continuous Embedding, Event
+  Encoder, and Event Encoder timeline endpoints.
 - `docs/reference/storage-layout.md` for continuous embedding and event encoder
   artifacts.
 - `docs/reference/data-model.md` for `continuous_embedding_jobs` and
