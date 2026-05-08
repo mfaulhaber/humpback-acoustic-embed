@@ -18,6 +18,7 @@ from humpback.schemas.sequence_models import (
     EventEncoderJobCreate,
     EventEncoderPreprocessingConfig,
 )
+from humpback.sequence_models.event_encoder import DESCRIPTOR_ORDER
 from humpback.services.event_encoder_service import create_event_encoder_job
 from humpback.storage import continuous_embedding_dir, event_encoder_dir
 from humpback.workers.event_encoder_worker import run_event_encoder_job
@@ -123,7 +124,7 @@ async def test_event_encoder_worker_writes_artifacts(session, settings):
     assert job.total_events == 3
     assert job.encoded_events == 3
     assert job.skipped_events == 0
-    assert job.event_vector_dim == 10
+    assert job.event_vector_dim == 16
     assert job.event_vectors_path is not None
     assert job.event_tokens_path is not None
     assert job.token_sequences_path is not None
@@ -147,16 +148,7 @@ async def test_event_encoder_worker_writes_artifacts(session, settings):
     assert "frequency_slope" not in token_columns
     assert "ridge_log_frequency_slope" in vectors[0]
     assert "ridge_log_frequency_slope" in tokens[0]
-    assert manifest["descriptor_feature_names"] == [
-        "duration",
-        "log_energy",
-        "peak_frequency",
-        "spectral_centroid",
-        "bandwidth",
-        "spectral_entropy",
-        "ridge_log_frequency_slope",
-        "gap_to_previous",
-    ]
+    assert manifest["descriptor_feature_names"] == DESCRIPTOR_ORDER
     assert manifest["valid_k_values"] == [1, 2]
     assert manifest["invalid_k_values"] == [99]
     assert report["summary"]["encoded_events"] == 3

@@ -270,6 +270,12 @@ class EventEncoderDescriptorConfig(BaseModel):
     ridge_candidate_count: int = 5
     ridge_smoothness_penalty: float = 8.0
     ridge_peak_prominence_ratio: float = 0.0
+    f0_fmin: float = 70.0
+    f0_fmax: float = 1200.0
+    pulse_min_rate_hz: float = 2.0
+    pulse_max_rate_hz: float = 200.0
+    pulse_confidence_threshold: float = 0.3
+    pulse_envelope_smooth_ms: float = 5.0
 
     @field_validator(
         "target_sample_rate",
@@ -302,8 +308,28 @@ class EventEncoderDescriptorConfig(BaseModel):
             raise ValueError("ridge descriptor settings must be >= 0")
         return value
 
+    @field_validator(
+        "f0_fmin",
+        "f0_fmax",
+        "pulse_min_rate_hz",
+        "pulse_max_rate_hz",
+        "pulse_envelope_smooth_ms",
+    )
+    @classmethod
+    def _validate_positive_descriptor_float(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("tonal and pulse descriptor settings must be > 0")
+        return value
+
+    @field_validator("pulse_confidence_threshold")
+    @classmethod
+    def _validate_pulse_confidence(cls, value: float) -> float:
+        if value < 0 or value > 1:
+            raise ValueError("pulse_confidence_threshold must be between 0 and 1")
+        return value
+
     @model_validator(mode="after")
-    def _validate_ridge_band(self) -> "EventEncoderDescriptorConfig":
+    def _validate_descriptor_bands(self) -> "EventEncoderDescriptorConfig":
         if self.ridge_min_frequency_hz <= 0:
             raise ValueError("ridge_min_frequency_hz must be > 0")
         if self.ridge_max_frequency_hz <= self.ridge_min_frequency_hz:
@@ -312,6 +338,10 @@ class EventEncoderDescriptorConfig(BaseModel):
             )
         if self.ridge_peak_prominence_ratio > 1:
             raise ValueError("ridge_peak_prominence_ratio must be <= 1")
+        if self.f0_fmax <= self.f0_fmin:
+            raise ValueError("f0_fmax must be greater than f0_fmin")
+        if self.pulse_max_rate_hz <= self.pulse_min_rate_hz:
+            raise ValueError("pulse_max_rate_hz must be greater than pulse_min_rate_hz")
         return self
 
 
@@ -321,13 +351,21 @@ class EventEncoderPreprocessingConfig(BaseModel):
     l2_normalize_pools: bool = True
     pca_dim: Literal[64, 128] = 128
     embedding_weight: float = 1.0
-    descriptor_weight: float = 1.0
+    descriptor_weight: float = 0.571
+    descriptor_clip_value: Optional[float] = 3.0
 
     @field_validator("embedding_weight", "descriptor_weight")
     @classmethod
     def _validate_weight(cls, value: float) -> float:
         if value < 0:
             raise ValueError("feature weights must be >= 0")
+        return value
+
+    @field_validator("descriptor_clip_value")
+    @classmethod
+    def _validate_descriptor_clip(cls, value: Optional[float]) -> Optional[float]:
+        if value is not None and value < 0:
+            raise ValueError("descriptor_clip_value must be >= 0")
         return value
 
     @model_validator(mode="after")

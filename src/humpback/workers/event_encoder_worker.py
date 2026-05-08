@@ -293,7 +293,12 @@ async def run_event_encoder_job(
             ),
             pca_dim=int(preprocessing_config.get("pca_dim", 128)),
             embedding_weight=float(preprocessing_config.get("embedding_weight", 1.0)),
-            descriptor_weight=float(preprocessing_config.get("descriptor_weight", 1.0)),
+            descriptor_weight=float(
+                preprocessing_config.get("descriptor_weight", 0.571)
+            ),
+            descriptor_clip_value=preprocessing_config.get(
+                "descriptor_clip_value", 3.0
+            ),
             random_seed=int(job.random_seed),
         )
         k_values = list(json.loads(job.k_values_json))
@@ -577,6 +582,16 @@ async def _build_encoded_events(
             ),
             ridge_peak_prominence_ratio=float(
                 descriptor_config.get("ridge_peak_prominence_ratio", 0.0)
+            ),
+            f0_fmin=float(descriptor_config.get("f0_fmin", 70.0)),
+            f0_fmax=float(descriptor_config.get("f0_fmax", 1200.0)),
+            pulse_min_rate_hz=float(descriptor_config.get("pulse_min_rate_hz", 2.0)),
+            pulse_max_rate_hz=float(descriptor_config.get("pulse_max_rate_hz", 200.0)),
+            pulse_confidence_threshold=float(
+                descriptor_config.get("pulse_confidence_threshold", 0.3)
+            ),
+            pulse_envelope_smooth_ms=float(
+                descriptor_config.get("pulse_envelope_smooth_ms", 5.0)
             ),
         )
         encoded.append(

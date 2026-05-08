@@ -28,7 +28,13 @@
   raw or effective events.
 - Event Encoder token ids and `Txx` labels are job-local and k-local, not a
   stable global vocabulary.
-- The active Event Encoder non-CRNN descriptor order includes
-  `ridge_log_frequency_slope` in place of the retired `frequency_slope`.
+- The active Event Encoder non-CRNN descriptor order is `duration`,
+  `log_energy`, `peak_frequency`, `spectral_centroid`, `bandwidth`,
+  `spectral_entropy`, `ridge_log_frequency_slope`, `gap_to_previous`,
+  `median_f0`, `f0_range`, `voicing_fraction`, `inflection_count`,
+  `pulse_rate`, `pulse_rate_slope`.
+- Event Encoder descriptor vectors are robust-z normalized, clipped to
+  `descriptor_clip_value` (default 3.0, null disables clipping), then multiplied
+  by `descriptor_weight`.
 - Event Encoder ridge slope persists only a scalar descriptor value; full STFT
   matrices are not stored in Continuous Embedding artifacts for this feature.

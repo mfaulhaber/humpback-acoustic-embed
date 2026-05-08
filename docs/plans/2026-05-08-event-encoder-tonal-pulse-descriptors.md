@@ -22,11 +22,11 @@ duplicating the dynamic programming pass.
 - Modify: `src/humpback/sequence_models/event_encoder.py`
 
 **Acceptance criteria:**
-- [ ] New `_compute_ridge_path(...)` private function returns the log₂
+- [x] New `_compute_ridge_path(...)` private function returns the log₂
       frequency path array (same result the current inline code produces)
-- [ ] `compute_ridge_log_frequency_slope` delegates to `_compute_ridge_path`
+- [x] `compute_ridge_log_frequency_slope` delegates to `_compute_ridge_path`
       and `_theil_sen_slope`
-- [ ] Existing ridge slope tests pass with identical values
+- [x] Existing ridge slope tests pass with identical values
 
 **Tests needed:**
 - Existing `test_ridge_log_frequency_slope_tracks_log_chirp` and
@@ -44,11 +44,11 @@ Compute `inflection_count` from the ridge path extracted in Task 1.
 - Modify: `tests/sequence_models/test_event_encoder.py`
 
 **Acceptance criteria:**
-- [ ] `_ridge_inflection_count(path)` counts sign changes in `np.diff(path)`
+- [x] `_ridge_inflection_count(path)` counts sign changes in `np.diff(path)`
       and returns `log(1 + N)` as a float
-- [ ] Returns 0.0 for paths with fewer than 3 points
-- [ ] `inflection_count` appended to `DESCRIPTOR_ORDER` and `DESCRIPTOR_UNITS`
-- [ ] `compute_acoustic_descriptors` returns `inflection_count` in its dict
+- [x] Returns 0.0 for paths with fewer than 3 points
+- [x] `inflection_count` appended to `DESCRIPTOR_ORDER` and `DESCRIPTOR_UNITS`
+- [x] `compute_acoustic_descriptors` returns `inflection_count` in its dict
 
 **Tests needed:**
 - Ascending log chirp → inflection_count == 0.0
@@ -66,15 +66,15 @@ Add the three pYIN-based descriptors via a private helper.
 - Modify: `tests/sequence_models/test_event_encoder.py`
 
 **Acceptance criteria:**
-- [ ] `_compute_f0_descriptors(audio, sample_rate, fmin, fmax)` returns a dict
+- [x] `_compute_f0_descriptors(audio, sample_rate, fmin, fmax)` returns a dict
       with `median_f0`, `f0_range`, `voicing_fraction`
-- [ ] Uses `librosa.pyin` with configurable `fmin` (default 70.0) and `fmax`
+- [x] Uses `librosa.pyin` with configurable `fmin` (default 70.0) and `fmax`
       (default 1200.0)
-- [ ] Returns 0.0 for all three when audio is empty, silent, or pYIN finds no
+- [x] Returns 0.0 for all three when audio is empty, silent, or pYIN finds no
       voiced frames
-- [ ] `median_f0`, `f0_range`, `voicing_fraction` appended to
+- [x] `median_f0`, `f0_range`, `voicing_fraction` appended to
       `DESCRIPTOR_ORDER` and `DESCRIPTOR_UNITS`
-- [ ] `compute_acoustic_descriptors` accepts `f0_fmin` and `f0_fmax` kwargs
+- [x] `compute_acoustic_descriptors` accepts `f0_fmin` and `f0_fmax` kwargs
       and merges F0 results into its return dict
 
 **Tests needed:**
@@ -94,20 +94,20 @@ Add the two envelope-autocorrelation-based descriptors via a private helper.
 - Modify: `tests/sequence_models/test_event_encoder.py`
 
 **Acceptance criteria:**
-- [ ] `_compute_pulse_descriptors(audio, sample_rate, min_rate_hz, max_rate_hz,
+- [x] `_compute_pulse_descriptors(audio, sample_rate, min_rate_hz, max_rate_hz,
       confidence_threshold, envelope_smooth_ms)` returns a dict with
       `pulse_rate`, `pulse_rate_slope`
-- [ ] Envelope extracted via `scipy.signal.hilbert`, smoothed with
+- [x] Envelope extracted via `scipy.signal.hilbert`, smoothed with
       moving-average window
-- [ ] Dominant pulse rate from normalized autocorrelation peak in the lag range
+- [x] Dominant pulse rate from normalized autocorrelation peak in the lag range
       corresponding to `min_rate_hz`–`max_rate_hz`
-- [ ] Confidence gate: autocorrelation peak height below threshold → both
+- [x] Confidence gate: autocorrelation peak height below threshold → both
       values 0.0
-- [ ] Pulse rate slope via Theil-Sen on inter-peak instantaneous rates;
+- [x] Pulse rate slope via Theil-Sen on inter-peak instantaneous rates;
       requires ≥ 3 envelope peaks, else 0.0
-- [ ] `pulse_rate`, `pulse_rate_slope` appended to `DESCRIPTOR_ORDER` and
+- [x] `pulse_rate`, `pulse_rate_slope` appended to `DESCRIPTOR_ORDER` and
       `DESCRIPTOR_UNITS`
-- [ ] `compute_acoustic_descriptors` accepts pulse config kwargs and merges
+- [x] `compute_acoustic_descriptors` accepts pulse config kwargs and merges
       results
 
 **Tests needed:**
@@ -119,27 +119,39 @@ Add the two envelope-autocorrelation-based descriptors via a private helper.
 
 ---
 
-### Task 5: Update worker config forwarding and default descriptor weight
+### Task 5: Update worker config forwarding and preprocessing safeguards
 
 Forward the new config keys from `descriptor_config` to
-`compute_acoustic_descriptors` and change the default `descriptor_weight`.
+`compute_acoustic_descriptors`, change the default `descriptor_weight`, and
+clip descriptor robust-z outliers before weighting.
 
 **Files:**
 - Modify: `src/humpback/workers/event_encoder_worker.py`
+- Modify: `src/humpback/schemas/sequence_models.py`
+- Modify: `src/humpback/sequence_models/event_tokenization.py`
+- Modify: `frontend/src/api/sequenceModels.ts`
+- Modify: `frontend/src/components/sequence-models/EventEncoderCreateForm.tsx`
+- Modify: `tests/sequence_models/test_event_tokenization.py`
+- Modify: `tests/unit/test_sequence_models_schemas.py`
 
 **Acceptance criteria:**
-- [ ] `_build_encoded_events` forwards `f0_fmin`, `f0_fmax`,
+- [x] `_build_encoded_events` forwards `f0_fmin`, `f0_fmax`,
       `pulse_min_rate_hz`, `pulse_max_rate_hz`, `pulse_confidence_threshold`,
       `pulse_envelope_smooth_ms` from `descriptor_config` to
       `compute_acoustic_descriptors` with correct defaults
-- [ ] Default `descriptor_weight` fallback in `_run_event_encoder_job` changes
+- [x] Default `descriptor_weight` fallback in `_run_event_encoder_job` changes
       from 1.0 to 0.571
-- [ ] `descriptor_feature_names` in manifest reflects the 14-entry
+- [x] `descriptor_clip_value` defaults to 3.0, is included in preprocessing
+      configs, and can be set to null to disable clipping
+- [x] Descriptor vectors are clipped after robust z-score normalization and
+      before descriptor weighting
+- [x] `descriptor_feature_names` in manifest reflects the 14-entry
       `DESCRIPTOR_ORDER`
 
 **Tests needed:**
 - Existing worker tests pass (they exercise the full pipeline with default
   configs and will now produce 14-d descriptor vectors)
+- Preprocessing tests cover default clipping and disabled clipping
 
 ---
 
@@ -152,8 +164,8 @@ reflect the new 14-descriptor order.
 - Modify: `tests/sequence_models/test_event_encoder.py`
 
 **Acceptance criteria:**
-- [ ] All shape assertions updated from (8,) to (14,)
-- [ ] All existing descriptor value assertions unchanged (ridge slope, spectral
+- [x] All shape assertions updated from (8,) to (14,)
+- [x] All existing descriptor value assertions unchanged (ridge slope, spectral
       features, gap, duration, etc.)
 
 **Tests needed:**
@@ -171,9 +183,9 @@ set.
 - Modify: `docs/agent-context/domains/sequence-models/invariants.md`
 
 **Acceptance criteria:**
-- [ ] README mentions the six new descriptors in the artifact manifest
+- [x] README mentions the six new descriptors in the artifact manifest
       description
-- [ ] Invariants document records the new 14-entry descriptor order including
+- [x] Invariants document records the new 14-entry descriptor order including
       F0 and pulse features
 
 **Tests needed:**
@@ -189,6 +201,8 @@ Run in order after all tasks:
 2. `uv run ruff check src/humpback/sequence_models/event_encoder.py src/humpback/workers/event_encoder_worker.py`
 3. `uv run pyright src/humpback/sequence_models/event_encoder.py src/humpback/workers/event_encoder_worker.py`
 4. `uv run pytest tests/sequence_models/test_event_encoder.py -q`
-5. `uv run pytest tests/workers/test_event_encoder_worker.py -q`
-6. `uv run pytest tests/services/test_event_encoder_service.py -q`
-7. `uv run pytest tests/`
+5. `uv run pytest tests/sequence_models/test_event_tokenization.py -q`
+6. `uv run pytest tests/workers/test_event_encoder_worker.py -q`
+7. `uv run pytest tests/services/test_event_encoder_service.py -q`
+8. `cd frontend && npx tsc --noEmit`
+9. `uv run pytest tests/`

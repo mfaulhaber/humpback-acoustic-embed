@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import ceil
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -25,6 +25,12 @@ DESCRIPTOR_ORDER = [
     "spectral_entropy",
     "ridge_log_frequency_slope",
     "gap_to_previous",
+    "median_f0",
+    "f0_range",
+    "voicing_fraction",
+    "inflection_count",
+    "pulse_rate",
+    "pulse_rate_slope",
 ]
 
 DESCRIPTOR_UNITS = {
@@ -36,6 +42,12 @@ DESCRIPTOR_UNITS = {
     "spectral_entropy": "normalized",
     "ridge_log_frequency_slope": "octaves/s",
     "gap_to_previous": "seconds",
+    "median_f0": "Hz",
+    "f0_range": "Hz",
+    "voicing_fraction": "normalized",
+    "inflection_count": "log count",
+    "pulse_rate": "Hz",
+    "pulse_rate_slope": "Hz/s",
 }
 
 
@@ -213,6 +225,12 @@ def compute_acoustic_descriptors(
     ridge_candidate_count: int = 5,
     ridge_smoothness_penalty: float = 8.0,
     ridge_peak_prominence_ratio: float = 0.0,
+    f0_fmin: float = 70.0,
+    f0_fmax: float = 1200.0,
+    pulse_min_rate_hz: float = 2.0,
+    pulse_max_rate_hz: float = 200.0,
+    pulse_confidence_threshold: float = 0.3,
+    pulse_envelope_smooth_ms: float = 5.0,
 ) -> dict[str, float]:
     """Compute acoustic descriptors for one event crop."""
     x = np.asarray(audio, dtype=np.float32)
@@ -229,6 +247,12 @@ def compute_acoustic_descriptors(
             "spectral_entropy": 0.0,
             "gap_to_previous": float(gap_to_previous),
             "ridge_log_frequency_slope": 0.0,
+            "median_f0": 0.0,
+            "f0_range": 0.0,
+            "voicing_fraction": 0.0,
+            "inflection_count": 0.0,
+            "pulse_rate": 0.0,
+            "pulse_rate_slope": 0.0,
         }
         return empty
 
@@ -252,7 +276,8 @@ def compute_acoustic_descriptors(
         entropy_raw = -float(np.sum(probs * np.log(probs + eps)))
         entropy = entropy_raw / float(np.log(len(probs))) if len(probs) > 1 else 0.0
 
-    slope = compute_ridge_log_frequency_slope(
+    ridge_frame_times: list[float] = []
+    ridge_path = _compute_ridge_path(
         spectra,
         freqs,
         sample_rate=sample_rate,
@@ -263,6 +288,31 @@ def compute_acoustic_descriptors(
         candidate_count=ridge_candidate_count,
         smoothness_penalty=ridge_smoothness_penalty,
         peak_prominence_ratio=ridge_peak_prominence_ratio,
+        frame_times_out=ridge_frame_times,
+    )
+    slope = (
+        0.0
+        if ridge_path.size < 2
+        else _finite_float(
+            _theil_sen_slope(
+                np.asarray(ridge_frame_times, dtype=np.float64), ridge_path
+            )
+        )
+    )
+    inflection_count = _ridge_inflection_count(ridge_path)
+    f0_descriptors = _compute_f0_descriptors(
+        x,
+        sample_rate=sample_rate,
+        fmin=f0_fmin,
+        fmax=f0_fmax,
+    )
+    pulse_descriptors = _compute_pulse_descriptors(
+        x,
+        sample_rate=sample_rate,
+        min_rate_hz=pulse_min_rate_hz,
+        max_rate_hz=pulse_max_rate_hz,
+        confidence_threshold=pulse_confidence_threshold,
+        envelope_smooth_ms=pulse_envelope_smooth_ms,
     )
 
     descriptors = {
@@ -274,6 +324,9 @@ def compute_acoustic_descriptors(
         "spectral_entropy": entropy,
         "gap_to_previous": float(gap_to_previous),
         "ridge_log_frequency_slope": slope,
+        **f0_descriptors,
+        "inflection_count": inflection_count,
+        **pulse_descriptors,
     }
     return descriptors
 
@@ -292,14 +345,51 @@ def compute_ridge_log_frequency_slope(
     peak_prominence_ratio: float = 0.0,
 ) -> float:
     """Track a smooth spectral ridge and fit log2 frequency over time."""
-    if sample_rate <= 0 or hop_length <= 0 or spectra.ndim != 2 or spectra.shape[0] < 2:
+    frame_times: list[float] = []
+    path = _compute_ridge_path(
+        spectra,
+        freqs,
+        sample_rate=sample_rate,
+        hop_length=hop_length,
+        eps=eps,
+        min_frequency_hz=min_frequency_hz,
+        max_frequency_hz=max_frequency_hz,
+        candidate_count=candidate_count,
+        smoothness_penalty=smoothness_penalty,
+        peak_prominence_ratio=peak_prominence_ratio,
+        frame_times_out=frame_times,
+    )
+    if path.size < 2:
         return 0.0
+    times = np.asarray(frame_times, dtype=np.float64)
+    return _finite_float(_theil_sen_slope(times, path))
+
+
+def _compute_ridge_path(
+    spectra: np.ndarray,
+    freqs: np.ndarray,
+    *,
+    sample_rate: int,
+    hop_length: int,
+    eps: float = 1e-12,
+    min_frequency_hz: float = 100.0,
+    max_frequency_hz: float = 3000.0,
+    candidate_count: int = 5,
+    smoothness_penalty: float = 8.0,
+    peak_prominence_ratio: float = 0.0,
+    frame_times_out: list[float] | None = None,
+) -> np.ndarray:
+    """Return the Viterbi ridge path as log2 frequency values."""
+    if frame_times_out is not None:
+        frame_times_out.clear()
+    if sample_rate <= 0 or hop_length <= 0 or spectra.ndim != 2 or spectra.shape[0] < 2:
+        return np.asarray([], dtype=np.float64)
     freqs = np.asarray(freqs, dtype=np.float64)
     spectra = np.asarray(spectra, dtype=np.float64)
     if freqs.ndim != 1 or freqs.shape[0] != spectra.shape[1]:
-        return 0.0
+        return np.asarray([], dtype=np.float64)
     if min_frequency_hz <= 0 or max_frequency_hz <= min_frequency_hz:
-        return 0.0
+        return np.asarray([], dtype=np.float64)
 
     band_max = min(float(max_frequency_hz), float(freqs[-1]))
     band_mask = (
@@ -310,7 +400,7 @@ def compute_ridge_log_frequency_slope(
     )
     band_indices = np.flatnonzero(band_mask)
     if band_indices.size == 0:
-        return 0.0
+        return np.asarray([], dtype=np.float64)
 
     frame_candidates: list[tuple[np.ndarray, np.ndarray]] = []
     frame_times: list[float] = []
@@ -331,17 +421,16 @@ def compute_ridge_log_frequency_slope(
         frame_times.append(float(frame_idx * hop_length / sample_rate))
 
     if len(frame_candidates) < 2:
-        return 0.0
+        return np.asarray([], dtype=np.float64)
 
     path = _track_log_frequency_path(
         frame_candidates,
         smoothness_penalty=max(0.0, float(smoothness_penalty)),
         eps=eps,
     )
-    if path.size < 2:
-        return 0.0
-    times = np.asarray(frame_times, dtype=np.float64)
-    return _finite_float(_theil_sen_slope(times, path))
+    if frame_times_out is not None:
+        frame_times_out.extend(frame_times)
+    return path
 
 
 def _ridge_candidate_bins(
@@ -414,6 +503,153 @@ def _track_log_frequency_path(
         path.append(float(candidate_logs[frame_idx][index]))
     path.reverse()
     return np.asarray(path, dtype=np.float64)
+
+
+def _ridge_inflection_count(path: np.ndarray) -> float:
+    path = np.asarray(path, dtype=np.float64)
+    if path.size < 3:
+        return 0.0
+    deltas = np.diff(path)
+    directions = np.sign(deltas[np.isfinite(deltas)])
+    directions = directions[directions != 0]
+    if directions.size < 2:
+        return 0.0
+    changes = int(np.count_nonzero(directions[1:] != directions[:-1]))
+    return _finite_float(float(np.log1p(changes)))
+
+
+def _compute_f0_descriptors(
+    audio: np.ndarray,
+    *,
+    sample_rate: int,
+    fmin: float,
+    fmax: float,
+) -> dict[str, float]:
+    empty = {
+        "median_f0": 0.0,
+        "f0_range": 0.0,
+        "voicing_fraction": 0.0,
+    }
+    if sample_rate <= 0 or fmin <= 0 or fmax <= fmin:
+        return empty
+
+    x = np.asarray(audio, dtype=np.float32)
+    if x.ndim != 1:
+        x = np.ravel(x)
+    if x.size == 0 or not np.any(np.isfinite(x)):
+        return empty
+    x = np.nan_to_num(x, copy=True).astype(np.float32, copy=False)
+    if float(np.max(np.abs(x))) <= 1e-12:
+        return empty
+
+    import librosa
+
+    try:
+        f0, _, _ = librosa.pyin(
+            x,
+            fmin=float(fmin),
+            fmax=float(fmax),
+            sr=int(sample_rate),
+        )
+    except (ValueError, FloatingPointError):
+        return empty
+
+    f0_values = np.asarray(f0, dtype=np.float64)
+    if f0_values.size == 0:
+        return empty
+    voiced_f0 = f0_values[np.isfinite(f0_values)]
+    if voiced_f0.size == 0:
+        return empty
+    f0_range = (
+        float(np.max(voiced_f0) - np.min(voiced_f0)) if voiced_f0.size >= 2 else 0.0
+    )
+    return {
+        "median_f0": _finite_float(float(np.median(voiced_f0))),
+        "f0_range": _finite_float(f0_range),
+        "voicing_fraction": _finite_float(float(voiced_f0.size / f0_values.size)),
+    }
+
+
+def _compute_pulse_descriptors(
+    audio: np.ndarray,
+    *,
+    sample_rate: int,
+    min_rate_hz: float,
+    max_rate_hz: float,
+    confidence_threshold: float,
+    envelope_smooth_ms: float,
+) -> dict[str, float]:
+    empty = {
+        "pulse_rate": 0.0,
+        "pulse_rate_slope": 0.0,
+    }
+    if sample_rate <= 0 or min_rate_hz <= 0 or max_rate_hz <= min_rate_hz:
+        return empty
+
+    x = np.asarray(audio, dtype=np.float32)
+    if x.ndim != 1:
+        x = np.ravel(x)
+    if x.size < 2 or not np.any(np.isfinite(x)):
+        return empty
+    x = np.nan_to_num(x, copy=True).astype(np.float32, copy=False)
+    if float(np.max(np.abs(x))) <= 1e-12:
+        return empty
+
+    from scipy.signal import correlate, find_peaks, hilbert
+
+    analytic = cast(np.ndarray, hilbert(x))
+    envelope = np.abs(analytic).astype(np.float64)
+    smooth_samples = min(
+        envelope.size,
+        max(1, int(round(sample_rate * envelope_smooth_ms / 1000.0))),
+    )
+    if smooth_samples > 1:
+        kernel = np.ones(smooth_samples, dtype=np.float64) / float(smooth_samples)
+        envelope = np.convolve(envelope, kernel, mode="same")
+
+    centered = envelope - float(np.mean(envelope))
+    autocorr_zero = float(np.dot(centered, centered))
+    if autocorr_zero <= 1e-12:
+        return empty
+
+    autocorr = correlate(centered, centered, mode="full", method="fft")[
+        centered.size - 1 :
+    ]
+    autocorr = autocorr / autocorr_zero
+    min_lag = max(1, int(np.floor(sample_rate / max_rate_hz)))
+    max_lag = min(autocorr.shape[0] - 1, int(np.ceil(sample_rate / min_rate_hz)))
+    if max_lag <= min_lag:
+        return empty
+
+    lag_window = autocorr[min_lag : max_lag + 1]
+    peaks, _ = find_peaks(lag_window)
+    if peaks.size == 0:
+        return empty
+    peak_values = lag_window[peaks]
+    best_index = int(np.argmax(peak_values))
+    confidence = float(peak_values[best_index])
+    if confidence < float(confidence_threshold):
+        return empty
+
+    dominant_lag = int(peaks[best_index] + min_lag)
+    pulse_rate = _finite_float(float(sample_rate / dominant_lag))
+    pulse_rate_slope = 0.0
+    if pulse_rate > 0:
+        min_peak_distance = max(1, int(round(sample_rate / pulse_rate * 0.5)))
+        envelope_peaks, _ = find_peaks(envelope, distance=min_peak_distance)
+        if envelope_peaks.size >= 3:
+            peak_times = envelope_peaks.astype(np.float64) / float(sample_rate)
+            intervals = np.diff(peak_times)
+            valid = intervals > 0
+            if np.count_nonzero(valid) >= 2:
+                rates = 1.0 / intervals[valid]
+                rate_times = (peak_times[1:][valid] + peak_times[:-1][valid]) / 2.0
+                pulse_rate_slope = _finite_float(_theil_sen_slope(rate_times, rates))
+
+    return {
+        "pulse_rate": pulse_rate,
+        "pulse_rate_slope": pulse_rate_slope,
+    }
 
 
 def _ridge_emission_cost(strengths: np.ndarray, *, eps: float) -> np.ndarray:

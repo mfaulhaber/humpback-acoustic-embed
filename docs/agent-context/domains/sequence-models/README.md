@@ -57,8 +57,15 @@ helpers, or the retained Sequence Models UI.
 - `event_encoders/{job_id}/report.json`
 
 Event Encoder manifests record ordered `descriptor_feature_names`. The active
-non-CRNN descriptor block includes `ridge_log_frequency_slope` and does not
-persist full STFT matrices or ridge traces in Continuous Embedding artifacts.
+14-entry non-CRNN descriptor block includes duration, energy, spectral shape,
+`ridge_log_frequency_slope`, `gap_to_previous`, F0 descriptors
+(`median_f0`, `f0_range`, `voicing_fraction`), contour complexity
+(`inflection_count`), and pulse descriptors (`pulse_rate`,
+`pulse_rate_slope`). Full STFT matrices, ridge traces, and F0 contours are not
+stored in Continuous Embedding artifacts.
+Descriptor vectors are robust-z normalized and clipped by the Event Encoder
+preprocessing config (`descriptor_clip_value`, default 3.0) before weighting and
+concatenation.
 
 ## Likely Neighbors
 

@@ -142,6 +142,14 @@ constant total descriptor influence relative to the 128-d PCA embedding block.
 This is a default-only change; the worker reads it from
 `preprocessing_config_json`, so existing jobs are unaffected.
 
+### Descriptor outlier clipping
+
+After robust z-score normalization, descriptor vectors are clipped to
+`[-descriptor_clip_value, descriptor_clip_value]` before weighting and
+concatenation. The default is 3.0; `null` disables clipping. This prevents a
+descriptor with a very small MAD, such as near-zero pulse-rate slope across most
+events, from stretching UMAP/PCA projections into long outlier arms.
+
 ### Confidence-gated imputation
 
 `pulse_rate` and `pulse_rate_slope` return 0.0 when below the confidence
@@ -180,10 +188,13 @@ influence is modest enough that correlation does not dominate clustering axes.
 - Forward new config keys from `descriptor_config` to
   `compute_acoustic_descriptors`.
 - Default `descriptor_weight` in new jobs changes to 0.571.
+- Forward `descriptor_clip_value` from `preprocessing_config_json` to
+  preprocessing.
 
 ### event_tokenization.py
 
-No changes — operates on the descriptor matrix generically.
+- Add optional `descriptor_clip_value` preprocessing after robust z-score
+  normalization and before descriptor weighting.
 
 ### Dependencies
 
@@ -234,6 +245,8 @@ No new dependencies required.
 3. All degenerate inputs return finite 0.0 for new descriptors.
 4. Existing descriptor values unchanged (ridge slope, spectral features, etc.).
 5. Default `descriptor_weight` is 0.571 for new encoder jobs.
-6. `uv run pytest tests/` passes.
-7. `uv run pyright` passes.
-8. `uv run ruff check` passes.
+6. Descriptor robust-z outliers are clipped to 3.0 by default, with clipping
+   disable-able via `descriptor_clip_value=null`.
+7. `uv run pytest tests/` passes.
+8. `uv run pyright` passes.
+9. `uv run ruff check` passes.

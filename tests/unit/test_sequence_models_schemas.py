@@ -162,6 +162,8 @@ def test_event_encoder_job_create_defaults():
         "end_pool",
     ]
     assert payload.preprocessing.pca_dim == 128
+    assert payload.preprocessing.descriptor_weight == 0.571
+    assert payload.preprocessing.descriptor_clip_value == 3.0
     assert payload.k_values == [50, 100, 200]
     assert payload.random_seed == 0
 
@@ -174,6 +176,12 @@ def test_event_encoder_descriptor_config_defaults_include_ridge_settings():
     assert config.ridge_candidate_count == 5
     assert config.ridge_smoothness_penalty == 8.0
     assert config.ridge_peak_prominence_ratio == 0.0
+    assert config.f0_fmin == 70.0
+    assert config.f0_fmax == 1200.0
+    assert config.pulse_min_rate_hz == 2.0
+    assert config.pulse_max_rate_hz == 200.0
+    assert config.pulse_confidence_threshold == 0.3
+    assert config.pulse_envelope_smooth_ms == 5.0
 
 
 def test_event_encoder_descriptor_config_rejects_invalid_ridge_settings():
@@ -190,6 +198,12 @@ def test_event_encoder_descriptor_config_rejects_invalid_ridge_settings():
         EventEncoderDescriptorConfig(ridge_smoothness_penalty=-1.0)
     with pytest.raises(ValidationError, match="ridge_peak_prominence_ratio"):
         EventEncoderDescriptorConfig(ridge_peak_prominence_ratio=1.5)
+    with pytest.raises(ValidationError, match="f0_fmax"):
+        EventEncoderDescriptorConfig(f0_fmin=500.0, f0_fmax=400.0)
+    with pytest.raises(ValidationError, match="pulse_max_rate_hz"):
+        EventEncoderDescriptorConfig(pulse_min_rate_hz=50.0, pulse_max_rate_hz=10.0)
+    with pytest.raises(ValidationError, match="pulse_confidence_threshold"):
+        EventEncoderDescriptorConfig(pulse_confidence_threshold=1.5)
 
 
 def test_event_encoder_job_create_sorts_k_values():
@@ -234,6 +248,8 @@ def test_event_encoder_preprocessing_restricts_pca_dim_and_weights():
         EventEncoderPreprocessingConfig.model_validate({"pca_dim": 32})
     with pytest.raises(ValidationError, match="feature weights"):
         EventEncoderPreprocessingConfig(embedding_weight=-1.0)
+    with pytest.raises(ValidationError, match="descriptor_clip_value"):
+        EventEncoderPreprocessingConfig(descriptor_clip_value=-1.0)
     with pytest.raises(ValidationError, match="at least one feature weight"):
         EventEncoderPreprocessingConfig(
             embedding_weight=0.0,
