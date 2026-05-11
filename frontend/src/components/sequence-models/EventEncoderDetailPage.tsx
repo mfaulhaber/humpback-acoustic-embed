@@ -89,6 +89,17 @@ export function EventEncoderDetailPage() {
               <span className="font-medium">Error:</span> {job.error_message}
             </div>
           ) : null}
+          {job.status === "complete" ? (
+            <div className="pt-2">
+              <Link
+                to={`/app/sequence-models/event-encoder/${job.id}/piano-roll`}
+                className="inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium text-blue-700 hover:bg-slate-50"
+                data-testid="eej-piano-roll-link"
+              >
+                Open Piano Roll
+              </Link>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
