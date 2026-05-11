@@ -1,4 +1,5 @@
 import { formatRecordingTime } from "@/utils/format";
+import { DeleteConfirmButton } from "@/components/shared/DeleteConfirmationDialog";
 import type { EffectiveEvent } from "@/components/timeline/overlays/EventBarOverlay";
 
 interface EventDetailPanelProps {
@@ -89,16 +90,34 @@ export function EventDetailPanel({
           >
             {isPlaying ? "Stop" : "Play Slice"}
           </button>
-          <button
-            className={
-              isDeleted
-                ? "rounded-md border border-green-500/50 px-3 py-1.5 text-xs text-green-400 hover:bg-green-500/10"
-                : "rounded-md border border-red-500/50 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10"
-            }
-            onClick={() => onDelete(event.eventId)}
-          >
-            {isDeleted ? "Undo Delete" : "Delete Event"}
-          </button>
+          {isDeleted ? (
+            <button
+              className="rounded-md border border-green-500/50 px-3 py-1.5 text-xs text-green-400 hover:bg-green-500/10"
+              onClick={() => onDelete(event.eventId)}
+            >
+              Undo Delete
+            </button>
+          ) : (
+            <DeleteConfirmButton
+              size="sm"
+              className="h-8 px-3 text-xs"
+              resourceType="event"
+              resourceName={event.eventId}
+              confirmationText={
+                <>
+                  Mark event{" "}
+                  <strong className="font-semibold text-foreground">
+                    {event.eventId}
+                  </strong>{" "}
+                  for deletion?
+                </>
+              }
+              consequence="This event will be marked as deleted in pending corrections. Save the corrections to apply it to effective event readers."
+              onConfirm={() => onDelete(event.eventId)}
+            >
+              Delete Event
+            </DeleteConfirmButton>
+          )}
         </div>
       </div>
     </div>

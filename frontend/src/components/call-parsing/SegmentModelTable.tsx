@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { DeleteConfirmButton } from "@/components/shared/DeleteConfirmationDialog";
 import {
   useSegmentationModels,
   useDeleteSegmentationModel,
@@ -40,17 +40,17 @@ export function SegmentModelTable() {
   const { data: models = [] } = useSegmentationModels();
   const deleteMutation = useDeleteSegmentationModel();
 
-  const handleDelete = (modelId: string) => {
-    if (!confirm("Delete this segmentation model?")) return;
-    deleteMutation.mutate(modelId, {
-      onError: (err) => {
-        toast({
-          title: "Cannot delete model",
-          description: (err as Error).message,
-          variant: "destructive",
-        });
-      },
-    });
+  const handleDelete = async (modelId: string) => {
+    try {
+      await deleteMutation.mutateAsync(modelId);
+    } catch (err) {
+      toast({
+        title: "Cannot delete model",
+        description: (err as Error).message,
+        variant: "destructive",
+      });
+      throw err;
+    }
   };
 
   return (
@@ -105,15 +105,16 @@ export function SegmentModelTable() {
                     {new Date(m.created_at).toLocaleDateString()}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <Button
-                      variant="ghost"
+                    <DeleteConfirmButton
                       size="sm"
-                      className="text-red-600 hover:text-red-700"
-                      onClick={() => handleDelete(m.id)}
-                      disabled={deleteMutation.isPending}
+                      resourceType="segmentation model"
+                      resourceName={m.name}
+                      consequence="This segmentation model and its checkpoint artifacts will be removed."
+                      onConfirm={() => handleDelete(m.id)}
+                      isPending={deleteMutation.isPending}
                     >
                       Delete
-                    </Button>
+                    </DeleteConfirmButton>
                   </td>
                 </tr>
               );

@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/shared/StatusBadge";
+import { DeleteConfirmButton } from "@/components/shared/DeleteConfirmationDialog";
 import {
   useClassifierTrainingJobs,
   useDeleteClassifierTrainingJob,
@@ -11,17 +11,17 @@ export function ClassifyTrainingJobTable() {
   const { data: jobs = [] } = useClassifierTrainingJobs(3000);
   const deleteMutation = useDeleteClassifierTrainingJob();
 
-  const handleDelete = (jobId: string) => {
-    if (!confirm("Delete this training job?")) return;
-    deleteMutation.mutate(jobId, {
-      onError: (err) => {
-        toast({
-          title: "Cannot delete training job",
-          description: (err as Error).message,
-          variant: "destructive",
-        });
-      },
-    });
+  const handleDelete = async (jobId: string) => {
+    try {
+      await deleteMutation.mutateAsync(jobId);
+    } catch (err) {
+      toast({
+        title: "Cannot delete training job",
+        description: (err as Error).message,
+        variant: "destructive",
+      });
+      throw err;
+    }
   };
 
   function sourceCount(sourceJobIds: string): number {
@@ -87,15 +87,16 @@ export function ClassifyTrainingJobTable() {
                   {new Date(job.created_at).toLocaleDateString()}
                 </td>
                 <td className="px-3 py-2 text-right">
-                  <Button
-                    variant="ghost"
+                  <DeleteConfirmButton
                     size="sm"
-                    className="text-red-600 hover:text-red-700"
-                    onClick={() => handleDelete(job.id)}
-                    disabled={deleteMutation.isPending}
+                    resourceType="training job"
+                    resourceName={job.id.slice(0, 8)}
+                    consequence="This event classifier training job will be removed. Models already produced by completed jobs will remain."
+                    onConfirm={() => handleDelete(job.id)}
+                    isPending={deleteMutation.isPending}
                   >
                     Delete
-                  </Button>
+                  </DeleteConfirmButton>
                 </td>
               </tr>
             ))}

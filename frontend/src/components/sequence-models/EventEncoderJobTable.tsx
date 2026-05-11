@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/shared/StatusBadge";
+import { DeleteConfirmButton } from "@/components/shared/DeleteConfirmationDialog";
 import {
   type EventEncoderJob,
   useCancelEventEncoderJob,
@@ -77,15 +78,16 @@ export function EventEncoderJobTable({ jobs, mode }: TableProps) {
                       Report
                     </Link>
                   ) : null}
-                  <Button
-                    variant="ghost"
+                  <DeleteConfirmButton
                     size="sm"
-                    className="text-red-600 hover:text-red-700"
-                    onClick={() => deleteMutation.mutate(job.id)}
-                    disabled={deleteMutation.isPending}
+                    resourceType="event encoder job"
+                    resourceName={job.id.slice(0, 8)}
+                    consequence="This Event Encoder job and its token/vector artifacts will be removed."
+                    onConfirm={() => deleteMutation.mutateAsync(job.id)}
+                    isPending={deleteMutation.isPending}
                   >
                     Delete
-                  </Button>
+                  </DeleteConfirmButton>
                 </div>
               )}
             </td>

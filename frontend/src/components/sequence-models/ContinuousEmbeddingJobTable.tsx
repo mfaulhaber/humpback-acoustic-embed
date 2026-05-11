@@ -13,7 +13,11 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import { BulkDeleteDialog } from "@/components/classifier/BulkDeleteDialog";
+import {
+  DeleteActionButton,
+  DeleteConfirmationDialog,
+  DeleteConfirmButton,
+} from "@/components/shared/DeleteConfirmationDialog";
 import {
   type ContinuousEmbeddingJob,
   continuousEmbeddingSourceKind,
@@ -214,14 +218,13 @@ export function ContinuousEmbeddingJobTable({ jobs, mode }: TableProps) {
                 autoComplete="off"
               />
             </div>
-            <Button
-              variant="destructive"
+            <DeleteActionButton
               size="sm"
               disabled={selectedIds.size === 0}
               onClick={() => setShowDeleteDialog(true)}
             >
               Delete ({selectedIds.size})
-            </Button>
+            </DeleteActionButton>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground text-xs">
@@ -385,15 +388,16 @@ export function ContinuousEmbeddingJobTable({ jobs, mode }: TableProps) {
                         Review
                       </Link>
                     )}
-                    <Button
-                      variant="ghost"
+                    <DeleteConfirmButton
                       size="sm"
-                      className="text-red-600 hover:text-red-700"
-                      onClick={() => deleteMutation.mutate(job.id)}
-                      disabled={deleteMutation.isPending}
+                      resourceType="continuous embedding job"
+                      resourceName={job.id.slice(0, 8)}
+                      consequence="This job and its embedding artifacts will be removed."
+                      onConfirm={() => deleteMutation.mutateAsync(job.id)}
+                      isPending={deleteMutation.isPending}
                     >
                       Delete
-                    </Button>
+                    </DeleteConfirmButton>
                   </div>
                 )}
               </td>
@@ -413,11 +417,13 @@ export function ContinuousEmbeddingJobTable({ jobs, mode }: TableProps) {
       </table>
 
       {mode === "previous" && (
-        <BulkDeleteDialog
+        <DeleteConfirmationDialog
           open={showDeleteDialog}
           onOpenChange={setShowDeleteDialog}
+          resourceType="continuous embedding job"
+          pluralResourceType="continuous embedding jobs"
           count={selectedIds.size}
-          entityName="continuous embedding job"
+          consequence="Selected jobs and their embedding artifacts will be removed."
           onConfirm={handleBulkDelete}
           isPending={bulkDeleting}
         />

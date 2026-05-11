@@ -23,6 +23,7 @@ import type {
 } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { DeleteConfirmButton } from "@/components/shared/DeleteConfirmationDialog";
 import {
   ChevronLeft,
   ChevronRight,
@@ -993,11 +994,22 @@ export function WindowClassifyReviewWorkspace({
                 <MousePointerClick className="h-3 w-3 mr-1" />
                 Add
               </Button>
-              <Button
-                variant="ghost"
+              <DeleteConfirmButton
                 size="sm"
                 className="h-7 text-xs"
-                onClick={() => {
+                resourceType="event"
+                resourceName={selectedEventId ?? "selected event"}
+                confirmationText={
+                  <>
+                    Mark event{" "}
+                    <strong className="font-semibold text-foreground">
+                      {selectedEventId ?? "selected event"}
+                    </strong>{" "}
+                    for deletion?
+                  </>
+                }
+                consequence="This event will be marked as deleted in pending boundary corrections. Save the corrections to apply the deletion."
+                onConfirm={() => {
                   if (selectedEventId) handleBoundaryDelete(selectedEventId);
                 }}
                 disabled={!selectedEventId}
@@ -1005,7 +1017,7 @@ export function WindowClassifyReviewWorkspace({
               >
                 <Trash2 className="h-3 w-3 mr-1" />
                 Delete
-              </Button>
+              </DeleteConfirmButton>
             </div>
 
             <div className="flex items-center gap-2">

@@ -894,6 +894,11 @@ export const fetchSegmentationTrainingDatasets = () =>
     "/call-parsing/segmentation-training-datasets",
   );
 
+export const deleteSegmentationTrainingDataset = (datasetId: string) =>
+  api<void>(`/call-parsing/segmentation-training-datasets/${datasetId}`, {
+    method: "DELETE",
+  });
+
 export const createDatasetFromCorrections = (
   body: CreateDatasetFromCorrectionsRequest,
 ) =>

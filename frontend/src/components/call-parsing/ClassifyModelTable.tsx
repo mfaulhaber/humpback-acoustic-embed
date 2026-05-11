@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DeleteConfirmButton } from "@/components/shared/DeleteConfirmationDialog";
 import {
   useEventClassifierModels,
   useDeleteEventClassifierModel,
@@ -67,17 +68,17 @@ export function ClassifyModelTable() {
       return next;
     });
 
-  const handleDelete = (modelId: string) => {
-    if (!confirm("Delete this event classifier model?")) return;
-    deleteMutation.mutate(modelId, {
-      onError: (err) => {
-        toast({
-          title: "Cannot delete model",
-          description: (err as Error).message,
-          variant: "destructive",
-        });
-      },
-    });
+  const handleDelete = async (modelId: string) => {
+    try {
+      await deleteMutation.mutateAsync(modelId);
+    } catch (err) {
+      toast({
+        title: "Cannot delete model",
+        description: (err as Error).message,
+        variant: "destructive",
+      });
+      throw err;
+    }
   };
 
   return (
@@ -143,7 +144,7 @@ function ModelRow({
   avgF1: number | null;
   isExpanded: boolean;
   onToggleExpand: () => void;
-  onDelete: () => void;
+  onDelete: () => unknown | Promise<unknown>;
   isDeleting: boolean;
 }) {
   return (
@@ -172,15 +173,16 @@ function ModelRow({
           {new Date(model.created_at).toLocaleDateString()}
         </td>
         <td className="px-3 py-2 text-right">
-          <Button
-            variant="ghost"
+          <DeleteConfirmButton
             size="sm"
-            className="text-red-600 hover:text-red-700"
-            onClick={onDelete}
-            disabled={isDeleting}
+            resourceType="event classifier model"
+            resourceName={model.name}
+            consequence="This event classifier model and its model artifacts will be removed."
+            onConfirm={onDelete}
+            isPending={isDeleting}
           >
             Delete
-          </Button>
+          </DeleteConfirmButton>
         </td>
       </tr>
       {isExpanded && metrics.length > 0 && (
