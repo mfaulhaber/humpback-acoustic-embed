@@ -95,6 +95,10 @@ vi.mock("@/components/timeline/overlays/RegionBoundaryMarkers", () => ({
   ),
 }));
 
+vi.mock("@/components/timeline/overlays/RegionBandOverlay", () => ({
+  RegionBandOverlay: () => <div data-testid="region-band-overlay" />,
+}));
+
 vi.mock("@/components/timeline/overlays/EventBarOverlay", () => ({
   EventBarOverlay: ({
     onSelectEvent,
@@ -384,6 +388,30 @@ describe("SegmentReviewWorkspace — epoch wiring", () => {
     mockTimelineContext.viewStart = REGION_EPOCH_BASE + 240;
     mockTimelineContext.viewEnd = REGION_EPOCH_BASE + 270;
     mockTimelineContext.centerTimestamp = REGION_EPOCH_BASE + 255;
+    rerender(<SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockTimelineContext.seekTo).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not move playback position when zoom changes", async () => {
+    setupHooks({
+      regionJob: makeRegionJob(),
+      regions: defaultRegions,
+      events: defaultEvents,
+    });
+    const { rerender } = render(
+      <SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />,
+    );
+
+    await waitFor(() => {
+      expect(mockTimelineContext.seekTo).toHaveBeenCalledTimes(1);
+    });
+
+    mockTimelineContext.viewportSpan = 60;
+    mockTimelineContext.activePreset = { key: "1m", span: 60, tileDuration: 10 };
+    mockTimelineContext.viewStart = REGION_EPOCH_BASE + 120;
+    mockTimelineContext.viewEnd = REGION_EPOCH_BASE + 180;
     rerender(<SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />);
 
     await new Promise((resolve) => setTimeout(resolve, 0));

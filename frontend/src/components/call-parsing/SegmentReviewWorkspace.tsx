@@ -327,7 +327,6 @@ export function SegmentReviewWorkspace({
       currentNavEvent.eventId,
       currentNavEvent.startSec,
       currentNavEvent.endSec,
-      viewSpan,
     ].join(":");
     if (autoScrollEventKeyRef.current === autoScrollKey) return;
     autoScrollEventKeyRef.current = autoScrollKey;
