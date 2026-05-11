@@ -230,6 +230,13 @@ function setupHooks({
 }
 
 beforeEach(() => {
+  Object.assign(mockTimelineContext, {
+    centerTimestamp: 1_700_000_150,
+    viewStart: 1_700_000_135,
+    viewEnd: 1_700_000_165,
+    viewportSpan: 30,
+    activePreset: { key: "30s", span: 30, tileDuration: 5 },
+  });
   regionAudioTimelineMock.mockReset();
 });
 
@@ -339,5 +346,28 @@ describe("SegmentReviewWorkspace — epoch wiring", () => {
         "",
       );
     });
+  });
+
+  it("does not snap back to the selected event after manual timeline panning", async () => {
+    setupHooks({
+      regionJob: makeRegionJob(),
+      regions: defaultRegions,
+      events: defaultEvents,
+    });
+    const { rerender } = render(
+      <SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />,
+    );
+
+    await waitFor(() => {
+      expect(mockTimelineContext.seekTo).toHaveBeenCalledTimes(1);
+    });
+
+    mockTimelineContext.viewStart = REGION_EPOCH_BASE + 240;
+    mockTimelineContext.viewEnd = REGION_EPOCH_BASE + 270;
+    mockTimelineContext.centerTimestamp = REGION_EPOCH_BASE + 255;
+    rerender(<SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockTimelineContext.seekTo).toHaveBeenCalledTimes(1);
   });
 });

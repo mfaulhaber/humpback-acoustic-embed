@@ -85,6 +85,7 @@ export function SegmentReviewWorkspace({
   const [viewStart, setViewStart] = useState<number | undefined>(undefined);
   const [viewSpan, setViewSpan] = useState(60);
   const scrollSeqRef = useRef(0);
+  const autoScrollEventKeyRef = useRef<string | null>(null);
   const [scrollToCenter, setScrollToCenter] = useState<
     { target: number; seq: number } | undefined
   >(undefined);
@@ -108,6 +109,7 @@ export function SegmentReviewWorkspace({
     setSelectedEventId(null);
     setSelectionCleared(false);
     setCurrentEventIndex(0);
+    autoScrollEventKeyRef.current = null;
     setAddMode(false);
     setActiveTrainingJobId(null);
     setRetrainError(null);
@@ -320,6 +322,15 @@ export function SegmentReviewWorkspace({
   // Auto-scroll spectrogram when current event is not fully visible
   useEffect(() => {
     if (!currentNavEvent || viewStart === undefined || !regionEpoch) return;
+    const autoScrollKey = [
+      currentEventIndex,
+      currentNavEvent.eventId,
+      currentNavEvent.startSec,
+      currentNavEvent.endSec,
+      viewSpan,
+    ].join(":");
+    if (autoScrollEventKeyRef.current === autoScrollKey) return;
+    autoScrollEventKeyRef.current = autoScrollKey;
     const viewEnd = viewStart + viewSpan;
     const pad = viewSpan * 0.15;
     const eventStartEpoch = regionEpoch.toEpoch(currentNavEvent.startSec);
@@ -336,7 +347,7 @@ export function SegmentReviewWorkspace({
       scrollSeqRef.current += 1;
       setScrollToCenter({ target, seq: scrollSeqRef.current });
     }
-  }, [currentNavEvent, viewStart, viewSpan, regionEpoch]);
+  }, [currentEventIndex, currentNavEvent, viewStart, viewSpan, regionEpoch]);
 
   // Callbacks for overlay
   const handleAdjust = useCallback(
