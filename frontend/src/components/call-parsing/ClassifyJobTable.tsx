@@ -5,7 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { ComputeDeviceBadge } from "@/components/shared/ComputeDeviceBadge";
-import { BulkDeleteDialog } from "@/components/classifier/BulkDeleteDialog";
+import {
+  DeleteActionButton,
+  DeleteConfirmationDialog,
+  DeleteConfirmButton,
+} from "@/components/shared/DeleteConfirmationDialog";
 import {
   useDeleteClassificationJob,
   useTypedEvents,
@@ -193,13 +197,12 @@ export function ClassifyJobTablePanel({
       <div className="flex items-center justify-between px-4 py-2 border-b">
         <h3 className="text-sm font-medium">{title}</h3>
         {mode === "previous" && selected.size > 0 && (
-          <Button
-            variant="destructive"
+          <DeleteActionButton
             size="sm"
             onClick={() => setShowBulkDelete(true)}
           >
             Delete {selected.size}
-          </Button>
+          </DeleteActionButton>
         )}
       </div>
       <table className="w-full text-sm">
@@ -236,16 +239,19 @@ export function ClassifyJobTablePanel({
               onToggleExpand={() => toggleExpand(job.id)}
               onToggleSelect={() => toggleSelect(job.id)}
               onReview={onReview}
-              onDelete={() => deleteMutation.mutate(job.id)}
+              onDelete={() => deleteMutation.mutateAsync(job.id)}
+              isDeleting={deleteMutation.isPending}
             />
           ))}
         </tbody>
       </table>
-      <BulkDeleteDialog
+      <DeleteConfirmationDialog
         open={showBulkDelete}
         onOpenChange={setShowBulkDelete}
+        resourceType="classification job"
+        pluralResourceType="classification jobs"
         count={selected.size}
-        entityName="job"
+        consequence="Selected classification jobs and typed-event artifacts will be removed."
         isPending={deleteMutation.isPending}
         onConfirm={async () => {
           for (const id of selected) {
@@ -272,6 +278,7 @@ function JobRow({
   onToggleSelect,
   onReview,
   onDelete,
+  isDeleting,
 }: {
   job: EventClassificationJob;
   segJobs: EventSegmentationJob[];
@@ -284,7 +291,8 @@ function JobRow({
   onToggleExpand: () => void;
   onToggleSelect: () => void;
   onReview?: (jobId: string) => void;
-  onDelete: () => void;
+  onDelete: () => unknown | Promise<unknown>;
+  isDeleting: boolean;
 }) {
   return (
     <>
@@ -342,14 +350,17 @@ function JobRow({
               )}
             </>
           )}
-          <Button
-            variant="ghost"
+          <DeleteConfirmButton
             size="sm"
-            className="h-7 text-xs text-red-600 hover:text-red-700"
-            onClick={onDelete}
+            className="h-7 text-xs"
+            resourceType="classification job"
+            resourceName={job.id.slice(0, 8)}
+            consequence="This classification job and its typed-event artifacts will be removed."
+            onConfirm={onDelete}
+            isPending={isDeleting}
           >
             Delete
-          </Button>
+          </DeleteConfirmButton>
         </td>
       </tr>
       {isExpanded && job.status === "complete" && (

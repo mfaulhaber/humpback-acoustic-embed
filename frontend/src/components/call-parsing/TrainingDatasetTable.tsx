@@ -1,8 +1,10 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DeleteConfirmButton } from "@/components/shared/DeleteConfirmationDialog";
 import {
   useSegmentationTrainingDatasets,
   useCreateSegmentationTrainingJob,
+  useDeleteSegmentationTrainingDataset,
   useSegmentationJobsWithCorrectionCounts,
 } from "@/hooks/queries/useCallParsing";
 import { toast } from "@/components/ui/use-toast";
@@ -10,6 +12,7 @@ import { toast } from "@/components/ui/use-toast";
 export function TrainingDatasetTable() {
   const { data: datasets = [] } = useSegmentationTrainingDatasets();
   const trainMutation = useCreateSegmentationTrainingJob();
+  const deleteMutation = useDeleteSegmentationTrainingDataset();
   const { data: correctionJobs = [] } =
     useSegmentationJobsWithCorrectionCounts();
   const jobsWithNewCorrections = correctionJobs.filter(
@@ -42,6 +45,23 @@ export function TrainingDatasetTable() {
         },
       },
     );
+  };
+
+  const handleDelete = async (datasetId: string) => {
+    try {
+      await deleteMutation.mutateAsync(datasetId);
+      toast({
+        title: "Training dataset deleted",
+        description: "The dataset and its saved samples were removed.",
+      });
+    } catch (err) {
+      toast({
+        title: "Cannot delete training dataset",
+        description: (err as Error).message,
+        variant: "destructive",
+      });
+      throw err;
+    }
   };
 
   return (
@@ -92,14 +112,27 @@ export function TrainingDatasetTable() {
                   {new Date(ds.created_at).toLocaleDateString()}
                 </td>
                 <td className="px-3 py-2 text-right">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={trainMutation.isPending}
-                    onClick={() => handleTrain(ds.id, ds.name)}
-                  >
-                    Train
-                  </Button>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={
+                        trainMutation.isPending || deleteMutation.isPending
+                      }
+                      onClick={() => handleTrain(ds.id, ds.name)}
+                    >
+                      Train
+                    </Button>
+                    <DeleteConfirmButton
+                      resourceType="training dataset"
+                      resourceName={ds.name}
+                      consequence="The dataset and its saved samples will be removed. Existing models and completed or failed training jobs will remain."
+                      onConfirm={() => handleDelete(ds.id)}
+                      isPending={deleteMutation.isPending}
+                    >
+                      Delete
+                    </DeleteConfirmButton>
+                  </div>
                 </td>
               </tr>
             ))}

@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { DeleteConfirmButton } from "@/components/shared/DeleteConfirmationDialog";
 import { useDeleteWindowClassificationJob } from "@/hooks/queries/useCallParsing";
 import { useHydrophones } from "@/hooks/queries/useClassifier";
 import type {
@@ -94,14 +95,16 @@ export function WindowClassifyJobTable({
                     Review
                   </Button>
                 )}
-                <Button
+                <DeleteConfirmButton
                   size="sm"
-                  variant="ghost"
-                  onClick={() => deleteMutation.mutate(job.id)}
-                  disabled={deleteMutation.isPending}
+                  resourceType="window classification job"
+                  resourceName={job.id.slice(0, 8)}
+                  consequence="This window classification job and its score artifacts will be removed."
+                  onConfirm={() => deleteMutation.mutateAsync(job.id)}
+                  isPending={deleteMutation.isPending}
                 >
                   Delete
-                </Button>
+                </DeleteConfirmButton>
               </td>
             </tr>
           ))}

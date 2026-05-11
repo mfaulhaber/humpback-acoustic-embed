@@ -10,6 +10,7 @@ import pytest
 import torch
 from httpx import AsyncClient
 from sklearn.pipeline import Pipeline
+from sqlalchemy import func, select
 
 from humpback.call_parsing.segmentation.model import SegmentationCRNN
 from humpback.call_parsing.storage import region_job_dir
@@ -27,6 +28,7 @@ from humpback.models.classifier import ClassifierModel
 from humpback.models.model_registry import ModelConfig
 from humpback.models.segmentation_training import (
     SegmentationTrainingDataset,
+    SegmentationTrainingJob,
     SegmentationTrainingSample,
 )
 from humpback.processing.inference import FakeTFLiteModel
@@ -1148,6 +1150,63 @@ async def test_list_segmentation_training_datasets_zero_samples(
     data = resp.json()
     match = next(d for d in data if d["id"] == ds_id)
     assert match["sample_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_segmentation_training_dataset_removes_dataset_and_samples(
+    client: AsyncClient, app_settings
+) -> None:
+    ds_id = await _seed_segmentation_training_dataset(app_settings)
+    await _seed_training_samples(app_settings, ds_id, 2)
+
+    resp = await client.delete(f"{BASE}/segmentation-training-datasets/{ds_id}")
+    assert resp.status_code == 204
+
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            assert await session.get(SegmentationTrainingDataset, ds_id) is None
+            sample_count = await session.scalar(
+                select(func.count())
+                .select_from(SegmentationTrainingSample)
+                .where(SegmentationTrainingSample.training_dataset_id == ds_id)
+            )
+            assert sample_count == 0
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_delete_segmentation_training_dataset_404_when_missing(
+    client: AsyncClient,
+) -> None:
+    resp = await client.delete(f"{BASE}/segmentation-training-datasets/missing-dataset")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_segmentation_training_dataset_409_when_job_in_flight(
+    client: AsyncClient, app_settings
+) -> None:
+    ds_id = await _seed_segmentation_training_dataset(app_settings)
+    engine = create_engine(app_settings.database_url)
+    try:
+        session_factory = create_session_factory(engine)
+        async with session_factory() as session:
+            session.add(
+                SegmentationTrainingJob(
+                    training_dataset_id=ds_id,
+                    status="running",
+                    config_json="{}",
+                )
+            )
+            await session.commit()
+    finally:
+        await engine.dispose()
+
+    resp = await client.delete(f"{BASE}/segmentation-training-datasets/{ds_id}")
+    assert resp.status_code == 409
 
 
 # ---- Segmentation jobs with correction counts ----------------------------

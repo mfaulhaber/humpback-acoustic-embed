@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import func, select
 
 from humpback.database import Base, create_engine, create_session_factory
 from humpback.models.audio import AudioFile
@@ -27,6 +28,11 @@ from humpback.models.call_parsing import (
 )
 from humpback.models.classifier import ClassifierModel
 from humpback.models.model_registry import ModelConfig
+from humpback.models.segmentation_training import (
+    SegmentationTrainingDataset,
+    SegmentationTrainingJob,
+    SegmentationTrainingSample,
+)
 from humpback.schemas.call_parsing import (
     CreateRegionJobRequest,
     RegionDetectionConfig,
@@ -38,6 +44,7 @@ from humpback.services.call_parsing import (
     create_parent_run,
     create_region_job,
     create_window_classification_job,
+    delete_segmentation_training_dataset,
     delete_window_classification_job,
 )
 
@@ -550,3 +557,84 @@ async def test_delete_window_classification_job_removes_row(session_factory, tmp
 
     async with session_factory() as session:
         assert await session.get(WindowClassificationJob, job_id) is None
+
+
+async def test_delete_segmentation_training_dataset_removes_samples_and_keeps_history(
+    session_factory,
+):
+    async with session_factory() as session:
+        dataset = SegmentationTrainingDataset(name="delete-me")
+        session.add(dataset)
+        await session.flush()
+        dataset_id = dataset.id
+        sample = SegmentationTrainingSample(
+            training_dataset_id=dataset_id,
+            audio_file_id="audio-1",
+            crop_start_sec=0.0,
+            crop_end_sec=10.0,
+            events_json="[]",
+            source="test",
+        )
+        complete_job = SegmentationTrainingJob(
+            training_dataset_id=dataset_id,
+            status="complete",
+            config_json="{}",
+        )
+        failed_job = SegmentationTrainingJob(
+            training_dataset_id=dataset_id,
+            status="failed",
+            config_json="{}",
+        )
+        session.add_all([sample, complete_job, failed_job])
+        await session.commit()
+        complete_job_id = complete_job.id
+        failed_job_id = failed_job.id
+
+    async with session_factory() as session:
+        assert await delete_segmentation_training_dataset(session, dataset_id) is True
+
+    async with session_factory() as session:
+        assert await session.get(SegmentationTrainingDataset, dataset_id) is None
+        sample_count = await session.scalar(
+            select(func.count())
+            .select_from(SegmentationTrainingSample)
+            .where(SegmentationTrainingSample.training_dataset_id == dataset_id)
+        )
+        assert sample_count == 0
+        assert await session.get(SegmentationTrainingJob, complete_job_id) is not None
+        assert await session.get(SegmentationTrainingJob, failed_job_id) is not None
+
+
+async def test_delete_segmentation_training_dataset_returns_false_when_missing(
+    session_factory,
+):
+    async with session_factory() as session:
+        assert (
+            await delete_segmentation_training_dataset(session, "missing-dataset")
+            is False
+        )
+
+
+async def test_delete_segmentation_training_dataset_rejects_in_flight_job(
+    session_factory,
+):
+    async with session_factory() as session:
+        dataset = SegmentationTrainingDataset(name="busy-dataset")
+        session.add(dataset)
+        await session.flush()
+        dataset_id = dataset.id
+        session.add(
+            SegmentationTrainingJob(
+                training_dataset_id=dataset_id,
+                status="queued",
+                config_json="{}",
+            )
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        with pytest.raises(CallParsingStateError):
+            await delete_segmentation_training_dataset(session, dataset_id)
+
+    async with session_factory() as session:
+        assert await session.get(SegmentationTrainingDataset, dataset_id) is not None

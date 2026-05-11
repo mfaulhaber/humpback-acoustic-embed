@@ -745,6 +745,47 @@ async def list_segmentation_training_datasets(session: AsyncSession):
     return [row._asdict() for row in result.all()]
 
 
+async def delete_segmentation_training_dataset(
+    session: AsyncSession, training_dataset_id: str
+) -> bool:
+    """Delete a segmentation training dataset and its samples.
+
+    Completed or failed training-job history is retained. Queued/running jobs
+    block deletion because they may still read the dataset.
+    """
+    from humpback.models.segmentation_training import (
+        SegmentationTrainingDataset,
+        SegmentationTrainingJob,
+        SegmentationTrainingSample,
+    )
+
+    dataset = await session.get(SegmentationTrainingDataset, training_dataset_id)
+    if dataset is None:
+        return False
+
+    in_flight = await session.execute(
+        select(SegmentationTrainingJob.id)
+        .where(
+            SegmentationTrainingJob.training_dataset_id == training_dataset_id,
+            SegmentationTrainingJob.status.in_(["queued", "running"]),
+        )
+        .limit(1)
+    )
+    if in_flight.scalar_one_or_none() is not None:
+        raise CallParsingStateError(
+            "Training dataset is referenced by a queued or running training job"
+        )
+
+    await session.execute(
+        sa_delete(SegmentationTrainingSample).where(
+            SegmentationTrainingSample.training_dataset_id == training_dataset_id
+        )
+    )
+    await session.delete(dataset)
+    await session.commit()
+    return True
+
+
 async def list_segmentation_models(session):
     from humpback.models.call_parsing import SegmentationModel
 

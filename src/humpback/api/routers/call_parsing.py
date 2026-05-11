@@ -708,6 +708,21 @@ async def create_dataset_from_corrections(
     )
 
 
+@router.delete("/segmentation-training-datasets/{dataset_id}", status_code=204)
+async def delete_segmentation_training_dataset(dataset_id: str, session: SessionDep):
+    try:
+        deleted = await service.delete_segmentation_training_dataset(
+            session, dataset_id
+        )
+    except service.CallParsingStateError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    if not deleted:
+        raise HTTPException(
+            status_code=404, detail="Segmentation training dataset not found"
+        )
+    return None
+
+
 @router.post(
     "/segmentation-training-jobs",
     response_model=SegmentationTrainingJobResponse,

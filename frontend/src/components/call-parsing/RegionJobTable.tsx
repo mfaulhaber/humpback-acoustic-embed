@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/shared/StatusBadge";
-import { BulkDeleteDialog } from "@/components/classifier/BulkDeleteDialog";
+import {
+  DeleteActionButton,
+  DeleteConfirmationDialog,
+} from "@/components/shared/DeleteConfirmationDialog";
 import { useDeleteRegionJob } from "@/hooks/queries/useCallParsing";
 import type { RegionDetectionJob, HydrophoneInfo } from "@/api/types";
 
@@ -194,14 +197,13 @@ export function RegionJobTable({ jobs, hydrophones, mode }: RegionJobTableProps)
                   data-testid="filter-input"
                 />
               </div>
-              <Button
-                variant="destructive"
+              <DeleteActionButton
                 size="sm"
                 disabled={selectedIds.size === 0}
                 onClick={() => setShowDeleteDialog(true)}
               >
                 Delete ({selectedIds.size})
-              </Button>
+              </DeleteActionButton>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground text-xs">
@@ -417,11 +419,13 @@ export function RegionJobTable({ jobs, hydrophones, mode }: RegionJobTableProps)
       </table>
 
       {mode === "previous" && (
-        <BulkDeleteDialog
+        <DeleteConfirmationDialog
           open={showDeleteDialog}
           onOpenChange={setShowDeleteDialog}
+          resourceType="region detection job"
+          pluralResourceType="region detection jobs"
           count={selectedIds.size}
-          entityName="region detection job"
+          consequence="Selected region jobs and their cached artifacts will be removed."
           onConfirm={handleBulkDelete}
           isPending={bulkDeleting}
         />

@@ -16,7 +16,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import { ComputeDeviceBadge } from "@/components/shared/ComputeDeviceBadge";
-import { BulkDeleteDialog } from "@/components/classifier/BulkDeleteDialog";
+import {
+  DeleteActionButton,
+  DeleteConfirmationDialog,
+  DeleteConfirmButton,
+} from "@/components/shared/DeleteConfirmationDialog";
 import { useDeleteSegmentationJob } from "@/hooks/queries/useCallParsing";
 import type {
   EventSegmentationJob,
@@ -242,14 +246,13 @@ export function SegmentJobTable({
                 autoComplete="off"
               />
             </div>
-            <Button
-              variant="destructive"
+            <DeleteActionButton
               size="sm"
               disabled={selectedIds.size === 0}
               onClick={() => setShowDeleteDialog(true)}
             >
               Delete ({selectedIds.size})
-            </Button>
+            </DeleteActionButton>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground text-xs">
@@ -362,7 +365,7 @@ export function SegmentJobTable({
                 onToggleExpand={() =>
                   setExpandedId(isExpanded ? null : job.id)
                 }
-                onDelete={() => deleteMutation.mutate(job.id)}
+                onDelete={() => deleteMutation.mutateAsync(job.id)}
                 deleteDisabled={deleteMutation.isPending}
                 selected={selectedIds.has(job.id)}
                 onToggleSelect={() =>
@@ -391,11 +394,13 @@ export function SegmentJobTable({
       </table>
 
       {mode === "previous" && (
-        <BulkDeleteDialog
+        <DeleteConfirmationDialog
           open={showDeleteDialog}
           onOpenChange={setShowDeleteDialog}
+          resourceType="segmentation job"
+          pluralResourceType="segmentation jobs"
           count={selectedIds.size}
-          entityName="segmentation job"
+          consequence="Selected segmentation jobs and their event artifacts will be removed."
           onConfirm={handleBulkDelete}
           isPending={bulkDeleting}
         />
@@ -412,7 +417,7 @@ interface SegmentJobRowProps {
   mode: "active" | "previous";
   isExpanded: boolean;
   onToggleExpand: () => void;
-  onDelete: () => void;
+  onDelete: () => unknown | Promise<unknown>;
   deleteDisabled: boolean;
   selected: boolean;
   onToggleSelect: () => void;
@@ -541,15 +546,17 @@ function SegmentJobRow({
                   </button>
                 </>
               )}
-              <Button
-                variant="ghost"
+              <DeleteConfirmButton
                 size="sm"
-                className="text-red-600 hover:text-red-700"
-                onClick={onDelete}
+                resourceType="segmentation job"
+                resourceName={job.id.slice(0, 8)}
+                consequence="This segmentation job and its event artifacts will be removed."
+                onConfirm={onDelete}
+                isPending={deleteDisabled}
                 disabled={deleteDisabled}
               >
                 Delete
-              </Button>
+              </DeleteConfirmButton>
             </div>
           )}
         </td>

@@ -18,6 +18,7 @@ import {
   deleteSegmentationModel,
   fetchSegmentationJobsWithCorrectionCounts,
   fetchSegmentationTrainingDatasets,
+  deleteSegmentationTrainingDataset,
   createDatasetFromCorrections,
   createSegmentationTrainingJob,
   quickRetrain,
@@ -296,6 +297,17 @@ export function useSegmentationTrainingDatasets() {
   });
 }
 
+export function useDeleteSegmentationTrainingDataset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (datasetId: string) =>
+      deleteSegmentationTrainingDataset(datasetId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: SEG_TRAINING_DATASETS_KEY });
+    },
+  });
+}
+
 export function useCreateSegmentationTrainingJob() {
   const qc = useQueryClient();
   return useMutation({
@@ -509,4 +521,3 @@ export function useWindowScores(
     enabled: !!jobId,
   });
 }
-
