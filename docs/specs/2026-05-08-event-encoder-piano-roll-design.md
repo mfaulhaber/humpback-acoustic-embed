@@ -55,7 +55,7 @@ inspect events one at a time.
   rectangle when zoomed in, with arrowhead showing sweep direction.
 - Token label rendered centered inside each rectangle with opaque background
   pill when zoomed in.
-- Minimap for full-recording overview and click-to-navigate.
+- Minimap for event-range overview and click-to-navigate.
 - Token legend panel with click-to-filter (dims non-matching events).
 - Event selection via click with tooltip showing all descriptor values.
 - K-value selector reusing the timeline endpoint's `valid_k_values`.
@@ -103,11 +103,16 @@ Response fields used for setup:
 | Field | Usage |
 |---|---|
 | `region_detection_job_id` | Audio slice URL builder for playback |
-| `job_start_timestamp`, `job_end_timestamp` | Initial time bounds, minimap range |
+| `job_start_timestamp`, `job_end_timestamp` | Recording bounds for audio clamping and relative time labels |
 | `valid_k_values`, `selected_k` | K-value selector |
 | `descriptor_feature_names`, `descriptor_feature_units` | Tooltip descriptor listing |
 
 No additional backend endpoint is required.
+
+The piano roll time domain is the first event start through the last event end,
+with 30 seconds of buffer on both sides. If the timeline has no events, it
+falls back to the recording bounds from `job_start_timestamp` and
+`job_end_timestamp`.
 
 ## 5. Visual Encoding
 
@@ -186,7 +191,10 @@ A dropdown selector toggles between:
 - **Scroll** (no modifier): zoom the time axis, centered on cursor.
 - **Shift+Scroll**: zoom the frequency axis, centered on cursor.
 - **Drag**: pan the time axis only (no frequency panning).
-- **F key**: fit all events in view (reset time bounds to full recording).
+- Cursor affordance is open hand over the canvas, closed hand while dragging,
+  and pointer when hovering an event rectangle.
+- **F key**: fit all events in view (reset time bounds to the event range plus
+  the 30 second buffer).
 - Time and frequency zoom have minimum and maximum bounds to prevent
   degenerate views.
 
@@ -194,7 +202,11 @@ A dropdown selector toggles between:
 
 - **Click** an event: select it (white border). Shows a tooltip with all
   descriptor values, token label, confidence, gap from previous, position.
+- **Click** outside an event: clear the selected event while preserving the
+  visible playhead position.
 - **Hover**: light border highlight, tooltip follows cursor.
+- Tooltip placement flips horizontally/vertically near viewport edges so the
+  detail window remains visible.
 - **Double-click**: zoom to fit the clicked event with padding.
 - **Escape**: clear selection and token filter.
 
@@ -209,19 +221,29 @@ A dropdown selector toggles between:
 
 - A play/pause button in the toolbar and the **Space** keyboard shortcut
   control audio playback.
-- When an event is selected, playback is bounded to the event's start
-  timestamp and duration, using the same `regionAudioSliceUrl` builder and
-  audio element pattern as `EventEncoderTimelinePanel`.
-- When no event is selected, playback covers the visible viewport span
-  (capped at 30 seconds).
-- Playback does not scroll the canvas (consistent with the existing timeline
-  panel's `scrollOnPlayback={false}` behavior).
+- A vertical playback head tracks the absolute timestamp currently being
+  heard.
+- The playback head is always visible as a thin center line when audio is idle.
+- Playback uses the shared timeline `usePlayback` hook with the same
+  `regionAudioSliceUrl` builder as `EventEncoderTimelinePanel`.
+- When an event is selected, playback uses slice mode and is bounded to the
+  event's start timestamp and duration.
+- When no event is selected, playback starts from the current visible playhead
+  position and uses gapless 300-second audio windows so it can continue beyond
+  the initially requested slice.
+- Playback centers the time viewport on the playback head as audio advances,
+  keeping the head fixed in the middle of the piano roll except at hard
+  recording boundaries. The centered view may show blank space before the
+  first recording timestamp or after the last one, matching the timeline
+  provider's center-timestamp model.
 
 ### 6.5 Keyboard Shortcuts
 
 | Key | Action |
 |---|---|
 | Space | Play/pause selected event or viewport |
+| A | Select previous event and center it |
+| D | Select next event and center it |
 | Escape | Clear selection and token filter |
 | F | Fit all events in view |
 | + / = | Zoom in (time axis) |
@@ -286,8 +308,8 @@ All state is local to the piano roll component:
 | `selectedK` | `number \| null` | From response `selected_k` |
 | `selectedEventIndex` | `number \| null` | `null` |
 | `highlightToken` | `number \| null` | `null` |
-| `viewStartTime` | `number` | `job_start_timestamp - 5` |
-| `viewEndTime` | `number` | `job_start_timestamp + 120` |
+| `viewStartTime` | `number` | `first_event.start_timestamp - 30` |
+| `viewEndTime` | `number` | `last_event.end_timestamp + 30` |
 | `freqMin` | `number` | `0` |
 | `freqMax` | `number` | `2000` |
 | `yMode` | `"f0" \| "peak"` | `"f0"` |

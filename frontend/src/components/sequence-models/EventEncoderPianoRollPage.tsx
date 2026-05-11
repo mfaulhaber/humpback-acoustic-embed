@@ -16,6 +16,7 @@ import {
   useEventEncoderTimeline,
 } from "@/api/sequenceModels";
 import { regionAudioSliceUrl } from "@/api/client";
+import { usePlayback } from "@/components/timeline/provider/usePlayback";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -64,6 +65,8 @@ interface DragState {
   moved: boolean;
 }
 
+type PianoRollPlaybackMode = "selected" | "continuous";
+
 interface TokenSummary {
   tokenId: number;
   label: string;
@@ -75,8 +78,14 @@ const LEFT_MARGIN = 62;
 const RIGHT_MARGIN = 10;
 const TOP_MARGIN = 8;
 const BOTTOM_MARGIN = 24;
+const TOOLTIP_WIDTH = 256;
+const TOOLTIP_ESTIMATED_HEIGHT = 222;
+const TOOLTIP_OFFSET = 14;
+const TOOLTIP_MARGIN = 8;
 const UNVOICED_LANE_HEIGHT = 34;
 const MIN_TIME_SPAN_SECONDS = 2;
+const EVENT_TIME_BUFFER_SECONDS = 30;
+const CONTINUOUS_PLAYBACK_WINDOW_SECONDS = 300;
 const MAX_FREQUENCY_HZ = 5000;
 const MIN_FREQUENCY_SPAN_HZ = 100;
 const DEFAULT_FREQUENCY_MAX = 2000;
@@ -222,13 +231,13 @@ function EventEncoderPianoRollViewer({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const minimapRef = useRef<HTMLCanvasElement | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const playbackModeRef = useRef<PianoRollPlaybackMode | null>(null);
 
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const [timeRange, setTimeRange] = useState<TimeRange>(() =>
-    initialTimeRange(timeline),
+    buildEventBufferedTimeRange(timeline),
   );
   const [frequencyRange, setFrequencyRange] = useState<FrequencyRange>({
     min: 0,
@@ -241,15 +250,21 @@ function EventEncoderPianoRollViewer({
   const [tokenFilter, setTokenFilter] = useState<number | null>(null);
   const [legendCollapsed, setLegendCollapsed] = useState(false);
   const [cursor, setCursor] = useState<CursorInfo | null>(null);
-  const [audioSrc, setAudioSrc] = useState<string | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [isDraggingTimeline, setIsDraggingTimeline] = useState(false);
+  const [playbackMode, setPlaybackMode] =
+    useState<PianoRollPlaybackMode | null>(null);
+  const [playheadTime, setPlayheadTime] = useState<number | null>(null);
 
-  const fullTimeRange = useMemo(
+  const recordingTimeRange = useMemo(
     () => ({
       start: timeline.job_start_timestamp,
       end: timeline.job_end_timestamp,
     }),
     [timeline.job_end_timestamp, timeline.job_start_timestamp],
+  );
+  const fullTimeRange = useMemo(
+    () => buildEventBufferedTimeRange(timeline),
+    [timeline],
   );
   const tokenSummaries = useMemo(
     () => buildTokenSummaries(timeline.events),
@@ -261,6 +276,15 @@ function EventEncoderPianoRollViewer({
         ? null
         : timeline.events.find((event) => event.event_id === selectedEventId) ??
           null,
+    [selectedEventId, timeline.events],
+  );
+  const selectedEventIndex = useMemo(
+    () =>
+      selectedEventId == null
+        ? -1
+        : timeline.events.findIndex(
+            (event) => event.event_id === selectedEventId,
+          ),
     [selectedEventId, timeline.events],
   );
   const hoveredEvent = useMemo(
@@ -277,20 +301,92 @@ function EventEncoderPianoRollViewer({
     MIN_TIME_SPAN_SECONDS,
     timeRange.end - timeRange.start,
   );
+  const viewportCenterTime = (timeRange.start + timeRange.end) / 2;
   const selectedFrequencyOption =
     frequencyRange.min === 0 && FREQUENCY_OPTIONS.includes(frequencyRange.max)
       ? String(frequencyRange.max)
       : "custom";
 
+  const audioUrlBuilder = useCallback(
+    (startEpoch: number, durationSec: number) =>
+      regionAudioSliceUrl(
+        timeline.region_detection_job_id,
+        startEpoch,
+        durationSec,
+      ),
+    [timeline.region_detection_job_id],
+  );
+
+  const clearPlaybackState = useCallback(() => {
+    playbackModeRef.current = null;
+    setPlaybackMode(null);
+  }, []);
+
+  const syncPlaybackEpoch = useCallback(
+    (epoch: number) => {
+      setPlayheadTime(epoch);
+      setTimeRange((current) =>
+        centerRangeOnPlayhead(current, fullTimeRange, epoch),
+      );
+    },
+    [fullTimeRange],
+  );
+
+  const {
+    play: playSelectedAudio,
+    pause: pauseSelectedAudio,
+    isPlaying: isSelectedAudioPlaying,
+  } = usePlayback({
+    mode: "slice",
+    audioUrlBuilder,
+    speed: 1,
+    onTimeUpdate: syncPlaybackEpoch,
+    onEnded: () => {
+      if (playbackModeRef.current === "selected") {
+        clearPlaybackState();
+      }
+    },
+  });
+  const {
+    play: playContinuousAudio,
+    pause: pauseContinuousAudio,
+    isPlaying: isContinuousAudioPlaying,
+  } = usePlayback({
+    mode: "gapless",
+    audioUrlBuilder,
+    speed: 1,
+    onTimeUpdate: syncPlaybackEpoch,
+  });
+  const isPlaying = isSelectedAudioPlaying || isContinuousAudioPlaying;
+  const visiblePlayheadTime = isPlaying
+    ? playheadTime ?? viewportCenterTime
+    : viewportCenterTime;
+
+  const setActivePlaybackMode = useCallback(
+    (mode: PianoRollPlaybackMode) => {
+      playbackModeRef.current = mode;
+      setPlaybackMode(mode);
+    },
+    [],
+  );
+
+  const resetPlayback = useCallback((preservePlayhead = true) => {
+    pauseSelectedAudio();
+    pauseContinuousAudio();
+    clearPlaybackState();
+    if (!preservePlayhead) {
+      setPlayheadTime(null);
+    }
+  }, [clearPlaybackState, pauseContinuousAudio, pauseSelectedAudio]);
+
   useEffect(() => {
-    setTimeRange(initialTimeRange(timeline));
+    setTimeRange(buildEventBufferedTimeRange(timeline));
     setFrequencyRange({ min: 0, max: DEFAULT_FREQUENCY_MAX });
     setSelectedEventId(null);
     setHoveredEventId(null);
     setTokenFilter(null);
-    stopAudio(audioRef, setIsPlaying);
-    setAudioSrc(null);
-  }, [timeline.job_id, timeline.selected_k]);
+    resetPlayback(false);
+  }, [resetPlayback, timeline]);
 
   useEffect(() => {
     const node = canvasWrapRef.current;
@@ -344,6 +440,44 @@ function EventEncoderPianoRollViewer({
     [makeTransform, timeline.events, unvoicedMode, yMode],
   );
 
+  const centerOnEvent = useCallback(
+    (event: EventEncoderTimelineEvent) => {
+      const eventCenter = (event.start_timestamp + event.end_timestamp) / 2;
+      setTimeRange((current) =>
+        centerRangeOnPlayhead(current, fullTimeRange, eventCenter),
+      );
+    },
+    [fullTimeRange],
+  );
+
+  const selectEventByIndex = useCallback(
+    (index: number) => {
+      const next = timeline.events[index];
+      if (!next) return;
+      setSelectedEventId(next.event_id);
+      centerOnEvent(next);
+    },
+    [centerOnEvent, timeline.events],
+  );
+
+  const selectPreviousEvent = useCallback(() => {
+    if (!timeline.events.length) return;
+    const nextIndex =
+      selectedEventIndex <= 0
+        ? timeline.events.length - 1
+        : selectedEventIndex - 1;
+    selectEventByIndex(nextIndex);
+  }, [selectEventByIndex, selectedEventIndex, timeline.events.length]);
+
+  const selectNextEvent = useCallback(() => {
+    if (!timeline.events.length) return;
+    const nextIndex =
+      selectedEventIndex < 0 || selectedEventIndex >= timeline.events.length - 1
+        ? 0
+        : selectedEventIndex + 1;
+    selectEventByIndex(nextIndex);
+  }, [selectEventByIndex, selectedEventIndex, timeline.events.length]);
+
   const fitAll = useCallback(() => {
     setTimeRange(fullTimeRange);
   }, [fullTimeRange]);
@@ -380,45 +514,54 @@ function EventEncoderPianoRollViewer({
 
   const togglePlayback = useCallback(() => {
     if (isPlaying) {
-      stopAudio(audioRef, setIsPlaying);
+      resetPlayback();
       return;
     }
     const sourceEvent = selectedEvent;
-    const start = sourceEvent?.start_timestamp ?? timeRange.start;
-    const duration = sourceEvent
-      ? Math.max(0.1, sourceEvent.end_timestamp - sourceEvent.start_timestamp)
-      : Math.max(0.1, Math.min(timeRange.end - timeRange.start, 30));
-    const nextSrc = regionAudioSliceUrl(
-      timeline.region_detection_job_id,
-      start,
-      duration,
+    const start =
+      sourceEvent?.start_timestamp ??
+      clamp(
+        visiblePlayheadTime,
+        recordingTimeRange.start,
+        recordingTimeRange.end,
+      );
+    setPlayheadTime(start);
+    setTimeRange((current) =>
+      centerRangeOnPlayhead(current, fullTimeRange, start),
     );
-    setAudioSrc(nextSrc);
-    setIsPlaying(true);
+    if (sourceEvent) {
+      const duration = Math.max(
+        0.1,
+        sourceEvent.end_timestamp - sourceEvent.start_timestamp,
+      );
+      pauseContinuousAudio();
+      setActivePlaybackMode("selected");
+      playSelectedAudio(start, duration);
+      return;
+    }
+    pauseSelectedAudio();
+    setActivePlaybackMode("continuous");
+    playContinuousAudio(start, CONTINUOUS_PLAYBACK_WINDOW_SECONDS);
   }, [
+    fullTimeRange,
     isPlaying,
+    pauseContinuousAudio,
+    pauseSelectedAudio,
+    playContinuousAudio,
+    playSelectedAudio,
+    recordingTimeRange.end,
+    recordingTimeRange.start,
+    resetPlayback,
     selectedEvent,
+    setActivePlaybackMode,
     timeRange.end,
     timeRange.start,
-    timeline.region_detection_job_id,
+    visiblePlayheadTime,
   ]);
 
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || !audioSrc || !isPlaying) return;
-    audio.currentTime = 0;
-    const promise = audio.play();
-    if (promise) {
-      promise.catch(() => {
-        setIsPlaying(false);
-      });
-    }
-  }, [audioSrc, isPlaying]);
-
-  useEffect(() => {
-    stopAudio(audioRef, setIsPlaying);
-    setAudioSrc(null);
-  }, [selectedEventId, timeline.selected_k]);
+    resetPlayback();
+  }, [resetPlayback, selectedEventId, timeline.selected_k]);
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -430,6 +573,14 @@ function EventEncoderPianoRollViewer({
         case "Space":
           event.preventDefault();
           togglePlayback();
+          break;
+        case "KeyA":
+          event.preventDefault();
+          selectPreviousEvent();
+          break;
+        case "KeyD":
+          event.preventDefault();
+          selectNextEvent();
           break;
         case "Escape":
           event.preventDefault();
@@ -460,7 +611,17 @@ function EventEncoderPianoRollViewer({
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [fitAll, panTimeBy, timeRange.end, timeRange.start, togglePlayback, viewportSpan, zoomTime]);
+  }, [
+    fitAll,
+    panTimeBy,
+    selectNextEvent,
+    selectPreviousEvent,
+    timeRange.end,
+    timeRange.start,
+    togglePlayback,
+    viewportSpan,
+    zoomTime,
+  ]);
 
   useEffect(() => {
     drawMainCanvas({
@@ -474,6 +635,7 @@ function EventEncoderPianoRollViewer({
       selectedEventId,
       hoveredEventId,
       tokenFilter,
+      playheadTime: visiblePlayheadTime,
     });
   }, [
     frequencyRange,
@@ -484,6 +646,7 @@ function EventEncoderPianoRollViewer({
     timeline,
     tokenFilter,
     unvoicedMode,
+    visiblePlayheadTime,
     yMode,
   ]);
 
@@ -495,15 +658,30 @@ function EventEncoderPianoRollViewer({
       frequencyRange,
       yMode,
       selectedK,
+      playheadTime: visiblePlayheadTime,
+      fullTimeRange,
     });
-  }, [frequencyRange, selectedK, timeRange, timeline, yMode]);
+  }, [
+    frequencyRange,
+    fullTimeRange,
+    selectedK,
+    timeRange,
+    timeline,
+    visiblePlayheadTime,
+    yMode,
+  ]);
 
   const handleMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const point = canvasPoint(event);
     const transform = makeTransform();
     const time = transform.xToTime(point.x);
     const frequency = transform.yToFrequency(point.y);
-    setCursor({ x: point.x, y: point.y, time, frequency });
+    setCursor({
+      x: point.x,
+      y: point.y,
+      time,
+      frequency,
+    });
 
     const drag = dragRef.current;
     if (drag) {
@@ -531,7 +709,9 @@ function EventEncoderPianoRollViewer({
   };
 
   const handleMouseDown = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (event.button !== 0) return;
     const point = canvasPoint(event);
+    setIsDraggingTimeline(true);
     dragRef.current = {
       x: point.x,
       y: point.y,
@@ -543,6 +723,7 @@ function EventEncoderPianoRollViewer({
   const handleMouseUp = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current;
     dragRef.current = null;
+    setIsDraggingTimeline(false);
     const point = canvasPoint(event);
     if (drag?.moved) return;
     const clicked = findEventAtPoint(point.x, point.y);
@@ -551,6 +732,7 @@ function EventEncoderPianoRollViewer({
 
   const handleMouseLeave = () => {
     dragRef.current = null;
+    setIsDraggingTimeline(false);
     setCursor(null);
     setHoveredEventId(null);
   };
@@ -602,6 +784,12 @@ function EventEncoderPianoRollViewer({
     );
   };
 
+  const canvasCursorClass = isDraggingTimeline
+    ? "cursor-grabbing"
+    : hoveredEventId
+      ? "cursor-pointer"
+      : "cursor-grab";
+
   return (
     <>
       <div className="flex flex-shrink-0 flex-wrap items-center gap-2 border-b border-zinc-800 bg-zinc-950 px-3 py-2 text-xs">
@@ -636,7 +824,7 @@ function EventEncoderPianoRollViewer({
         />
         <ToolbarStat
           label="duration"
-          value={formatDuration(timeline.job_end_timestamp - timeline.job_start_timestamp)}
+          value={formatDuration(fullTimeRange.end - fullTimeRange.start)}
           testId="eej-piano-roll-duration"
         />
         <ToolbarStat
@@ -725,9 +913,14 @@ function EventEncoderPianoRollViewer({
       >
         <canvas
           ref={canvasRef}
-          className="block h-full w-full cursor-crosshair"
+          className={cn("block h-full w-full", canvasCursorClass)}
           data-testid="eej-piano-roll-canvas"
+          data-cursor-state={
+            isDraggingTimeline ? "dragging" : hoveredEventId ? "hover-token" : "idle"
+          }
+          data-playback-mode={playbackMode ?? ""}
           data-selected-event={selectedEventId ?? ""}
+          data-playhead-time={visiblePlayheadTime.toFixed(3)}
           data-token-filter={tokenFilter ?? ""}
           data-view-end={timeRange.end.toFixed(3)}
           data-view-start={timeRange.start.toFixed(3)}
@@ -758,6 +951,7 @@ function EventEncoderPianoRollViewer({
         />
         {tooltipEvent && cursor ? (
           <EventTooltip
+            canvasSize={size}
             cursor={cursor}
             event={tooltipEvent}
             position={timeline.events.findIndex(
@@ -781,20 +975,15 @@ function EventEncoderPianoRollViewer({
         <span data-testid="eej-piano-roll-zoom">
           span {formatDuration(viewportSpan)}
         </span>
+        <span data-testid="eej-piano-roll-playhead-time">
+          playhead{" "}
+          {formatRelativeTime(visiblePlayheadTime, timeline.job_start_timestamp)}
+        </span>
         <span className="hidden min-w-0 truncate text-zinc-500 md:inline">
           Scroll zooms time | Shift+Scroll zooms Hz | Drag pans | F fits |
-          Space plays
+          A/D selects events | Space plays
         </span>
       </div>
-      <audio
-        ref={audioRef}
-        src={audioSrc ?? undefined}
-        preload="auto"
-        data-testid="eej-piano-roll-audio"
-        onEnded={() => setIsPlaying(false)}
-        onPause={() => setIsPlaying(false)}
-        onPlay={() => setIsPlaying(true)}
-      />
     </>
   );
 }
@@ -914,11 +1103,13 @@ function TokenLegend({
 }
 
 function EventTooltip({
+  canvasSize,
   cursor,
   event,
   position,
   selectedK,
 }: {
+  canvasSize: Size;
   cursor: CursorInfo;
   event: EventEncoderTimelineEvent;
   position: number;
@@ -933,13 +1124,16 @@ function EventTooltip({
       : slope > 0
         ? "rising"
         : "falling";
+  const tooltipPosition = placeTooltip(cursor, canvasSize);
 
   return (
     <div
       className="pointer-events-none absolute z-20 w-64 rounded border border-zinc-700 bg-zinc-950/95 p-2 text-[11px] leading-5 text-zinc-300 shadow-xl"
       style={{
-        left: Math.min(cursor.x + 14, window.innerWidth - 520),
-        top: Math.max(8, cursor.y + 14),
+        left: tooltipPosition.left,
+        maxHeight: tooltipPosition.maxHeight,
+        overflowY: "auto",
+        top: tooltipPosition.top,
       }}
       data-testid="eej-piano-roll-tooltip"
     >
@@ -977,6 +1171,32 @@ function TooltipRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function placeTooltip(cursor: CursorInfo, canvasSize: Size) {
+  const maxLeft = Math.max(
+    TOOLTIP_MARGIN,
+    canvasSize.width - TOOLTIP_WIDTH - TOOLTIP_MARGIN,
+  );
+  const maxTop = Math.max(
+    TOOLTIP_MARGIN,
+    canvasSize.height - TOOLTIP_ESTIMATED_HEIGHT - TOOLTIP_MARGIN,
+  );
+  const left =
+    cursor.x + TOOLTIP_OFFSET + TOOLTIP_WIDTH <= canvasSize.width - TOOLTIP_MARGIN
+      ? cursor.x + TOOLTIP_OFFSET
+      : cursor.x - TOOLTIP_WIDTH - TOOLTIP_OFFSET;
+  const top =
+    cursor.y + TOOLTIP_OFFSET + TOOLTIP_ESTIMATED_HEIGHT <=
+    canvasSize.height - TOOLTIP_MARGIN
+      ? cursor.y + TOOLTIP_OFFSET
+      : cursor.y - TOOLTIP_ESTIMATED_HEIGHT - TOOLTIP_OFFSET;
+
+  return {
+    left: clamp(left, TOOLTIP_MARGIN, maxLeft),
+    maxHeight: Math.max(120, canvasSize.height - TOOLTIP_MARGIN * 2),
+    top: clamp(top, TOOLTIP_MARGIN, maxTop),
+  };
+}
+
 function drawMainCanvas({
   canvas,
   size,
@@ -988,6 +1208,7 @@ function drawMainCanvas({
   selectedEventId,
   hoveredEventId,
   tokenFilter,
+  playheadTime,
 }: {
   canvas: HTMLCanvasElement | null;
   size: Size;
@@ -999,6 +1220,7 @@ function drawMainCanvas({
   selectedEventId: string | null;
   hoveredEventId: string | null;
   tokenFilter: number | null;
+  playheadTime: number | null;
 }) {
   if (!canvas || size.width <= 0 || size.height <= 0) return;
   const ctx = prepareCanvas(canvas, size);
@@ -1032,6 +1254,10 @@ function drawMainCanvas({
       hovered: rect.event.event_id === hoveredEventId,
       dimmed: tokenFilter != null && rect.event.token_id !== tokenFilter,
     });
+  }
+
+  if (playheadTime != null) {
+    drawPlayhead(ctx, transform, playheadTime, timeline.job_start_timestamp);
   }
 }
 
@@ -1075,7 +1301,10 @@ function drawGrid(
 
   const timeStep = chooseTimeStep(transform.timeRange.end - transform.timeRange.start);
   const startOffset =
-    Math.ceil((transform.timeRange.start - jobStart) / timeStep) * timeStep;
+    Math.max(
+      0,
+      Math.ceil((transform.timeRange.start - jobStart) / timeStep) * timeStep,
+    );
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
   for (
@@ -1155,6 +1384,38 @@ function drawEventRect(
   }
 }
 
+function drawPlayhead(
+  ctx: CanvasRenderingContext2D,
+  transform: ReturnType<typeof createTransform>,
+  playheadTime: number,
+  jobStart: number,
+) {
+  const x = transform.timeToX(playheadTime);
+  if (x < transform.plotLeft || x > transform.plotRight) return;
+
+  ctx.save();
+  ctx.strokeStyle = "#facc15";
+  ctx.fillStyle = "#facc15";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x, transform.plotTop);
+  ctx.lineTo(x, transform.plotBottom);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(x, transform.plotTop + 1);
+  ctx.lineTo(x - 4, transform.plotTop + 8);
+  ctx.lineTo(x + 4, transform.plotTop + 8);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillText(formatRelativeTime(playheadTime, jobStart), x + 7, transform.plotTop + 3);
+  ctx.restore();
+}
+
 function drawSlopeLine(ctx: CanvasRenderingContext2D, rect: DrawRect) {
   if (rect.width < 12 || rect.height < 6) return;
   const slope = numeric(rect.event.descriptor_values.ridge_log_frequency_slope) ?? 0;
@@ -1218,16 +1479,20 @@ function drawMinimap({
   canvas,
   timeline,
   timeRange,
+  fullTimeRange,
   frequencyRange,
   yMode,
   selectedK,
+  playheadTime,
 }: {
   canvas: HTMLCanvasElement | null;
   timeline: EventEncoderTimelineResponse;
   timeRange: TimeRange;
+  fullTimeRange: TimeRange;
   frequencyRange: FrequencyRange;
   yMode: YMode;
   selectedK: number;
+  playheadTime: number | null;
 }) {
   if (!canvas) return;
   const size = { width: 240, height: 40 };
@@ -1236,8 +1501,8 @@ function drawMinimap({
   ctx.fillStyle = "rgba(9, 9, 11, 0.95)";
   ctx.fillRect(0, 0, size.width, size.height);
 
-  const fullStart = timeline.job_start_timestamp;
-  const fullSpan = Math.max(1, timeline.job_end_timestamp - fullStart);
+  const fullStart = fullTimeRange.start;
+  const fullSpan = Math.max(1, fullTimeRange.end - fullStart);
   for (const event of timeline.events) {
     const x = ((event.start_timestamp - fullStart) / fullSpan) * size.width;
     const frequency = eventCenterFrequency(event, yMode);
@@ -1254,6 +1519,15 @@ function drawMinimap({
   ctx.strokeStyle = "#f8fafc";
   ctx.lineWidth = 1;
   ctx.strokeRect(x1, y1, Math.max(2, x2 - x1), Math.max(4, y2 - y1));
+
+  if (playheadTime != null) {
+    const playheadX = ((playheadTime - fullStart) / fullSpan) * size.width;
+    ctx.strokeStyle = "#facc15";
+    ctx.beginPath();
+    ctx.moveTo(playheadX, 0);
+    ctx.lineTo(playheadX, size.height);
+    ctx.stroke();
+  }
 }
 
 function createTransform({
@@ -1407,10 +1681,31 @@ function buildTokenSummaries(events: EventEncoderTimelineEvent[]): TokenSummary[
     .sort((a, b) => a.tokenId - b.tokenId);
 }
 
-function initialTimeRange(timeline: EventEncoderTimelineResponse): TimeRange {
-  const start = timeline.job_start_timestamp;
-  const end = Math.min(timeline.job_end_timestamp, start + 120);
-  return { start, end: Math.max(start + MIN_TIME_SPAN_SECONDS, end) };
+function buildEventBufferedTimeRange(
+  timeline: EventEncoderTimelineResponse,
+): TimeRange {
+  if (!timeline.events.length) {
+    return {
+      start: timeline.job_start_timestamp,
+      end: Math.max(
+        timeline.job_start_timestamp + MIN_TIME_SPAN_SECONDS,
+        timeline.job_end_timestamp,
+      ),
+    };
+  }
+
+  const firstStart = Math.min(
+    ...timeline.events.map((event) => event.start_timestamp),
+  );
+  const lastEnd = Math.max(
+    ...timeline.events.map((event) => event.end_timestamp),
+  );
+  const start = firstStart - EVENT_TIME_BUFFER_SECONDS;
+  const end = lastEnd + EVENT_TIME_BUFFER_SECONDS;
+  return {
+    start,
+    end: Math.max(start + MIN_TIME_SPAN_SECONDS, end),
+  };
 }
 
 function zoomTimeRange(
@@ -1457,6 +1752,32 @@ function clampTimeRange(range: TimeRange, fullRange: TimeRange): TimeRange {
   return { start, end };
 }
 
+function centerRangeOnPlayhead(
+  range: TimeRange,
+  fullRange: TimeRange,
+  playheadTime: number,
+): TimeRange {
+  const span = range.end - range.start;
+  const center = clamp(playheadTime, fullRange.start, fullRange.end);
+  const next = clampTimeRange(
+    {
+      start: center - span / 2,
+      end: center + span / 2,
+    },
+    {
+      start: fullRange.start - span / 2,
+      end: fullRange.end + span / 2,
+    },
+  );
+  if (
+    Math.abs(next.start - range.start) < 0.001 &&
+    Math.abs(next.end - range.end) < 0.001
+  ) {
+    return range;
+  }
+  return next;
+}
+
 function zoomFrequencyRange(
   range: FrequencyRange,
   center: number,
@@ -1500,18 +1821,6 @@ function canvasPoint(event: React.MouseEvent<HTMLCanvasElement>) {
     x: event.clientX - rect.left,
     y: event.clientY - rect.top,
   };
-}
-
-function stopAudio(
-  audioRef: React.MutableRefObject<HTMLAudioElement | null>,
-  setIsPlaying: (value: boolean) => void,
-) {
-  const audio = audioRef.current;
-  if (audio) {
-    audio.pause();
-    audio.currentTime = 0;
-  }
-  setIsPlaying(false);
 }
 
 function roundedRect(

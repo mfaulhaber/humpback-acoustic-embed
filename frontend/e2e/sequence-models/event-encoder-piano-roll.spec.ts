@@ -1,9 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const SILENT_WAV = Buffer.from(
-  "UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=",
-  "base64",
-);
+const SILENT_WAV = buildSilentWav(5);
 
 const REGION_JOB_ID = "rj-piano-roll-1";
 const JOB_START = 1_751_644_800;
@@ -176,6 +173,27 @@ interface MockState {
   audioRequests: string[];
 }
 
+function buildSilentWav(seconds: number) {
+  const sampleRate = 8000;
+  const bytesPerSample = 2;
+  const dataLength = sampleRate * seconds * bytesPerSample;
+  const buffer = Buffer.alloc(44 + dataLength);
+  buffer.write("RIFF", 0);
+  buffer.writeUInt32LE(36 + dataLength, 4);
+  buffer.write("WAVE", 8);
+  buffer.write("fmt ", 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * bytesPerSample, 28);
+  buffer.writeUInt16LE(bytesPerSample, 32);
+  buffer.writeUInt16LE(8 * bytesPerSample, 34);
+  buffer.write("data", 36);
+  buffer.writeUInt32LE(dataLength, 40);
+  return buffer;
+}
+
 function timelineEvent(
   eventId: string,
   tokenId: number,
@@ -218,6 +236,21 @@ function timelineEvent(
 
 async function setupMocks(page: Page): Promise<MockState> {
   const state: MockState = { timelineRequests: [], audioRequests: [] };
+
+  await page.addInitScript(() => {
+    const nativeAudio = window.Audio;
+    const captured: HTMLAudioElement[] = [];
+    (
+      window as Window & { __pianoRollAudioElements?: HTMLAudioElement[] }
+    ).__pianoRollAudioElements = captured;
+    function AudioShim(src?: string) {
+      const audio = new nativeAudio(src);
+      captured.push(audio);
+      return audio;
+    }
+    AudioShim.prototype = nativeAudio.prototype;
+    window.Audio = AudioShim as typeof Audio;
+  });
 
   await page.route("**/call-parsing/region-jobs/*/audio-slice**", (route) => {
     state.audioRequests.push(route.request().url());
@@ -300,16 +333,63 @@ async function setupMocks(page: Page): Promise<MockState> {
   return state;
 }
 
-async function clickFirstEvent(page: Page) {
+async function eventPoint(
+  page: Page,
+  eventCenter: number,
+  centerFrequency: number,
+) {
   const canvas = page.getByTestId("eej-piano-roll-canvas");
   await expect(canvas).toBeVisible();
   const box = await canvas.boundingBox();
   expect(box).not.toBeNull();
+  const viewStart = Number(await canvas.getAttribute("data-view-start"));
+  const viewEnd = Number(await canvas.getAttribute("data-view-end"));
   const width = box?.width ?? 1;
   const height = box?.height ?? 1;
-  const x = 62 + (11 / 120) * (width - 72);
-  const y = 8 + (1 - 480 / 2000) * (height - 32);
+  const x =
+    62 + ((eventCenter - viewStart) / (viewEnd - viewStart)) * (width - 72);
+  const y = 8 + (1 - centerFrequency / 2000) * (height - 32);
+  return { box, x, y };
+}
+
+async function clickFirstEvent(page: Page) {
+  const canvas = page.getByTestId("eej-piano-roll-canvas");
+  const { x, y } = await eventPoint(page, JOB_START + 11, 480);
   await canvas.click({ position: { x, y } });
+}
+
+async function visibleCenterTime(page: Page) {
+  const canvas = page.getByTestId("eej-piano-roll-canvas");
+  const start = Number(await canvas.getAttribute("data-view-start"));
+  const end = Number(await canvas.getAttribute("data-view-end"));
+  return (start + end) / 2;
+}
+
+async function setCapturedAudioCurrentTime(
+  page: Page,
+  srcNeedle: string,
+  currentTime: number,
+) {
+  await page.waitForFunction((needle) => {
+    const audios = (
+      window as Window & { __pianoRollAudioElements?: HTMLAudioElement[] }
+    ).__pianoRollAudioElements ?? [];
+    return audios.some((audio) => audio.src.includes(needle));
+  }, srcNeedle);
+  await page.evaluate(
+    ({ needle, value }) => {
+      const audios = (
+        window as Window & { __pianoRollAudioElements?: HTMLAudioElement[] }
+      ).__pianoRollAudioElements ?? [];
+      const audio = audios.find((item) => item.src.includes(needle));
+      if (!audio) throw new Error(`No captured audio for ${needle}`);
+      Object.defineProperty(audio, "currentTime", {
+        configurable: true,
+        value,
+      });
+    },
+    { needle: srcNeedle, value: currentTime },
+  );
 }
 
 test.describe("Sequence Models - Event Encoder Piano Roll", () => {
@@ -324,10 +404,27 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
     await expect(page.getByTestId("eej-piano-roll-page")).toBeVisible();
     await expect(page.getByTestId("eej-piano-roll-event-count")).toHaveText("5");
     await expect(page.getByTestId("eej-piano-roll-token-count")).toHaveText("2");
+    await expect(page.getByTestId("eej-piano-roll-duration")).toHaveText("2:40");
     await expect(page.getByTestId("eej-piano-roll-k-select")).toHaveValue("50");
     await expect(page.getByTestId("eej-piano-roll-play")).toBeVisible();
     await expect(page.getByTestId("eej-piano-roll-minimap")).toBeVisible();
     await expect(page.getByTestId("eej-piano-roll-legend-body")).toBeVisible();
+    await expect(page.getByTestId("eej-piano-roll-canvas")).toHaveAttribute(
+      "data-view-start",
+      `${JOB_START - 20}.000`,
+    );
+    await expect(page.getByTestId("eej-piano-roll-canvas")).toHaveAttribute(
+      "data-view-end",
+      `${JOB_START + 140}.000`,
+    );
+    await expect(page.getByTestId("eej-piano-roll-canvas")).toHaveAttribute(
+      "data-playhead-time",
+      `${JOB_START + 60}.000`,
+    );
+    await expect(page.getByTestId("eej-piano-roll-canvas")).toHaveAttribute(
+      "data-cursor-state",
+      "idle",
+    );
 
     const canvasBox = await page.getByTestId("eej-piano-roll-canvas").boundingBox();
     expect(canvasBox?.width ?? 0).toBeGreaterThan(500);
@@ -372,6 +469,36 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
       "evt-a",
     );
 
+    await page.keyboard.press("d");
+    await expect(page.getByTestId("eej-piano-roll-canvas")).toHaveAttribute(
+      "data-selected-event",
+      "evt-b",
+    );
+    await expect
+      .poll(async () =>
+        Math.abs((await visibleCenterTime(page)) - (JOB_START + 28.7)),
+      )
+      .toBeLessThan(0.02);
+
+    await page.keyboard.press("a");
+    await expect(page.getByTestId("eej-piano-roll-canvas")).toHaveAttribute(
+      "data-selected-event",
+      "evt-a",
+    );
+    await expect
+      .poll(async () =>
+        Math.abs((await visibleCenterTime(page)) - (JOB_START + 11)),
+      )
+      .toBeLessThan(0.02);
+
+    await page
+      .getByTestId("eej-piano-roll-canvas")
+      .click({ position: { x: 66, y: 18 } });
+    await expect(page.getByTestId("eej-piano-roll-canvas")).toHaveAttribute(
+      "data-selected-event",
+      "",
+    );
+
     await page.getByTestId("eej-piano-roll-token-3").click();
     await expect(page.getByTestId("eej-piano-roll-token-3")).toHaveAttribute(
       "aria-pressed",
@@ -407,6 +534,15 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
     await expect(page.getByTestId("eej-piano-roll-legend-body")).toBeVisible();
 
     const canvas = page.getByTestId("eej-piano-roll-canvas");
+    await expect(canvas).toBeVisible();
+    await page.keyboard.press("=");
+    await expect
+      .poll(async () => {
+        const start = Number(await canvas.getAttribute("data-view-start"));
+        const end = Number(await canvas.getAttribute("data-view-end"));
+        return end - start;
+      })
+      .toBeLessThan(160);
     const beforeMinimap = await canvas.getAttribute("data-view-start");
     await page
       .getByTestId("eej-piano-roll-minimap")
@@ -417,6 +553,59 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
     await page.getByTestId("eej-piano-roll-k-select").focus();
     await page.keyboard.press("f");
     await expect(canvas).toHaveAttribute("data-view-start", beforeKeyboard ?? "");
+  });
+
+  test("canvas cursor, drag panning, and tooltip placement stay usable", async ({
+    page,
+  }) => {
+    await setupMocks(page);
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const canvas = page.getByTestId("eej-piano-roll-canvas");
+    await expect(canvas).toBeVisible();
+    const canvasBox = await canvas.boundingBox();
+    expect(canvasBox).not.toBeNull();
+    await page.mouse.move(
+      (canvasBox?.x ?? 0) + (canvasBox?.width ?? 0) / 2,
+      (canvasBox?.y ?? 0) + (canvasBox?.height ?? 0) / 2,
+    );
+    await page.mouse.wheel(0, -500);
+    await expect
+      .poll(async () => {
+        const start = Number(await canvas.getAttribute("data-view-start"));
+        const end = Number(await canvas.getAttribute("data-view-end"));
+        return end - start;
+      })
+      .toBeLessThan(160);
+    const beforeDrag = await canvas.getAttribute("data-view-start");
+    const first = await eventPoint(page, JOB_START + 11, 480);
+
+    await page.mouse.move(first.box.x + first.x, first.box.y + first.y);
+    await expect(canvas).toHaveAttribute("data-cursor-state", "hover-token");
+    await expect(canvas).toHaveClass(/cursor-pointer/);
+
+    const tooltip = page.getByTestId("eej-piano-roll-tooltip");
+    await expect(tooltip).toBeVisible();
+    const tooltipBox = await tooltip.boundingBox();
+    const viewport = page.viewportSize();
+    expect(tooltipBox).not.toBeNull();
+    expect(viewport).not.toBeNull();
+    expect((tooltipBox?.x ?? 0) + (tooltipBox?.width ?? 0)).toBeLessThanOrEqual(
+      viewport?.width ?? 0,
+    );
+    expect((tooltipBox?.y ?? 0) + (tooltipBox?.height ?? 0)).toBeLessThanOrEqual(
+      viewport?.height ?? 0,
+    );
+
+    await page.mouse.down();
+    await expect(canvas).toHaveAttribute("data-cursor-state", "dragging");
+    await expect(canvas).toHaveClass(/cursor-grabbing/);
+    await page.mouse.move(first.box.x + first.x + 140, first.box.y + first.y);
+    await page.mouse.up();
+    await expect(canvas).not.toHaveAttribute("data-cursor-state", "dragging");
+    await expect(canvas).not.toHaveAttribute("data-view-start", beforeDrag ?? "");
   });
 
   test("playback uses selected event audio and back link returns to detail", async ({
@@ -433,18 +622,81 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
       request.url().includes("/audio-slice"),
     );
     await page.getByTestId("eej-piano-roll-play").click();
-    await audioRequest;
+    const request = await audioRequest;
+    expect(request.url()).toMatch(/start_timestamp=1751644810/);
+    expect(request.url()).toMatch(/duration_sec=2/);
 
-    await expect(page.getByTestId("eej-piano-roll-audio")).toHaveAttribute(
-      "src",
-      /start_timestamp=1751644810.*duration_sec=2/,
+    await expect(page.getByTestId("eej-piano-roll-canvas")).toHaveAttribute(
+      "data-playback-mode",
+      "selected",
     );
     expect(state.audioRequests.length).toBeGreaterThan(0);
+
+    await setCapturedAudioCurrentTime(page, "start_timestamp=1751644810", 1.2);
+    await expect(page.getByTestId("eej-piano-roll-canvas")).toHaveAttribute(
+      "data-playhead-time",
+      /1751644811\.200/,
+    );
+    await expect
+      .poll(async () => {
+        const canvas = page.getByTestId("eej-piano-roll-canvas");
+        const start = Number(await canvas.getAttribute("data-view-start"));
+        const end = Number(await canvas.getAttribute("data-view-end"));
+        const playhead = Number(await canvas.getAttribute("data-playhead-time"));
+        return Math.abs((start + end) / 2 - playhead);
+      })
+      .toBeLessThan(0.02);
 
     await page.getByTestId("eej-piano-roll-back").click();
     await expect(page).toHaveURL(
       new RegExp(`/app/sequence-models/event-encoder/${COMPLETE_JOB.id}$`),
     );
     await expect(page.getByTestId("eej-detail-page")).toBeVisible();
+  });
+
+  test("playback keeps the playhead centered while audio advances", async ({
+    page,
+  }) => {
+    await setupMocks(page);
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const canvas = page.getByTestId("eej-piano-roll-canvas");
+    await expect(canvas).toBeVisible();
+    for (let i = 0; i < 10; i += 1) {
+      await page.keyboard.press("=");
+    }
+    const beforeStart = Number(await canvas.getAttribute("data-view-start"));
+    const playheadBefore = Number(await canvas.getAttribute("data-playhead-time"));
+
+    const audioRequest = page.waitForRequest((request) =>
+      request.url().includes("/call-parsing/region-jobs/") &&
+      request.url().includes("/audio-slice"),
+    );
+    await page.getByTestId("eej-piano-roll-play").click();
+    const request = await audioRequest;
+    const requestParams = new URL(request.url()).searchParams;
+    expect(Number(requestParams.get("start_timestamp"))).toBeCloseTo(
+      playheadBefore,
+      3,
+    );
+    expect(requestParams.get("duration_sec")).toBe("300");
+    await expect(canvas).toHaveAttribute("data-playback-mode", "continuous");
+
+    await setCapturedAudioCurrentTime(page, "duration_sec=300", 3);
+
+    await expect
+      .poll(async () => {
+        const start = Number(await canvas.getAttribute("data-view-start"));
+        const end = Number(await canvas.getAttribute("data-view-end"));
+        const playhead = Number(await canvas.getAttribute("data-playhead-time"));
+        return Math.abs((start + end) / 2 - playhead);
+      })
+      .toBeLessThan(0.02);
+    await expect
+      .poll(async () => Number(await canvas.getAttribute("data-view-start")))
+      .toBeGreaterThan(beforeStart);
+    await expect(canvas).toHaveAttribute("data-playhead-time", /1751644863/);
   });
 });

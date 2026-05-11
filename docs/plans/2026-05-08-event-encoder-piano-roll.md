@@ -32,7 +32,7 @@ visual encoding, interaction patterns)
   duration, token count, Y-mode selector, frequency max selector, unvoiced
   mode selector, play/pause button, k-value selector
 - [x] Status bar renders at bottom with placeholder cursor info and keyboard
-  shortcut hints
+  shortcut hints, including A/D selected-event navigation
 - [x] Full-viewport layout: toolbar + canvas area + status bar, no scrolling
 
 **Tests needed:**
@@ -83,11 +83,14 @@ visual encoding, interaction patterns)
 - [x] Scroll (no modifier) zooms the time axis centered on cursor
 - [x] Shift+Scroll zooms the frequency axis centered on cursor
 - [x] Drag pans the time axis only (no frequency panning)
-- [x] Zoom has minimum and maximum bounds (time: 2 s to full recording,
-  frequency: clamped 0–5000 Hz)
+- [x] Canvas cursor uses open hand by default, closed hand while dragging, and
+  pointer while hovering an event
+- [x] Zoom has minimum and maximum bounds (time: 2 s to the event range plus
+  30 s buffer, frequency: clamped 0–5000 Hz)
 - [x] F key fits all events in view
 - [x] +/= zooms in, - zooms out (time axis)
 - [x] ArrowLeft/ArrowRight pans by 10% of viewport span
+- [x] A/D selects the previous/next event and centers it in the viewport
 - [x] Escape clears selection and token filter
 - [x] All keyboard shortcuts suppressed when focus is in input/textarea/select
   or when meta/ctrl/alt modifiers are held
@@ -111,6 +114,9 @@ visual encoding, interaction patterns)
 - [x] Hover shows a tooltip with: token label (colored), duration, median F0,
   F0 range, peak frequency, voicing fraction, ridge slope with direction
   indicator, pulse rate, gap from previous, position number
+- [x] Tooltip flips away from viewport edges so the detail popup is not clipped
+- [x] Clicking outside an event clears selected event state without losing the
+  visible playhead position
 - [x] Double-click zooms to fit the clicked event with padding
 - [x] Token legend panel (top-right, collapsible) lists all token families
   with color swatch, label, count, and mean F0 or "noise"
@@ -134,6 +140,8 @@ visual encoding, interaction patterns)
 - [x] Shows all events as 2 px marks at their time × frequency position,
   colored by token
 - [x] White rectangle outline shows the current viewport bounds
+- [x] Minimap and initial viewer duration use first-event to last-event bounds
+  with a 30 s buffer instead of the full recorder duration
 - [x] Clicking the minimap centers the viewport on the clicked time position
 - [x] Minimap redraws when viewport or data changes
 
@@ -149,21 +157,27 @@ visual encoding, interaction patterns)
 - Modify: `frontend/src/components/sequence-models/EventEncoderPianoRollPage.tsx`
 
 **Acceptance criteria:**
-- [x] Play/pause button in the toolbar and Space keyboard shortcut control an
-  HTML audio element
+- [x] Play/pause button in the toolbar and Space keyboard shortcut control
+  playback through the shared timeline `usePlayback` hook
 - [x] When an event is selected, playback uses `regionAudioSliceUrl` with the
   event's start timestamp and duration (end - start), bounded to a minimum of
   0.1 s
-- [x] When no event is selected, playback uses `regionAudioSliceUrl` with the
-  viewport start and the viewport span capped at 30 s
+- [x] When no event is selected, playback uses `regionAudioSliceUrl` from the
+  current visible playhead position with shared gapless 300 s audio windows
+  instead of a single 30 s slice
 - [x] Play/pause state is reflected in the button icon (Play/Pause from
   lucide-react)
 - [x] Audio element stops and resets when a new event is selected or k changes
-- [x] Playback does not scroll the canvas
+- [x] Playback head is always visible and renders as a thin vertical line
+- [x] Playback centers the time viewport on the playhead as audio advances,
+  matching the timeline provider's center-timestamp playback model
 
 **Tests needed:**
 - Play button toggles between play and pause icons
 - Audio element is created with correct src URL for selected event
+- Playback time updates move the playhead and keep it centered when zoomed in
+- Selected-event playback keeps the event audio playhead centered near
+  recording boundaries
 
 ---
 
