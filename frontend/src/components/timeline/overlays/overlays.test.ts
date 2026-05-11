@@ -159,6 +159,28 @@ describe("RegionBandOverlay", () => {
     expect(onSelectRegion).toHaveBeenCalledWith("r-2");
   });
 
+  it("renders transparent region boxes with a stronger active border", () => {
+    const { getByTestId } = render(
+      React.createElement(
+        OverlayContext.Provider,
+        { value: overlayValue },
+        React.createElement(RegionBandOverlay, {
+          regions,
+          activeRegionId: "r-1",
+          onSelectRegion: vi.fn(),
+        }),
+      ),
+    );
+
+    const activeBand = getByTestId("region-band-r-1");
+    const inactiveBand = getByTestId("region-band-r-2");
+
+    expect(activeBand.style.background).toBe("transparent");
+    expect(inactiveBand.style.background).toBe("transparent");
+    expect(activeBand.style.border).toContain("3px solid");
+    expect(inactiveBand.style.border).toContain("1.5px solid");
+  });
+
   it("does not select a region when the pointer moved like a pan gesture", () => {
     const onSelectRegion = vi.fn();
     const { getByTestId } = render(

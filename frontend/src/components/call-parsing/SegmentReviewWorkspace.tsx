@@ -1011,6 +1011,7 @@ function SegmentViewerBody({
           <RegionBoundaryMarkers
             startEpoch={regionStart + region.start_sec}
             endEpoch={regionStart + region.end_sec}
+            dimOutside={false}
           />
           {showBands && (
             <RegionBandOverlay

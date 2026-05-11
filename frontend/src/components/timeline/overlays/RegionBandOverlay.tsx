@@ -57,9 +57,10 @@ export function RegionBandOverlay({ regions, activeRegionId, onSelectRegion }: R
               top: 0,
               width: w,
               height: canvasHeight,
-              background: isActive ? "rgba(59, 130, 246, 0.15)" : "rgba(148, 163, 184, 0.1)",
-              borderLeft: isActive ? "2px solid rgba(59, 130, 246, 0.6)" : "1px solid rgba(148, 163, 184, 0.3)",
-              borderRight: isActive ? "2px solid rgba(59, 130, 246, 0.6)" : "1px solid rgba(148, 163, 184, 0.3)",
+              background: "transparent",
+              border: isActive
+                ? "3px solid rgba(59, 130, 246, 0.95)"
+                : "1.5px solid rgba(148, 163, 184, 0.75)",
               pointerEvents: isActive ? "none" : "auto",
               cursor: isActive ? "default" : "pointer",
               zIndex: 1,
@@ -78,12 +79,11 @@ export function RegionBandOverlay({ regions, activeRegionId, onSelectRegion }: R
                 top: 2,
                 left: 4,
                 fontSize: 9,
-                color: isActive ? "rgba(59, 130, 246, 0.9)" : "rgba(148, 163, 184, 0.8)",
-                background: "rgba(0, 0, 0, 0.6)",
-                padding: "1px 3px",
-                borderRadius: 2,
+                color: isActive ? "rgba(59, 130, 246, 1)" : "rgba(226, 232, 240, 0.95)",
+                fontWeight: isActive ? 700 : 600,
                 whiteSpace: "nowrap",
                 pointerEvents: "none",
+                textShadow: "0 1px 2px rgba(0, 0, 0, 0.95)",
               }}
             >
               R{idx + 1}

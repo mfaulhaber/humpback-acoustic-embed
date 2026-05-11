@@ -87,7 +87,12 @@ vi.mock("@/components/timeline/spectrogram/Spectrogram", () => ({
 }));
 
 vi.mock("@/components/timeline/overlays/RegionBoundaryMarkers", () => ({
-  RegionBoundaryMarkers: () => <div data-testid="region-boundary-markers" />,
+  RegionBoundaryMarkers: (props: { dimOutside?: boolean }) => (
+    <div
+      data-testid="region-boundary-markers"
+      data-dim-outside={String(props.dimOutside)}
+    />
+  ),
 }));
 
 vi.mock("@/components/timeline/overlays/EventBarOverlay", () => ({
@@ -323,6 +328,20 @@ describe("SegmentReviewWorkspace — epoch wiring", () => {
     expect(
       screen.getByTestId("region-table").getAttribute("data-job-start-epoch"),
     ).toBe(expected);
+  });
+
+  it("renders region boundary markers without dimming spectrogram tiles", () => {
+    setupHooks({
+      regionJob: makeRegionJob(),
+      regions: defaultRegions,
+    });
+    render(<SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />);
+
+    expect(
+      screen
+        .getByTestId("region-boundary-markers")
+        .getAttribute("data-dim-outside"),
+    ).toBe("false");
   });
 
   it("keeps selection cleared after a blank timeline click", async () => {
