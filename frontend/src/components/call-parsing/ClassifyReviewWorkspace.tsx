@@ -266,6 +266,8 @@ export function ClassifyReviewWorkspace({
     Map<string, EventBoundaryCorrectionItem>
   >(new Map());
   const [currentEventIndex, setCurrentEventIndex] = useState(0);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [selectionCleared, setSelectionCleared] = useState(false);
   const [viewStart, setViewStart] = useState<number | undefined>(undefined);
   const [viewSpan, setViewSpan] = useState(30);
   const [scrollToCenter, setScrollToCenter] = useState<number | undefined>(
@@ -287,6 +289,8 @@ export function ClassifyReviewWorkspace({
     setPendingCorrections(new Map());
     setPendingBoundaryCorrections(new Map());
     setCurrentEventIndex(0);
+    setSelectedEventId(null);
+    setSelectionCleared(false);
     setActiveTrainingJobId(null);
     setRetrainError(null);
   }, [selectedJobId]);
@@ -393,22 +397,32 @@ export function ClassifyReviewWorkspace({
     }
   }, [navigableEvents.length, currentEventIndex]);
 
-  const currentEvent = navigableEvents[currentEventIndex] ?? null;
+  const currentNavEvent = navigableEvents[currentEventIndex] ?? null;
+
+  useEffect(() => {
+    if (currentNavEvent && !selectionCleared) {
+      setSelectedEventId(currentNavEvent.eventId);
+    }
+  }, [currentNavEvent, selectionCleared]);
+
+  const selectedEvent = selectedEventId
+    ? navigableEvents.find((event) => event.eventId === selectedEventId) ?? null
+    : null;
 
   // Derive the palette highlight from the current event's effective type
   const currentEventType: string | null = useMemo(() => {
-    if (!currentEvent) return null;
-    if (currentEvent.correctedType !== undefined) {
+    if (!selectedEvent) return null;
+    if (selectedEvent.correctedType !== undefined) {
       // null correction = negative → "" in palette convention
-      return currentEvent.correctedType === null ? "" : currentEvent.correctedType;
+      return selectedEvent.correctedType === null ? "" : selectedEvent.correctedType;
     }
-    return currentEvent.predictedType;
-  }, [currentEvent]);
+    return selectedEvent.predictedType;
+  }, [selectedEvent]);
 
   const currentTypeSource = useMemo(() => {
-    if (!currentEvent) return null;
-    return resolveEventType(currentEvent.predictedType, currentEvent.correctedType).typeSource;
-  }, [currentEvent]);
+    if (!selectedEvent) return null;
+    return resolveEventType(selectedEvent.predictedType, selectedEvent.correctedType).typeSource;
+  }, [selectedEvent]);
 
   // Clicking a type in the palette applies it to the current event.
   // Clicking the type that already represents the event's effective label is
@@ -418,25 +432,27 @@ export function ClassifyReviewWorkspace({
   // Save does not light up.
   const handleSelectType = useCallback(
     (typeName: string | null) => {
-      if (!currentEvent || typeName === null) return;
+      if (!selectedEvent || typeName === null) return;
       const correctionValue = typeName === "" ? null : typeName;
-      if (currentEvent.correctedType === correctionValue) return;
+      if (selectedEvent.correctedType === correctionValue) return;
       setPendingCorrections((prev) => {
         const next = new Map(prev);
-        next.set(currentEvent.eventId, correctionValue);
+        next.set(selectedEvent.eventId, correctionValue);
         return next;
       });
     },
-    [currentEvent],
+    [selectedEvent],
   );
 
   // Current region for spectrogram
   const currentRegion = useMemo(
     () =>
-      currentEvent
-        ? regions.find((r) => r.region_id === currentEvent.regionId) ?? null
+      (selectedEvent ?? currentNavEvent)
+        ? regions.find(
+            (r) => r.region_id === (selectedEvent ?? currentNavEvent)?.regionId,
+          ) ?? null
         : regions[0] ?? null,
-    [currentEvent, regions],
+    [currentNavEvent, selectedEvent, regions],
   );
 
   // Boundary editing: adjust handler
@@ -641,30 +657,30 @@ export function ClassifyReviewWorkspace({
   // Display event: same as currentEvent but with corrected boundaries applied
   // so the detail panel and playback reflect boundary edits.
   const displayEvent: AggregatedEvent | null = useMemo(() => {
-    if (!currentEvent) return null;
+    if (!selectedEvent) return null;
     const effective = regionEffectiveEvents.find(
-      (e) => e.eventId === currentEvent.eventId,
+      (e) => e.eventId === selectedEvent.eventId,
     );
-    if (!effective) return currentEvent;
+    if (!effective) return selectedEvent;
     return {
-      ...currentEvent,
+      ...selectedEvent,
       startSec: effective.startSec,
       endSec: effective.endSec,
       correctionType: effective.correctionType,
       originalStartSec: effective.originalStartSec,
       originalEndSec: effective.originalEndSec,
     };
-  }, [currentEvent, regionEffectiveEvents]);
+  }, [selectedEvent, regionEffectiveEvents]);
 
   // Directional scroll when the current event is not fully visible
   const navDirectionRef = useRef<"forward" | "backward">("forward");
 
   useEffect(() => {
-    if (!currentEvent || viewStart === undefined || !regionEpoch) return;
+    if (!currentNavEvent || viewStart === undefined || !regionEpoch) return;
     const viewEnd = viewStart + viewSpan;
     const pad = viewSpan * 0.15;
-    const eventStartEpoch = regionEpoch.toEpoch(currentEvent.startSec);
-    const eventEndEpoch = regionEpoch.toEpoch(currentEvent.endSec);
+    const eventStartEpoch = regionEpoch.toEpoch(currentNavEvent.startSec);
+    const eventEndEpoch = regionEpoch.toEpoch(currentNavEvent.endSec);
     const fullyVisible =
       eventStartEpoch >= viewStart + pad && eventEndEpoch <= viewEnd - pad;
     if (!fullyVisible) {
@@ -676,30 +692,32 @@ export function ClassifyReviewWorkspace({
       }
       setScrollToCenter(target);
     }
-  }, [currentEvent, viewStart, viewSpan, regionEpoch]);
+  }, [currentNavEvent, viewStart, viewSpan, regionEpoch]);
 
   // Navigation
   const goPrev = useCallback(() => {
     navDirectionRef.current = "backward";
+    setSelectionCleared(false);
     setCurrentEventIndex((i) => Math.max(0, i - 1));
   }, []);
   const goNext = useCallback(() => {
     navDirectionRef.current = "forward";
+    setSelectionCleared(false);
     setCurrentEventIndex((i) => Math.min(navigableEvents.length - 1, i + 1));
   }, [navigableEvents.length]);
 
   // Delete event (boundary correction)
   const handleDeleteEvent = useCallback(() => {
-    if (!currentEvent) return;
+    if (!selectedEvent) return;
     setPendingBoundaryCorrections((prev) => {
       const next = new Map(prev);
-      const existing = next.get(currentEvent.eventId);
+      const existing = next.get(selectedEvent.eventId);
       if (existing?.correction_type === "add") {
-        next.delete(currentEvent.eventId);
-      } else if (currentEvent.eventId.startsWith("saved-add-")) {
-        next.set(currentEvent.eventId, {
-          id: currentEvent.eventId.slice("saved-add-".length),
-          region_id: currentEvent.regionId,
+        next.delete(selectedEvent.eventId);
+      } else if (selectedEvent.eventId.startsWith("saved-add-")) {
+        next.set(selectedEvent.eventId, {
+          id: selectedEvent.eventId.slice("saved-add-".length),
+          region_id: selectedEvent.regionId,
           correction_type: "delete",
           original_start_sec: null,
           original_end_sec: null,
@@ -707,20 +725,21 @@ export function ClassifyReviewWorkspace({
           corrected_end_sec: null,
         });
       } else {
-        next.set(currentEvent.eventId, {
-          region_id: currentEvent.regionId,
-          source_event_id: currentEvent.eventId,
+        next.set(selectedEvent.eventId, {
+          region_id: selectedEvent.regionId,
+          source_event_id: selectedEvent.eventId,
           correction_type: "delete",
-          original_start_sec: currentEvent.startSec,
-          original_end_sec: currentEvent.endSec,
+          original_start_sec: selectedEvent.startSec,
+          original_end_sec: selectedEvent.endSec,
           corrected_start_sec: null,
           corrected_end_sec: null,
         });
       }
       return next;
     });
+    setSelectionCleared(false);
     setCurrentEventIndex((i) => Math.min(navigableEvents.length - 1, i + 1));
-  }, [currentEvent, navigableEvents.length]);
+  }, [selectedEvent, navigableEvents.length]);
 
   // Add event via right-click
   const [contextMenu, setContextMenu] = useState<{
@@ -754,6 +773,17 @@ export function ClassifyReviewWorkspace({
   );
 
   // Playback via ref handle
+  const playFromPlayhead = useCallback(() => {
+    if (!currentRegion || !regionEpoch) return;
+    const regionStartEpoch = regionEpoch.toEpoch(currentRegion.padded_start_sec);
+    const regionEndEpoch = regionEpoch.toEpoch(currentRegion.padded_end_sec);
+    const rawStart = viewStart !== undefined ? viewStart + viewSpan / 2 : regionStartEpoch;
+    const latestStart = Math.max(regionStartEpoch, regionEndEpoch - 0.1);
+    const playStart = Math.min(Math.max(rawStart, regionStartEpoch), latestStart);
+    const duration = Math.min(Math.max(regionEndEpoch - playStart, 0.1), 30);
+    playbackRef.current?.play(playStart, duration, { scrollOnPlayback: true });
+  }, [currentRegion, viewStart, viewSpan, regionEpoch]);
+
   const togglePlayback = useCallback(() => {
     if (isPlaying) {
       playbackRef.current?.pause();
@@ -763,8 +793,10 @@ export function ClassifyReviewWorkspace({
         regionEpoch.toEpoch(displayEvent.startSec),
         duration,
       );
+    } else {
+      playFromPlayhead();
     }
-  }, [isPlaying, displayEvent, regionEpoch]);
+  }, [isPlaying, displayEvent, regionEpoch, playFromPlayhead]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -1163,9 +1195,15 @@ export function ClassifyReviewWorkspace({
                     regionDetectionJobId={regionDetectionJobId}
                     region={currentRegion}
                     regionEffectiveEvents={regionEffectiveEvents}
-                    selectedEventId={currentEvent?.eventId ?? null}
+                    selectedEventId={selectedEventId}
                     onSelectEvent={(eventId) => {
-                      if (!eventId) return;
+                      if (!eventId) {
+                        setSelectionCleared(true);
+                        setSelectedEventId(null);
+                        return;
+                      }
+                      setSelectionCleared(false);
+                      setSelectedEventId(eventId);
                       const idx = navigableEvents.findIndex((e) => e.eventId === eventId);
                       if (idx >= 0) setCurrentEventIndex(idx);
                     }}

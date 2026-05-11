@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import {
   REGION_EPOCH_BASE,
@@ -16,6 +16,7 @@ const {
   mockUseEventBoundaryCorrections,
   mockUseSegmentationModels,
   mockUseHydrophones,
+  mockTimelineContext,
   regionAudioTimelineMock,
 } = vi.hoisted(() => ({
   mockUseSegmentationJobs: vi.fn(),
@@ -25,6 +26,37 @@ const {
   mockUseEventBoundaryCorrections: vi.fn(),
   mockUseSegmentationModels: vi.fn(),
   mockUseHydrophones: vi.fn(),
+  mockTimelineContext: {
+    centerTimestamp: 1_700_000_150,
+    zoomLevel: 0,
+    isPlaying: false,
+    isDraggingTimeline: false,
+    speed: 1,
+    viewportWidth: 1000,
+    viewportHeight: 200,
+    playbackEpoch: null,
+    viewStart: 1_700_000_135,
+    viewEnd: 1_700_000_165,
+    pxPerSec: 10,
+    viewportSpan: 30,
+    activePreset: { key: "30s", span: 30, tileDuration: 5 },
+    jobStart: 1_700_000_000,
+    jobEnd: 1_700_000_300,
+    zoomLevels: [{ key: "30s", span: 30, tileDuration: 5 }],
+    pan: vi.fn(),
+    setZoomLevel: vi.fn(),
+    zoomIn: vi.fn(),
+    zoomOut: vi.fn(),
+    play: vi.fn(),
+    pause: vi.fn(),
+    togglePlay: vi.fn(),
+    beginDragPan: vi.fn(),
+    updateDragPan: vi.fn(),
+    endDragPan: vi.fn(),
+    seekTo: vi.fn(),
+    setSpeed: vi.fn(),
+    setViewportDimensions: vi.fn(),
+  },
   regionAudioTimelineMock: vi.fn(),
 }));
 
@@ -44,15 +76,70 @@ vi.mock("@/hooks/queries/useClassifier", () => ({
   useHydrophones: () => mockUseHydrophones(),
 }));
 
+vi.mock("@/components/timeline/provider/useTimelineContext", () => ({
+  useTimelineContext: () => mockTimelineContext,
+}));
+
+vi.mock("@/components/timeline/spectrogram/Spectrogram", () => ({
+  Spectrogram: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="spectrogram">{children}</div>
+  ),
+}));
+
+vi.mock("@/components/timeline/overlays/RegionBoundaryMarkers", () => ({
+  RegionBoundaryMarkers: (props: {
+    dimOutside?: boolean;
+    lineStyle?: string;
+    lineWidth?: number;
+  }) => (
+    <div
+      data-testid="region-boundary-markers"
+      data-dim-outside={String(props.dimOutside)}
+      data-line-style={props.lineStyle ?? ""}
+      data-line-width={String(props.lineWidth ?? "")}
+    />
+  ),
+}));
+
+vi.mock("@/components/timeline/overlays/RegionBandOverlay", () => ({
+  RegionBandOverlay: () => <div data-testid="region-band-overlay" />,
+}));
+
+vi.mock("@/components/timeline/overlays/EventBarOverlay", () => ({
+  EventBarOverlay: ({
+    onSelectEvent,
+    selectedEventId,
+  }: {
+    onSelectEvent: (eventId: string | null) => void;
+    selectedEventId: string | null;
+  }) => (
+    <button
+      type="button"
+      data-testid="blank-event-timeline"
+      data-selected-event-id={selectedEventId ?? ""}
+      onClick={() => onSelectEvent(null)}
+    >
+      blank
+    </button>
+  ),
+}));
+
+vi.mock("@/components/timeline/controls/ZoomSelector", () => ({
+  ZoomSelector: () => <div data-testid="zoom-selector" />,
+}));
+
 // Replace RegionAudioTimeline with a forwardRef stub that records the props
-// it received without rendering its children (rendering them would require a
-// TimelineContext).
-import { forwardRef } from "react";
+// it received and renders children against the mocked timeline context.
+import { forwardRef, type ReactNode } from "react";
 vi.mock("./RegionAudioTimeline", () => ({
   RegionAudioTimeline: forwardRef<unknown, Record<string, unknown>>(
     function MockRegionAudioTimeline(props, _ref) {
       regionAudioTimelineMock(props);
-      return <div data-testid="region-audio-timeline" />;
+      return (
+        <div data-testid="region-audio-timeline">
+          {props.children as ReactNode}
+        </div>
+      );
     },
   ),
 }));
@@ -66,10 +153,14 @@ vi.mock("./ReviewToolbar", () => ({
   ),
 }));
 vi.mock("./EventDetailPanel", () => ({
-  EventDetailPanel: (props: { jobStartEpoch: number }) => (
+  EventDetailPanel: (props: {
+    event: { eventId: string } | null;
+    jobStartEpoch: number;
+  }) => (
     <div
       data-testid="event-detail-panel"
       data-job-start-epoch={String(props.jobStartEpoch)}
+      data-event-id={props.event?.eventId ?? ""}
     />
   ),
 }));
@@ -154,6 +245,13 @@ function setupHooks({
 }
 
 beforeEach(() => {
+  Object.assign(mockTimelineContext, {
+    centerTimestamp: 1_700_000_150,
+    viewStart: 1_700_000_135,
+    viewEnd: 1_700_000_165,
+    viewportSpan: 30,
+    activePreset: { key: "30s", span: 30, tileDuration: 5 },
+  });
   regionAudioTimelineMock.mockReset();
 });
 
@@ -171,6 +269,16 @@ const defaultRegions = [
     max_score: 0.8,
     mean_score: 0.5,
     n_windows: 12,
+  },
+];
+
+const defaultEvents = [
+  {
+    event_id: "ev-1",
+    region_id: "r-1",
+    start_sec: 110,
+    end_sec: 115,
+    segmentation_confidence: 0.9,
   },
 ];
 
@@ -230,5 +338,118 @@ describe("SegmentReviewWorkspace — epoch wiring", () => {
     expect(
       screen.getByTestId("region-table").getAttribute("data-job-start-epoch"),
     ).toBe(expected);
+  });
+
+  it("renders region boundary markers without dimming spectrogram tiles", () => {
+    setupHooks({
+      regionJob: makeRegionJob(),
+      regions: defaultRegions,
+    });
+    render(<SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />);
+
+    expect(
+      screen
+        .getByTestId("region-boundary-markers")
+        .getAttribute("data-dim-outside"),
+    ).toBe("false");
+    expect(
+      screen
+        .getByTestId("region-boundary-markers")
+        .getAttribute("data-line-style"),
+    ).toBe("solid");
+    expect(
+      screen
+        .getByTestId("region-boundary-markers")
+        .getAttribute("data-line-width"),
+    ).toBe("3");
+  });
+
+  it.each([
+    { key: "5m", span: 300, tileDuration: 50 },
+    { key: "1m", span: 60, tileDuration: 10 },
+    { key: "30s", span: 30, tileDuration: 5 },
+    { key: "10s", span: 10, tileDuration: 2 },
+  ])("renders all-region borders at $key zoom", (preset) => {
+    mockTimelineContext.viewportSpan = preset.span;
+    mockTimelineContext.activePreset = preset;
+    mockTimelineContext.viewStart = REGION_EPOCH_BASE + 150 - preset.span / 2;
+    mockTimelineContext.viewEnd = REGION_EPOCH_BASE + 150 + preset.span / 2;
+    setupHooks({
+      regionJob: makeRegionJob(),
+      regions: defaultRegions,
+    });
+    render(<SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />);
+
+    expect(screen.getByTestId("region-band-overlay")).toBeTruthy();
+  });
+
+  it("keeps selection cleared after a blank timeline click", async () => {
+    setupHooks({
+      regionJob: makeRegionJob(),
+      regions: defaultRegions,
+      events: defaultEvents,
+    });
+    render(<SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("event-detail-panel").getAttribute("data-event-id")).toBe(
+        "ev-1",
+      );
+    });
+
+    fireEvent.click(screen.getByTestId("blank-event-timeline"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("event-detail-panel").getAttribute("data-event-id")).toBe(
+        "",
+      );
+    });
+  });
+
+  it("does not snap back to the selected event after manual timeline panning", async () => {
+    setupHooks({
+      regionJob: makeRegionJob(),
+      regions: defaultRegions,
+      events: defaultEvents,
+    });
+    const { rerender } = render(
+      <SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />,
+    );
+
+    await waitFor(() => {
+      expect(mockTimelineContext.seekTo).toHaveBeenCalledTimes(1);
+    });
+
+    mockTimelineContext.viewStart = REGION_EPOCH_BASE + 240;
+    mockTimelineContext.viewEnd = REGION_EPOCH_BASE + 270;
+    mockTimelineContext.centerTimestamp = REGION_EPOCH_BASE + 255;
+    rerender(<SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockTimelineContext.seekTo).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not move playback position when zoom changes", async () => {
+    setupHooks({
+      regionJob: makeRegionJob(),
+      regions: defaultRegions,
+      events: defaultEvents,
+    });
+    const { rerender } = render(
+      <SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />,
+    );
+
+    await waitFor(() => {
+      expect(mockTimelineContext.seekTo).toHaveBeenCalledTimes(1);
+    });
+
+    mockTimelineContext.viewportSpan = 60;
+    mockTimelineContext.activePreset = { key: "1m", span: 60, tileDuration: 10 };
+    mockTimelineContext.viewStart = REGION_EPOCH_BASE + 120;
+    mockTimelineContext.viewEnd = REGION_EPOCH_BASE + 180;
+    rerender(<SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockTimelineContext.seekTo).toHaveBeenCalledTimes(1);
   });
 });

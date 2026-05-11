@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
-import { forwardRef } from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { forwardRef, type ReactNode } from "react";
 
 import {
   REGION_EPOCH_BASE,
@@ -18,6 +18,7 @@ const {
   mockUseEventBoundaryCorrections,
   mockUseEventClassifierModels,
   mockUseHydrophones,
+  mockTimelineContext,
   regionAudioTimelineMock,
 } = vi.hoisted(() => ({
   mockUseClassificationJobs: vi.fn(),
@@ -29,6 +30,37 @@ const {
   mockUseEventBoundaryCorrections: vi.fn(),
   mockUseEventClassifierModels: vi.fn(),
   mockUseHydrophones: vi.fn(),
+  mockTimelineContext: {
+    centerTimestamp: 1_700_000_150,
+    zoomLevel: 0,
+    isPlaying: false,
+    isDraggingTimeline: false,
+    speed: 1,
+    viewportWidth: 1000,
+    viewportHeight: 200,
+    playbackEpoch: null,
+    viewStart: 1_700_000_135,
+    viewEnd: 1_700_000_165,
+    pxPerSec: 10,
+    viewportSpan: 30,
+    activePreset: { key: "30s", span: 30, tileDuration: 5 },
+    jobStart: 1_700_000_000,
+    jobEnd: 1_700_000_300,
+    zoomLevels: [{ key: "30s", span: 30, tileDuration: 5 }],
+    pan: vi.fn(),
+    setZoomLevel: vi.fn(),
+    zoomIn: vi.fn(),
+    zoomOut: vi.fn(),
+    play: vi.fn(),
+    pause: vi.fn(),
+    togglePlay: vi.fn(),
+    beginDragPan: vi.fn(),
+    updateDragPan: vi.fn(),
+    endDragPan: vi.fn(),
+    seekTo: vi.fn(),
+    setSpeed: vi.fn(),
+    setViewportDimensions: vi.fn(),
+  },
   regionAudioTimelineMock: vi.fn(),
 }));
 
@@ -51,11 +83,54 @@ vi.mock("@/hooks/queries/useClassifier", () => ({
   useHydrophones: () => mockUseHydrophones(),
 }));
 
+vi.mock("@/components/timeline/provider/useTimelineContext", () => ({
+  useTimelineContext: () => mockTimelineContext,
+}));
+
+vi.mock("@/components/timeline/spectrogram/Spectrogram", () => ({
+  Spectrogram: ({ children }: { children?: ReactNode }) => (
+    <div data-testid="spectrogram">{children}</div>
+  ),
+}));
+
+vi.mock("@/components/timeline/overlays/RegionBoundaryMarkers", () => ({
+  RegionBoundaryMarkers: () => <div data-testid="region-boundary-markers" />,
+}));
+
+vi.mock("@/components/timeline/overlays/EventBarOverlay", () => ({
+  EventBarOverlay: ({
+    onSelectEvent,
+    selectedEventId,
+  }: {
+    onSelectEvent: (eventId: string | null) => void;
+    selectedEventId: string | null;
+  }) => (
+    <button
+      type="button"
+      data-testid="blank-event-timeline"
+      data-selected-event-id={selectedEventId ?? ""}
+      onClick={() => onSelectEvent(null)}
+    >
+      blank
+    </button>
+  ),
+  APPROVED_RING_COLOR: "hsl(85, 80%, 45%)",
+  CORRECTED_RING_COLOR: "rgb(74, 222, 128)",
+}));
+
+vi.mock("@/components/timeline/controls/ZoomSelector", () => ({
+  ZoomSelector: () => <div data-testid="zoom-selector" />,
+}));
+
 vi.mock("./RegionAudioTimeline", () => ({
   RegionAudioTimeline: forwardRef<unknown, Record<string, unknown>>(
     function MockRegionAudioTimeline(props, _ref) {
       regionAudioTimelineMock(props);
-      return <div data-testid="region-audio-timeline" />;
+      return (
+        <div data-testid="region-audio-timeline">
+          {props.children as ReactNode}
+        </div>
+      );
     },
   ),
 }));
@@ -66,10 +141,14 @@ vi.mock("./TypePalette", () => ({
 }));
 
 vi.mock("./ClassifyDetailPanel", () => ({
-  ClassifyDetailPanel: (props: { jobStartEpoch: number }) => (
+  ClassifyDetailPanel: (props: {
+    event: { eventId: string } | null;
+    jobStartEpoch: number;
+  }) => (
     <div
       data-testid="classify-detail-panel"
       data-job-start-epoch={String(props.jobStartEpoch)}
+      data-event-id={props.event?.eventId ?? ""}
     />
   ),
 }));
@@ -246,5 +325,28 @@ describe("ClassifyReviewWorkspace — epoch wiring", () => {
         .getByTestId("classify-detail-panel")
         .getAttribute("data-job-start-epoch"),
     ).toBe(String(REGION_EPOCH_BASE));
+  });
+
+  it("keeps selection cleared after a blank timeline click", async () => {
+    setupHooks({
+      regionJob: makeRegionJob(),
+      regions: defaultRegions,
+      typedEvents: defaultTypedEvents,
+    });
+    render(<ClassifyReviewWorkspace initialJobId={CLASSIFY_JOB_ID} />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("classify-detail-panel").getAttribute("data-event-id"),
+      ).toBe("ev-1");
+    });
+
+    fireEvent.click(screen.getByTestId("blank-event-timeline"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("classify-detail-panel").getAttribute("data-event-id"),
+      ).toBe("");
+    });
   });
 });

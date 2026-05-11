@@ -35,6 +35,7 @@ export function EventEncoderTimelinePanel({ job }: EventEncoderTimelinePanelProp
   const [selectedK, setSelectedK] = useState<number | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [selectedListIndex, setSelectedListIndex] = useState(0);
+  const [selectionCleared, setSelectionCleared] = useState(false);
   const {
     data,
     isLoading,
@@ -42,6 +43,12 @@ export function EventEncoderTimelinePanel({ job }: EventEncoderTimelinePanelProp
   } = useEventEncoderTimeline(job.id, selectedK, isComplete);
 
   const events = data?.events ?? [];
+
+  useEffect(() => {
+    setSelectedEventId(null);
+    setSelectedListIndex(0);
+    setSelectionCleared(false);
+  }, [job.id]);
 
   useEffect(() => {
     if (!data || selectedK !== null) return;
@@ -60,10 +67,14 @@ export function EventEncoderTimelinePanel({ job }: EventEncoderTimelinePanelProp
       setSelectedListIndex(currentIndex);
       return;
     }
+    if (selectionCleared && selectedEventId === null) {
+      setSelectedListIndex((index) => Math.min(index, events.length - 1));
+      return;
+    }
     const nextIndex = Math.min(selectedListIndex, events.length - 1);
     setSelectedEventId(events[nextIndex].event_id);
     setSelectedListIndex(nextIndex);
-  }, [data, events, selectedEventId, selectedListIndex]);
+  }, [data, events, selectedEventId, selectedListIndex, selectionCleared]);
 
   const handleKChange = (value: string) => {
     const nextK = Number(value);
@@ -124,14 +135,20 @@ export function EventEncoderTimelinePanel({ job }: EventEncoderTimelinePanelProp
               selectedEventId={selectedEventId}
               selectedListIndex={selectedListIndex}
               onSelectEvent={(eventId, index) => {
+                setSelectionCleared(false);
                 setSelectedEventId(eventId);
                 setSelectedListIndex(index);
               }}
               onSelectIndex={(index) => {
                 const next = data.events[index];
                 if (!next) return;
+                setSelectionCleared(false);
                 setSelectedEventId(next.event_id);
                 setSelectedListIndex(index);
+              }}
+              onClearSelection={() => {
+                setSelectionCleared(true);
+                setSelectedEventId(null);
               }}
               onKChange={handleKChange}
             />
@@ -166,6 +183,7 @@ function EventEncoderTimelineBody({
   selectedListIndex,
   onSelectEvent,
   onSelectIndex,
+  onClearSelection,
   onKChange,
 }: {
   job: EventEncoderJob;
@@ -174,6 +192,7 @@ function EventEncoderTimelineBody({
   selectedListIndex: number;
   onSelectEvent: (eventId: string, index: number) => void;
   onSelectIndex: (index: number) => void;
+  onClearSelection: () => void;
   onKChange: (value: string) => void;
 }) {
   const ctx = useTimelineContext();
@@ -204,6 +223,12 @@ function EventEncoderTimelineBody({
     setTokenScopedNavigation(false);
   }, [job.id, timeline.selected_k]);
 
+  useEffect(() => {
+    if (!selectedEvent) {
+      setTokenScopedNavigation(false);
+    }
+  }, [selectedEvent]);
+
   const centerEvent = useCallback(
     (event: EventEncoderTimelineEvent) => {
       ctx.seekTo((event.start_timestamp + event.end_timestamp) / 2);
@@ -232,7 +257,11 @@ function EventEncoderTimelineBody({
       );
       return;
     }
-    ctx.play(ctx.viewStart, Math.min(ctx.viewportSpan, 30));
+    ctx.play(
+      ctx.centerTimestamp,
+      Math.min(Math.max(ctx.jobEnd - ctx.centerTimestamp, 0.1), 30),
+      { scrollOnPlayback: true },
+    );
   }, [ctx, selectedEvent]);
 
   useEffect(() => {
@@ -391,7 +420,7 @@ function EventEncoderTimelineBody({
           size="icon"
           className={timeline.valid_k_values.length > 1 ? "h-8 w-8" : "ml-auto h-8 w-8"}
           onClick={toggleSelectedPlayback}
-          title={ctx.isPlaying ? "Pause" : "Play event"}
+          title={ctx.isPlaying ? "Pause" : selectedEvent ? "Play event" : "Play from playhead"}
           data-testid="eej-event-play"
         >
           {ctx.isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -409,6 +438,10 @@ function EventEncoderTimelineBody({
             selectedEventId={selectedEventId}
             selectedK={timeline.selected_k}
             onSelectEvent={(eventId) => {
+              if (eventId === null) {
+                onClearSelection();
+                return;
+              }
               const index = events.findIndex((event) => event.event_id === eventId);
               onSelectEvent(eventId, Math.max(0, index));
             }}

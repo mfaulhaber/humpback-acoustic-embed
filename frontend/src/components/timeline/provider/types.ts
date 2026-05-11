@@ -39,12 +39,16 @@ export interface TimelineDerived {
   activePreset: ZoomPreset;
 }
 
+export interface TimelinePlayOptions {
+  scrollOnPlayback?: boolean;
+}
+
 export interface TimelineActions {
   pan: (center: number) => void;
   setZoomLevel: (index: number) => void;
   zoomIn: () => void;
   zoomOut: () => void;
-  play: (startEpoch?: number, duration?: number) => void;
+  play: (startEpoch?: number, duration?: number, options?: TimelinePlayOptions) => void;
   pause: () => void;
   togglePlay: () => void;
   beginDragPan: (clientX: number) => boolean;
@@ -62,7 +66,7 @@ export interface TimelineContextValue extends TimelineState, TimelineDerived, Ti
 }
 
 export interface TimelinePlaybackHandle {
-  play: (startEpoch: number, duration?: number) => void;
+  play: (startEpoch: number, duration?: number, options?: TimelinePlayOptions) => void;
   pause: () => void;
   seekTo: (epoch: number) => void;
   isPlaying: boolean;

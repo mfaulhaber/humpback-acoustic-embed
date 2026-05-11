@@ -27,6 +27,7 @@ function wrapper(props?: {
   disableKeyboardShortcuts?: boolean;
   onZoomChange?: (key: string) => void;
   onPlayStateChange?: (playing: boolean) => void;
+  scrollOnPlayback?: boolean;
 }) {
   const zoomLevels = props?.zoomLevels ?? FULL_ZOOM;
   const jobStart = props?.jobStart ?? 1000;
@@ -45,6 +46,7 @@ function wrapper(props?: {
         disableKeyboardShortcuts={props?.disableKeyboardShortcuts}
         onZoomChange={props?.onZoomChange}
         onPlayStateChange={props?.onPlayStateChange}
+        scrollOnPlayback={props?.scrollOnPlayback}
       >
         {children}
       </TimelineProvider>
@@ -206,6 +208,31 @@ describe("usePlayback slice mode", () => {
       result.current.pause();
     });
     expect(result.current.playbackEpoch).toBeNull();
+  });
+
+  it("allows a single play call to scroll even when provider playback scrolling is disabled", () => {
+    const { result } = renderHook(() => useTimelineContext(), {
+      wrapper: wrapper({
+        jobStart: 1000,
+        jobEnd: 2000,
+        scrollOnPlayback: false,
+      }),
+    });
+
+    expect(result.current.centerTimestamp).toBe(1500);
+
+    act(() => {
+      result.current.play(1700, 10);
+    });
+
+    expect(result.current.centerTimestamp).toBe(1500);
+
+    act(() => {
+      result.current.pause();
+      result.current.play(1700, 10, { scrollOnPlayback: true });
+    });
+
+    expect(result.current.centerTimestamp).toBe(1700);
   });
 });
 

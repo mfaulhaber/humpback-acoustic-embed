@@ -6,6 +6,7 @@ interface RegionBoundaryMarkersProps {
   dimOutside?: boolean;
   lineColor?: string;
   lineStyle?: "solid" | "dashed";
+  lineWidth?: number;
 }
 
 export function RegionBoundaryMarkers({
@@ -14,6 +15,7 @@ export function RegionBoundaryMarkers({
   dimOutside = true,
   lineColor = "rgba(59, 130, 246, 0.7)",
   lineStyle = "dashed",
+  lineWidth = 1.5,
 }: RegionBoundaryMarkersProps) {
   const { epochToX, canvasWidth, canvasHeight } = useOverlayContext();
 
@@ -62,7 +64,7 @@ export function RegionBoundaryMarkers({
             left: startX,
             width: 0,
             height: canvasHeight,
-            borderLeft: `1.5px ${lineStyle} ${lineColor}`,
+            borderLeft: `${lineWidth}px ${lineStyle} ${lineColor}`,
           }}
         />
       )}
@@ -76,7 +78,7 @@ export function RegionBoundaryMarkers({
             left: endX,
             width: 0,
             height: canvasHeight,
-            borderLeft: `1.5px ${lineStyle} ${lineColor}`,
+            borderLeft: `${lineWidth}px ${lineStyle} ${lineColor}`,
           }}
         />
       )}
