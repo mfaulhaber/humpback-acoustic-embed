@@ -81,6 +81,36 @@ const COMPLETE_SEG_JOB = {
   completed_at: "2026-04-12T04:05:00Z",
 };
 
+const SEG_JOBS_WITH_CORRECTION_COUNTS = [
+  {
+    ...COMPLETE_SEG_JOB,
+    correction_count: 2,
+    hydrophone_id: HYDROPHONE.id,
+    start_timestamp: COMPLETE_REGION_JOB.start_timestamp,
+    end_timestamp: COMPLETE_REGION_JOB.end_timestamp,
+    has_new_corrections: false,
+    latest_correction_at: "2026-04-12T05:00:00Z",
+  },
+  {
+    ...COMPLETE_SEG_JOB,
+    id: "sj-complete-2",
+    correction_count: 3,
+    hydrophone_id: HYDROPHONE.id,
+    start_timestamp: COMPLETE_REGION_JOB.start_timestamp + 3600,
+    end_timestamp: COMPLETE_REGION_JOB.end_timestamp + 3600,
+    has_new_corrections: false,
+    latest_correction_at: "2026-04-12T06:00:00Z",
+  },
+];
+
+const TRAINING_DATASET = {
+  id: "dataset-1",
+  name: "curated corrections",
+  sample_count: 12,
+  source_job_count: 2,
+  created_at: "2026-04-12T06:00:00Z",
+};
+
 const SEG_EVENTS = [
   {
     event_id: "ev-1",
@@ -126,12 +156,15 @@ const REGIONS = [
 const BOUNDARY_CORRECTIONS = [
   {
     id: "bc-1",
+    region_detection_job_id: COMPLETE_REGION_JOB.id,
     event_segmentation_job_id: COMPLETE_SEG_JOB.id,
-    event_id: "ev-1",
+    source_event_id: "ev-1",
     region_id: "reg-aaaa",
     correction_type: "adjust",
-    start_sec: 100.2,
-    end_sec: 102.3,
+    original_start_sec: 100.0,
+    original_end_sec: 102.5,
+    corrected_start_sec: 100.2,
+    corrected_end_sec: 102.3,
     created_at: "2026-04-12T05:00:00Z",
     updated_at: "2026-04-12T05:00:00Z",
   },
@@ -173,6 +206,46 @@ async function setupMocks(page: Page) {
       body: JSON.stringify(COMPLETE_SEG_JOB),
     });
   });
+  await page.route(
+    "**/call-parsing/segmentation-jobs/with-correction-counts",
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(SEG_JOBS_WITH_CORRECTION_COUNTS),
+      }),
+  );
+  await page.route(
+    "**/call-parsing/segmentation-training-datasets/from-corrections",
+    (route) =>
+      route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "dataset-created",
+          name: "created from corrections",
+          sample_count: 7,
+          selected_job_count: 2,
+          source_job_count: 1,
+          skipped_job_count: 1,
+          skipped_jobs: [
+            {
+              segmentation_job_id: "sj-complete-2",
+              reason: "no usable boundary corrections",
+              correction_mode: "none",
+            },
+          ],
+          created_at: "2026-04-12T06:30:00Z",
+        }),
+      }),
+  );
+  await page.route("**/call-parsing/segmentation-training-datasets", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([TRAINING_DATASET]),
+    }),
+  );
   await page.route("**/call-parsing/segmentation-jobs/*/events", (route) =>
     route.fulfill({
       status: 200,
@@ -194,6 +267,20 @@ async function setupMocks(page: Page) {
       body: JSON.stringify(BOUNDARY_CORRECTIONS),
     }),
   );
+  await page.route("**/call-parsing/event-boundary-corrections**", (route) => {
+    if (route.request().method() === "POST") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(BOUNDARY_CORRECTIONS),
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(BOUNDARY_CORRECTIONS),
+    });
+  });
   // 1x1 transparent PNG for tile requests
   const TINY_PNG = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQAB" +
@@ -214,6 +301,18 @@ async function setupMocks(page: Page) {
   await page.route("**/admin/models", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: "[]" }),
   );
+}
+
+function regionRow(page: Page, timeLabel: string) {
+  return page.getByRole("row").filter({ hasText: timeLabel });
+}
+
+async function deleteSelectedEvent(page: Page) {
+  await page.getByRole("button", { name: "Delete Event" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Delete" })
+    .click();
 }
 
 test.describe("Call Parsing Segment page", () => {
@@ -354,9 +453,8 @@ test.describe("Segment Review workspace", () => {
     await select.selectOption(COMPLETE_SEG_JOB.id);
     // Region sidebar should show regions
     await expect(page.locator("text=Regions (2)")).toBeVisible();
-    // Use sidebar buttons to avoid matching toolbar "Region 1:35 – 2:00"
-    await expect(page.locator("button").filter({ hasText: "1:35" })).toBeVisible();
-    await expect(page.locator("button").filter({ hasText: "3:20" })).toBeVisible();
+    await expect(regionRow(page, "16:01:35.0")).toBeVisible();
+    await expect(regionRow(page, "16:03:20.0")).toBeVisible();
   });
 
   test("region sidebar shows event counts and correction status", async ({
@@ -366,12 +464,12 @@ test.describe("Segment Review workspace", () => {
     await page.locator("#review-job-select").selectOption(COMPLETE_SEG_JOB.id);
     await expect(page.locator("text=Regions (2)")).toBeVisible();
     // First region: 2 events, 1 edited (ev-1 has a correction)
-    const firstRegion = page.locator("button").filter({ hasText: "1:35" });
-    await expect(firstRegion).toContainText("2 events");
-    await expect(firstRegion).toContainText("1 edited");
+    const firstRegion = regionRow(page, "16:01:35.0");
+    await expect(firstRegion.getByRole("cell").nth(3)).toHaveText("2");
+    await expect(firstRegion.getByRole("cell").nth(4)).toHaveText("1");
     // Second region: 0 events
-    const secondRegion = page.locator("button").filter({ hasText: "3:20" });
-    await expect(secondRegion).toContainText("0 events");
+    const secondRegion = regionRow(page, "16:03:20.0");
+    await expect(secondRegion.getByRole("cell").nth(3)).toHaveText("0");
   });
 
   test("clicking a region highlights it and shows spectrogram", async ({
@@ -383,7 +481,7 @@ test.describe("Segment Review workspace", () => {
     // First region is auto-selected — spectrogram viewport should render
     await expect(page.getByTestId("spectrogram-viewport")).toBeVisible();
     // Click second region
-    const secondRegion = page.locator("button").filter({ hasText: "3:20" });
+    const secondRegion = regionRow(page, "16:03:20.0");
     await secondRegion.click();
     // Viewport should still be visible (now for the second region)
     await expect(page.getByTestId("spectrogram-viewport")).toBeVisible();
@@ -484,7 +582,7 @@ test.describe("EventDetailPanel and ReviewToolbar", () => {
     await page.goto("/app/call-parsing/segment?tab=review");
     await page.locator("#review-job-select").selectOption(COMPLETE_SEG_JOB.id);
     // Toolbar should show region time range
-    await expect(page.getByText(/Region 1:35/)).toBeVisible();
+    await expect(page.getByText(/Region 1\/2 .*16:01:35/)).toBeVisible();
     // Action buttons
     await expect(page.getByRole("button", { name: "Play", exact: true })).toBeVisible();
     await expect(page.locator("button", { hasText: "+ Add" })).toBeVisible();
@@ -531,7 +629,7 @@ test.describe("State management — save/cancel/dirty flow", () => {
 
     // Select ev-2 and delete it
     await page.getByTestId("event-bar-ev-2").click();
-    await page.getByRole("button", { name: "Delete Event" }).click();
+    await deleteSelectedEvent(page);
 
     // Save becomes enabled with badge
     await expect(saveBtn).toBeEnabled();
@@ -542,7 +640,7 @@ test.describe("State management — save/cancel/dirty flow", () => {
     // Intercept the POST to corrections
     let postBody: unknown = null;
     await page.route(
-      "**/call-parsing/segmentation-jobs/*/corrections",
+      "**/call-parsing/event-boundary-corrections**",
       (route) => {
         if (route.request().method() === "POST") {
           postBody = route.request().postDataJSON();
@@ -566,7 +664,7 @@ test.describe("State management — save/cancel/dirty flow", () => {
 
     // Delete ev-2 to create a pending correction
     await page.getByTestId("event-bar-ev-2").click();
-    await page.getByRole("button", { name: "Delete Event" }).click();
+    await deleteSelectedEvent(page);
 
     // Click Save
     await page.locator("button", { hasText: "Save" }).click();
@@ -592,7 +690,7 @@ test.describe("State management — save/cancel/dirty flow", () => {
 
     // Delete ev-2
     await page.getByTestId("event-bar-ev-2").click();
-    await page.getByRole("button", { name: "Delete Event" }).click();
+    await deleteSelectedEvent(page);
     await expect(page.locator("text=1 unsaved change")).toBeVisible();
 
     // Cancel
@@ -610,15 +708,15 @@ test.describe("State management — save/cancel/dirty flow", () => {
 
     // Create a pending edit in the first region
     await page.getByTestId("event-bar-ev-2").click();
-    await page.getByRole("button", { name: "Delete Event" }).click();
+    await deleteSelectedEvent(page);
     await expect(page.locator("text=1 unsaved change")).toBeVisible();
 
     // Switch to second region — no dialog, edits preserved
-    await page.locator("button").filter({ hasText: "3:20" }).click();
+    await regionRow(page, "16:03:20.0").click();
     await expect(page.locator("text=1 unsaved change")).toBeVisible();
 
     // Switch back — edits still there
-    await page.locator("button").filter({ hasText: "1:35" }).click();
+    await regionRow(page, "16:01:35.0").click();
     await expect(page.locator("text=1 unsaved change")).toBeVisible();
   });
 });
@@ -640,6 +738,21 @@ test.describe("Call Parsing Segment Training page", () => {
     await expect(row).toContainText("crnn-bootstrap-v1");
     await expect(row).toContainText("0.81");
     await expect(row).toContainText("0.73");
+  });
+
+  test("dataset creation toast reports contributing and skipped jobs", async ({
+    page,
+  }) => {
+    await page.goto("/app/call-parsing/segment-training");
+    await page.getByLabel("Select all on this page").click();
+    await page.getByRole("button", { name: "Create Training Dataset (2 jobs)" }).click();
+
+    await expect(page.getByText("Training dataset created")).toBeVisible();
+    await expect(
+      page.getByText(
+        "7 samples from 1 contributing job. 1 selected job had no usable corrections.",
+      ),
+    ).toBeVisible();
   });
 });
 

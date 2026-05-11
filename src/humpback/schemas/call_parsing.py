@@ -361,12 +361,24 @@ class CreateDatasetFromCorrectionsRequest(BaseModel):
     description: Optional[str] = None
 
 
+class SkippedDatasetSourceResponse(BaseModel):
+    """Selected source job that did not contribute dataset samples."""
+
+    segmentation_job_id: str
+    reason: str
+    correction_mode: str
+
+
 class CreateDatasetFromCorrectionsResponse(BaseModel):
     """Response for dataset-from-corrections creation."""
 
     id: str
     name: str
     sample_count: int
+    selected_job_count: int
+    source_job_count: int
+    skipped_job_count: int
+    skipped_jobs: list[SkippedDatasetSourceResponse] = Field(default_factory=list)
     created_at: datetime
 
 

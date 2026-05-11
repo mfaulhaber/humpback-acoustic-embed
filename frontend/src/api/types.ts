@@ -1090,6 +1090,14 @@ export interface CreateDatasetFromCorrectionsResponse {
   id: string;
   name: string;
   sample_count: number;
+  selected_job_count: number;
+  source_job_count: number;
+  skipped_job_count: number;
+  skipped_jobs: Array<{
+    segmentation_job_id: string;
+    reason: string;
+    correction_mode: string;
+  }>;
   created_at: string;
 }
 

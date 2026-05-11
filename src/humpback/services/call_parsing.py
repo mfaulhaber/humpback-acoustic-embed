@@ -10,6 +10,7 @@ deletion across the four child tables.
 from __future__ import annotations
 
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -636,6 +637,30 @@ class CallParsingStateError(Exception):
     def __init__(self, detail: str) -> None:
         self.detail = detail
         super().__init__(detail)
+
+
+@dataclass
+class SkippedDatasetSource:
+    """Selected segmentation job that did not contribute dataset samples."""
+
+    segmentation_job_id: str
+    reason: str
+    correction_mode: str
+
+
+@dataclass
+class DatasetFromCorrectionsResult:
+    """Created dataset plus source-accounting metadata."""
+
+    dataset: "SegmentationTrainingDataset"
+    sample_count: int
+    selected_job_count: int
+    source_job_count: int
+    skipped_jobs: list[SkippedDatasetSource]
+
+    @property
+    def skipped_job_count(self) -> int:
+        return len(self.skipped_jobs)
 
 
 class CallParsingValidationError(Exception):
@@ -1397,10 +1422,11 @@ async def create_dataset_from_corrections(
     settings: Settings,
     name: Optional[str] = None,
     description: Optional[str] = None,
-) -> tuple["SegmentationTrainingDataset", int]:
+) -> DatasetFromCorrectionsResult:
     """Extract corrections from one or more segmentation jobs into a new dataset.
 
-    Returns ``(dataset, sample_count)``.
+    Returns the created dataset plus selected/contributing/skipped source
+    accounting.
 
     Each job is validated as existing and complete.  Jobs with zero
     corrections are silently skipped.  Raises ``ValueError`` if no
@@ -1416,6 +1442,8 @@ async def create_dataset_from_corrections(
     )
 
     all_samples: list[tuple[str, CorrectedSample]] = []
+    contributing_job_ids: set[str] = set()
+    skipped_jobs: list[SkippedDatasetSource] = []
 
     for seg_job_id in segmentation_job_ids:
         seg_job = await session.get(EventSegmentationJob, seg_job_id)
@@ -1436,13 +1464,24 @@ async def create_dataset_from_corrections(
                 f"{seg_job.region_detection_job_id} not found"
             )
 
-        job_samples = await collect_corrected_samples(
+        collection = await collect_corrected_samples(
             session,
             seg_job.region_detection_job_id,
             seg_job_id,
             settings.storage_root,
         )
-        for s in job_samples:
+        if not collection.samples:
+            skipped_jobs.append(
+                SkippedDatasetSource(
+                    segmentation_job_id=seg_job_id,
+                    reason=collection.skipped_reason or "no usable samples",
+                    correction_mode=collection.correction_mode,
+                )
+            )
+            continue
+
+        contributing_job_ids.add(seg_job_id)
+        for s in collection.samples:
             all_samples.append((seg_job_id, s))
 
     if not all_samples:
@@ -1479,7 +1518,13 @@ async def create_dataset_from_corrections(
         )
 
     await session.commit()
-    return dataset, len(all_samples)
+    return DatasetFromCorrectionsResult(
+        dataset=dataset,
+        sample_count=len(all_samples),
+        selected_job_count=len(segmentation_job_ids),
+        source_job_count=len(contributing_job_ids),
+        skipped_jobs=skipped_jobs,
+    )
 
 
 async def create_segmentation_training_job(
@@ -1525,7 +1570,7 @@ async def create_dataset_and_train(
     from humpback.models.segmentation_training import SegmentationTrainingJob
     from humpback.schemas.call_parsing import SegmentationTrainingConfig
 
-    dataset, sample_count = await create_dataset_from_corrections(
+    dataset_result = await create_dataset_from_corrections(
         session,
         segmentation_job_ids=[segmentation_job_id],
         settings=settings,
@@ -1533,13 +1578,13 @@ async def create_dataset_and_train(
 
     config = SegmentationTrainingConfig()
     job = SegmentationTrainingJob(
-        training_dataset_id=dataset.id,
+        training_dataset_id=dataset_result.dataset.id,
         config_json=config.model_dump_json(),
     )
     session.add(job)
     await session.commit()
 
-    return dataset.id, job.id, sample_count
+    return dataset_result.dataset.id, job.id, dataset_result.sample_count
 
 
 # ---- Window classification sidecar ----------------------------------------

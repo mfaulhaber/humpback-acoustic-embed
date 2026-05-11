@@ -83,9 +83,17 @@ export function SegmentationJobPicker() {
       },
       {
         onSuccess: (data) => {
+          const contributingJobWord =
+            data.source_job_count === 1 ? "job" : "jobs";
+          const skippedDetail =
+            data.skipped_job_count > 0
+              ? ` ${data.skipped_job_count} selected job${
+                  data.skipped_job_count !== 1 ? "s" : ""
+                } had no usable corrections.`
+              : "";
           toast({
             title: "Training dataset created",
-            description: `${data.sample_count} samples from ${ids.length} job${ids.length > 1 ? "s" : ""}`,
+            description: `${data.sample_count} samples from ${data.source_job_count} contributing ${contributingJobWord}.${skippedDetail}`,
           });
           setSelected(new Set());
           setName("");

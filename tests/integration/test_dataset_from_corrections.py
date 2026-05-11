@@ -30,7 +30,14 @@ from humpback.storage import ensure_dir
 BASE = "/call-parsing"
 
 
-async def _seed_job_with_corrections(app_settings, *, with_corrections: bool = True):
+async def _seed_job_with_corrections(
+    app_settings,
+    *,
+    with_corrections: bool = True,
+    correction_scope: str = "scoped",
+    add_extra_segmentation_job: bool = False,
+    include_legacy_corrections: bool = False,
+):
     """Create a completed segmentation job with regions, events, and corrections.
 
     Returns (seg_job_id, region_detection_job_id).
@@ -68,6 +75,16 @@ async def _seed_job_with_corrections(app_settings, *, with_corrections: bool = T
             )
             session.add(seg_job)
             await session.flush()
+
+            if add_extra_segmentation_job:
+                session.add(
+                    EventSegmentationJob(
+                        region_detection_job_id=rd.id,
+                        segmentation_model_id=sm.id,
+                        status="complete",
+                        event_count=2,
+                    )
+                )
 
             # Write regions.parquet
             regions_dir = ensure_dir(region_job_dir(storage_root, rd.id))
@@ -122,11 +139,14 @@ async def _seed_job_with_corrections(app_settings, *, with_corrections: bool = T
             )
 
             if with_corrections:
+                correction_seg_job_id = (
+                    seg_job.id if correction_scope == "scoped" else None
+                )
                 # Add corrections for region r1 only
                 session.add(
                     EventBoundaryCorrection(
                         region_detection_job_id=rd.id,
-                        event_segmentation_job_id=seg_job.id,
+                        event_segmentation_job_id=correction_seg_job_id,
                         region_id="r1",
                         source_event_id="e1",
                         correction_type="adjust",
@@ -139,11 +159,21 @@ async def _seed_job_with_corrections(app_settings, *, with_corrections: bool = T
                 session.add(
                     EventBoundaryCorrection(
                         region_detection_job_id=rd.id,
-                        event_segmentation_job_id=seg_job.id,
+                        event_segmentation_job_id=correction_seg_job_id,
                         region_id="r1",
                         correction_type="add",
                         corrected_start_sec=110.0,
                         corrected_end_sec=112.0,
+                    )
+                )
+            if include_legacy_corrections:
+                session.add(
+                    EventBoundaryCorrection(
+                        region_detection_job_id=rd.id,
+                        region_id="r1",
+                        correction_type="add",
+                        corrected_start_sec=115.0,
+                        corrected_end_sec=116.0,
                     )
                 )
 
@@ -165,6 +195,10 @@ async def test_create_dataset_from_corrections(client: AsyncClient, app_settings
     data = resp.json()
     assert data["name"] == f"corrections-{seg_job_id[:8]}"
     assert data["sample_count"] > 0
+    assert data["selected_job_count"] == 1
+    assert data["source_job_count"] == 1
+    assert data["skipped_job_count"] == 0
+    assert data["skipped_jobs"] == []
     assert "id" in data
 
     # Verify dataset exists in DB
@@ -340,6 +374,9 @@ async def test_multi_job_dataset_combines_samples(client: AsyncClient, app_setti
     data = resp.json()
     assert data["sample_count"] >= 2
     assert data["name"] == f"corrections-2jobs-{seg_id_1[:8]}"
+    assert data["selected_job_count"] == 2
+    assert data["source_job_count"] == 2
+    assert data["skipped_job_count"] == 0
 
     engine = create_engine(app_settings.database_url)
     try:
@@ -375,6 +412,11 @@ async def test_multi_job_skips_jobs_without_corrections(
     assert resp.status_code == 201
     data = resp.json()
     assert data["sample_count"] >= 1
+    assert data["selected_job_count"] == 2
+    assert data["source_job_count"] == 1
+    assert data["skipped_job_count"] == 1
+    assert data["skipped_jobs"][0]["segmentation_job_id"] == seg_id_2
+    assert data["skipped_jobs"][0]["correction_mode"] == "none"
 
     engine = create_engine(app_settings.database_url)
     try:
@@ -391,6 +433,136 @@ async def test_multi_job_skips_jobs_without_corrections(
             source_refs = {s.source_ref for s in samples}
             assert seg_id_1 in source_refs
             assert seg_id_2 not in source_refs
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_multi_job_includes_unambiguous_legacy_corrections(
+    client: AsyncClient, app_settings
+):
+    """Legacy region-scoped corrections contribute when ownership is unambiguous."""
+    scoped_seg_id, _ = await _seed_job_with_corrections(app_settings)
+    legacy_seg_id, _ = await _seed_job_with_corrections(
+        app_settings,
+        correction_scope="legacy",
+    )
+
+    resp = await client.post(
+        f"{BASE}/segmentation-training-datasets/from-corrections",
+        json={"segmentation_job_ids": [scoped_seg_id, legacy_seg_id]},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["selected_job_count"] == 2
+    assert data["source_job_count"] == 2
+    assert data["skipped_job_count"] == 0
+
+    engine = create_engine(app_settings.database_url)
+    try:
+        sf = create_session_factory(engine)
+        async with sf() as session:
+            from sqlalchemy import select
+
+            samples_result = await session.execute(
+                select(SegmentationTrainingSample).where(
+                    SegmentationTrainingSample.training_dataset_id == data["id"]
+                )
+            )
+            samples = list(samples_result.scalars().all())
+            source_refs = {s.source_ref for s in samples}
+            assert scoped_seg_id in source_refs
+            assert legacy_seg_id in source_refs
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_multi_job_skips_ambiguous_legacy_corrections(
+    client: AsyncClient, app_settings
+):
+    """Legacy rows are skipped when multiple segmentation jobs share one region job."""
+    scoped_seg_id, _ = await _seed_job_with_corrections(app_settings)
+    ambiguous_seg_id, _ = await _seed_job_with_corrections(
+        app_settings,
+        correction_scope="legacy",
+        add_extra_segmentation_job=True,
+    )
+
+    resp = await client.post(
+        f"{BASE}/segmentation-training-datasets/from-corrections",
+        json={"segmentation_job_ids": [scoped_seg_id, ambiguous_seg_id]},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["selected_job_count"] == 2
+    assert data["source_job_count"] == 1
+    assert data["skipped_job_count"] == 1
+    assert data["skipped_jobs"] == [
+        {
+            "segmentation_job_id": ambiguous_seg_id,
+            "reason": (
+                "legacy region-scoped corrections are ambiguous because the "
+                "region detection job has multiple segmentation jobs"
+            ),
+            "correction_mode": "legacy_ambiguous",
+        }
+    ]
+
+    engine = create_engine(app_settings.database_url)
+    try:
+        sf = create_session_factory(engine)
+        async with sf() as session:
+            from sqlalchemy import select
+
+            samples_result = await session.execute(
+                select(SegmentationTrainingSample).where(
+                    SegmentationTrainingSample.training_dataset_id == data["id"]
+                )
+            )
+            samples = list(samples_result.scalars().all())
+            source_refs = {s.source_ref for s in samples}
+            assert scoped_seg_id in source_refs
+            assert ambiguous_seg_id not in source_refs
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_scoped_corrections_take_precedence_over_legacy(
+    client: AsyncClient, app_settings
+):
+    """Modern scoped corrections are authoritative when legacy rows coexist."""
+    seg_id, _ = await _seed_job_with_corrections(
+        app_settings,
+        include_legacy_corrections=True,
+    )
+
+    resp = await client.post(
+        f"{BASE}/segmentation-training-datasets/from-corrections",
+        json={"segmentation_job_ids": [seg_id]},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["source_job_count"] == 1
+    assert data["skipped_job_count"] == 0
+
+    engine = create_engine(app_settings.database_url)
+    try:
+        sf = create_session_factory(engine)
+        async with sf() as session:
+            from sqlalchemy import select
+
+            samples_result = await session.execute(
+                select(SegmentationTrainingSample).where(
+                    SegmentationTrainingSample.training_dataset_id == data["id"]
+                )
+            )
+            samples = list(samples_result.scalars().all())
+            assert len(samples) == 1
+            events = json.loads(samples[0].events_json)
+            starts = sorted(e["start_sec"] for e in events)
+            assert starts == [105.5, 110.0]
     finally:
         await engine.dispose()
 
