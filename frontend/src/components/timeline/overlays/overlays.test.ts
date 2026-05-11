@@ -1,9 +1,10 @@
 import React from "react";
-import { render } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { fireEvent, render } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
 import { MOTIF_PALETTE } from "@/lib/motifColor";
 import { OverlayContext } from "./OverlayContext";
 import { RegionBoundaryMarkers } from "./RegionBoundaryMarkers";
+import { RegionBandOverlay } from "./RegionBandOverlay";
 import { MotifHighlightOverlay } from "./MotifHighlightOverlay";
 import type { MotifOccurrence } from "./motifTypes";
 
@@ -100,6 +101,83 @@ describe("RegionBoundaryMarkers", () => {
 
     expect(container.querySelectorAll('[style*="rgba(0, 0, 0, 0.4)"]')).toHaveLength(0);
     expect(container.querySelectorAll('[style*="1.5px solid white"]')).toHaveLength(2);
+  });
+});
+
+describe("RegionBandOverlay", () => {
+  const overlayValue = {
+    viewStart: 100,
+    viewEnd: 260,
+    pxPerSec: 10,
+    canvasWidth: 1600,
+    canvasHeight: 120,
+    epochToX: (epoch: number) => (epoch - 100) * 10,
+    xToEpoch: (x: number) => 100 + x / 10,
+    tooltipPortalTarget: null,
+  };
+  const regions = [
+    {
+      region_id: "r-1",
+      start_sec: 110,
+      end_sec: 140,
+      padded_start_sec: 100,
+      padded_end_sec: 150,
+      max_score: 0.8,
+      mean_score: 0.5,
+      n_windows: 4,
+    },
+    {
+      region_id: "r-2",
+      start_sec: 180,
+      end_sec: 220,
+      padded_start_sec: 170,
+      padded_end_sec: 240,
+      max_score: 0.9,
+      mean_score: 0.6,
+      n_windows: 5,
+    },
+  ];
+
+  it("selects an inactive region on click", () => {
+    const onSelectRegion = vi.fn();
+    const { getByTestId } = render(
+      React.createElement(
+        OverlayContext.Provider,
+        { value: overlayValue },
+        React.createElement(RegionBandOverlay, {
+          regions,
+          activeRegionId: "r-1",
+          onSelectRegion,
+        }),
+      ),
+    );
+
+    const inactiveBand = getByTestId("region-band-r-2");
+    fireEvent.mouseDown(inactiveBand, { clientX: 20, clientY: 10 });
+    fireEvent.click(inactiveBand, { clientX: 21, clientY: 10 });
+
+    expect(onSelectRegion).toHaveBeenCalledWith("r-2");
+  });
+
+  it("does not select a region when the pointer moved like a pan gesture", () => {
+    const onSelectRegion = vi.fn();
+    const { getByTestId } = render(
+      React.createElement(
+        OverlayContext.Provider,
+        { value: overlayValue },
+        React.createElement(RegionBandOverlay, {
+          regions,
+          activeRegionId: "r-1",
+          onSelectRegion,
+        }),
+      ),
+    );
+
+    const inactiveBand = getByTestId("region-band-r-2");
+    fireEvent.mouseDown(inactiveBand, { clientX: 20, clientY: 10 });
+    fireEvent.click(inactiveBand, { clientX: 40, clientY: 10 });
+
+    expect(onSelectRegion).not.toHaveBeenCalled();
   });
 });
 

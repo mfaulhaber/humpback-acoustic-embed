@@ -1,3 +1,4 @@
+import { useRef, type MouseEvent as ReactMouseEvent } from "react";
 import type { Region } from "@/api/types";
 import { useOverlayContext } from "./OverlayContext";
 
@@ -7,8 +8,33 @@ interface RegionBandOverlayProps {
   onSelectRegion: (regionId: string) => void;
 }
 
+const CLICK_DRAG_TOLERANCE_PX = 4;
+
 export function RegionBandOverlay({ regions, activeRegionId, onSelectRegion }: RegionBandOverlayProps) {
   const { viewStart, viewEnd, pxPerSec, canvasHeight } = useOverlayContext();
+  const pointerDownRef = useRef<{ clientX: number; clientY: number } | null>(null);
+
+  const handleMouseDown = (event: ReactMouseEvent<HTMLDivElement>) => {
+    pointerDownRef.current = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+  };
+
+  const handleRegionClick = (
+    event: ReactMouseEvent<HTMLDivElement>,
+    regionId: string,
+  ) => {
+    event.stopPropagation();
+    const start = pointerDownRef.current;
+    pointerDownRef.current = null;
+    if (start) {
+      const dx = event.clientX - start.clientX;
+      const dy = event.clientY - start.clientY;
+      if (Math.hypot(dx, dy) > CLICK_DRAG_TOLERANCE_PX) return;
+    }
+    onSelectRegion(regionId);
+  };
 
   return (
     <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
@@ -38,14 +64,13 @@ export function RegionBandOverlay({ regions, activeRegionId, onSelectRegion }: R
               cursor: isActive ? "default" : "pointer",
               zIndex: 1,
             }}
+            onMouseDown={isActive ? undefined : handleMouseDown}
             onClick={
               isActive
                 ? undefined
-                : (e) => {
-                    e.stopPropagation();
-                    onSelectRegion(r.region_id);
-                  }
+                : (e) => handleRegionClick(e, r.region_id)
             }
+            data-testid={`region-band-${r.region_id}`}
           >
             <span
               style={{
