@@ -781,7 +781,7 @@ export function ClassifyReviewWorkspace({
     const latestStart = Math.max(regionStartEpoch, regionEndEpoch - 0.1);
     const playStart = Math.min(Math.max(rawStart, regionStartEpoch), latestStart);
     const duration = Math.min(Math.max(regionEndEpoch - playStart, 0.1), 30);
-    playbackRef.current?.play(playStart, duration);
+    playbackRef.current?.play(playStart, duration, { scrollOnPlayback: true });
   }, [currentRegion, viewStart, viewSpan, regionEpoch]);
 
   const togglePlayback = useCallback(() => {

@@ -1,5 +1,5 @@
 import { createContext, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useReducer, useRef } from "react";
-import type { TimelineContextValue, TimelinePlaybackHandle, TimelineProviderProps, ZoomPreset } from "./types";
+import type { TimelineContextValue, TimelinePlaybackHandle, TimelinePlayOptions, TimelineProviderProps, ZoomPreset } from "./types";
 import { usePlayback } from "./usePlayback";
 
 export const TimelineContext = createContext<TimelineContextValue | null>(null);
@@ -160,6 +160,13 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
 
   const onPlayStateChangeRef = useRef(onPlayStateChange);
   onPlayStateChangeRef.current = onPlayStateChange;
+  const scrollOnPlaybackRef = useRef(scrollOnPlayback);
+  scrollOnPlaybackRef.current = scrollOnPlayback;
+  const playbackScrollOverrideRef = useRef<boolean | null>(null);
+  const shouldScrollOnPlayback = useCallback(
+    () => playbackScrollOverrideRef.current ?? scrollOnPlaybackRef.current,
+    [],
+  );
 
   const playbackHandle = usePlayback({
     mode: playbackMode,
@@ -167,11 +174,12 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
     speed: state.speed,
     onTimeUpdate: (epoch) => {
       dispatch({ type: "SET_PLAYBACK_EPOCH", epoch });
-      if (scrollOnPlayback) {
+      if (shouldScrollOnPlayback()) {
         dispatch({ type: "PAN", center: clampCenter(epoch) });
       }
     },
     onEnded: () => {
+      playbackScrollOverrideRef.current = null;
       dispatch({ type: "SET_PLAYING", playing: false });
       dispatch({ type: "SET_PLAYBACK_EPOCH", epoch: null });
       onPlayStateChangeRef.current?.(false);
@@ -179,18 +187,23 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
   });
 
   const play = useCallback(
-    (startEpoch?: number, duration?: number) => {
+    (startEpoch?: number, duration?: number, options?: TimelinePlayOptions) => {
       const start = startEpoch ?? state.centerTimestamp;
+      playbackScrollOverrideRef.current = options?.scrollOnPlayback ?? null;
       playbackHandle.play(start, duration);
       dispatch({ type: "SET_PLAYING", playing: true });
       dispatch({ type: "SET_PLAYBACK_EPOCH", epoch: start });
+      if (shouldScrollOnPlayback()) {
+        dispatch({ type: "PAN", center: clampCenter(start) });
+      }
       onPlayStateChangeRef.current?.(true);
     },
-    [state.centerTimestamp, playbackHandle],
+    [state.centerTimestamp, playbackHandle, shouldScrollOnPlayback, clampCenter],
   );
 
   const pause = useCallback(() => {
     playbackHandle.pause();
+    playbackScrollOverrideRef.current = null;
     dispatch({ type: "SET_PLAYING", playing: false });
     dispatch({ type: "SET_PLAYBACK_EPOCH", epoch: null });
     onPlayStateChangeRef.current?.(false);
@@ -205,7 +218,7 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
   }, [state.isPlaying, play, pause]);
 
   useImperativeHandle(ref, () => ({
-    play: (startEpoch: number, duration?: number) => play(startEpoch, duration),
+    play: (startEpoch: number, duration?: number, options?: TimelinePlayOptions) => play(startEpoch, duration, options),
     pause,
     seekTo,
     get isPlaying() { return state.isPlaying; },

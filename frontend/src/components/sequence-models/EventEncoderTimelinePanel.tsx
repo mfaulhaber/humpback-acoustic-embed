@@ -260,6 +260,7 @@ function EventEncoderTimelineBody({
     ctx.play(
       ctx.centerTimestamp,
       Math.min(Math.max(ctx.jobEnd - ctx.centerTimestamp, 0.1), 30),
+      { scrollOnPlayback: true },
     );
   }, [ctx, selectedEvent]);
 
