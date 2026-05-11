@@ -14,10 +14,10 @@
 - Modify: `frontend/src/components/call-parsing/ClassifyReviewWorkspace.tsx`
 
 **Acceptance criteria:**
-- [ ] Clicking blank spectrogram space clears the selected event in Segment review without immediately reselecting from the navigation index.
-- [ ] Clicking blank spectrogram space clears the selected event in Classify review instead of ignoring the null selection.
-- [ ] Keyboard, previous/next buttons, and event-bar clicks still select and navigate events.
-- [ ] When no event is selected, toolbar or keyboard playback starts from the visible playhead position rather than the old event or the left edge of the view.
+- [x] Clicking blank spectrogram space clears the selected event in Segment review without immediately reselecting from the navigation index.
+- [x] Clicking blank spectrogram space clears the selected event in Classify review instead of ignoring the null selection.
+- [x] Keyboard, previous/next buttons, and event-bar clicks still select and navigate events.
+- [x] When no event is selected, toolbar or keyboard playback starts from the visible playhead position rather than the old event or the left edge of the view.
 
 **Tests needed:**
 - Add focused component coverage for blank-click deselection or playback prop behavior where feasible.
@@ -33,10 +33,10 @@
 - Modify: `frontend/src/components/sequence-models/EventEncoderTokenOverlay.test.tsx`
 
 **Acceptance criteria:**
-- [ ] Clicking blank token timeline space clears the selected token/event.
-- [ ] Cleared selection persists until the user selects a token/event or navigates to one.
-- [ ] Token-scoped navigation turns off when there is no selected token.
-- [ ] When no token/event is selected, Event Encoder playback starts from the current playhead position.
+- [x] Clicking blank token timeline space clears the selected token/event.
+- [x] Cleared selection persists until the user selects a token/event or navigates to one.
+- [x] Token-scoped navigation turns off when there is no selected token.
+- [x] When no token/event is selected, Event Encoder playback starts from the current playhead position.
 
 **Tests needed:**
 - Extend token overlay tests for blank background deselection.

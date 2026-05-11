@@ -8,7 +8,7 @@ interface EventEncoderTokenOverlayProps {
   events: EventEncoderTimelineEvent[];
   selectedEventId: string | null;
   selectedK: number;
-  onSelectEvent: (eventId: string) => void;
+  onSelectEvent: (eventId: string | null) => void;
 }
 
 const MIN_BAR_WIDTH_PX = 3;
@@ -28,7 +28,12 @@ export function EventEncoderTokenOverlay({
     <div
       className="absolute inset-0"
       data-testid="eej-token-overlay"
-      style={{ pointerEvents: "none" }}
+      style={{ pointerEvents: "auto" }}
+      onClick={(e) => {
+        if (e.target !== e.currentTarget) return;
+        e.stopPropagation();
+        onSelectEvent(null);
+      }}
     >
       {events.map((event) => {
         const x = ctx.epochToX(event.start_timestamp);

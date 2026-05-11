@@ -99,4 +99,13 @@ describe("EventEncoderTokenOverlay", () => {
 
     expect(onSelectEvent).toHaveBeenCalledWith("evt-2");
   });
+
+  it("clears selection when the token overlay background is clicked", () => {
+    const onSelectEvent = vi.fn();
+    const { getByTestId } = renderOverlay(onSelectEvent);
+
+    fireEvent.click(getByTestId("eej-token-overlay"));
+
+    expect(onSelectEvent).toHaveBeenCalledWith(null);
+  });
 });

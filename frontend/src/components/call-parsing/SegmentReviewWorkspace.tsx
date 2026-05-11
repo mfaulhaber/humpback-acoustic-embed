@@ -80,6 +80,7 @@ export function SegmentReviewWorkspace({
 
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [selectionCleared, setSelectionCleared] = useState(false);
   const [addMode, setAddMode] = useState(false);
   const [viewStart, setViewStart] = useState<number | undefined>(undefined);
   const [viewSpan, setViewSpan] = useState(60);
@@ -105,6 +106,7 @@ export function SegmentReviewWorkspace({
   useEffect(() => {
     setPendingCorrections(new Map());
     setSelectedEventId(null);
+    setSelectionCleared(false);
     setCurrentEventIndex(0);
     setAddMode(false);
     setActiveTrainingJobId(null);
@@ -258,10 +260,10 @@ export function SegmentReviewWorkspace({
 
   // Sync selectedEventId with currentNavEvent (one-way: index drives selection)
   useEffect(() => {
-    if (currentNavEvent) {
+    if (currentNavEvent && !selectionCleared) {
       setSelectedEventId(currentNavEvent.eventId);
     }
-  }, [currentNavEvent]);
+  }, [currentNavEvent, selectionCleared]);
 
   // Track whether the region change was caused by event navigation (skip auto-select)
   const regionChangeFromNavRef = useRef(false);
@@ -278,6 +280,7 @@ export function SegmentReviewWorkspace({
     // Find the first navigable event in this region and set the index
     const idx = navigableEvents.findIndex((e) => e.regionId === selectedRegionId);
     if (idx >= 0) {
+      setSelectionCleared(false);
       setCurrentEventIndex(idx);
     } else {
       setSelectedEventId(null);
@@ -289,6 +292,7 @@ export function SegmentReviewWorkspace({
 
   const goPrevEvent = useCallback(() => {
     navDirectionRef.current = "backward";
+    setSelectionCleared(false);
     setCurrentEventIndex((prev) => {
       const next = Math.max(0, prev - 1);
       const event = navigableEvents[next];
@@ -301,6 +305,7 @@ export function SegmentReviewWorkspace({
   }, [navigableEvents, selectedRegionId]);
   const goNextEvent = useCallback(() => {
     navDirectionRef.current = "forward";
+    setSelectionCleared(false);
     setCurrentEventIndex((prev) => {
       const next = Math.min(navigableEvents.length - 1, prev + 1);
       const event = navigableEvents[next];
@@ -465,6 +470,7 @@ export function SegmentReviewWorkspace({
         onSuccess: () => {
           setPendingCorrections(new Map());
           setSelectedEventId(null);
+          setSelectionCleared(true);
         },
       },
     );
@@ -479,18 +485,31 @@ export function SegmentReviewWorkspace({
   const handleCancel = useCallback(() => {
     setPendingCorrections(new Map());
     setSelectedEventId(null);
+    setSelectionCleared(true);
     setAddMode(false);
   }, []);
 
   // Switch region — edits accumulate across regions within the job
   const handleSelectRegion = useCallback((regionId: string) => {
     setAddMode(false);
+    setSelectionCleared(false);
     setSelectedRegionId(regionId);
   }, []);
 
   // Find the selected effective event for the detail panel
   const selectedEvent =
     effectiveEvents.find((e) => e.eventId === selectedEventId) ?? null;
+
+  const playFromPlayhead = useCallback(() => {
+    if (!selectedRegion || !regionEpoch) return;
+    const regionStartEpoch = regionEpoch.toEpoch(selectedRegion.padded_start_sec);
+    const regionEndEpoch = regionEpoch.toEpoch(selectedRegion.padded_end_sec);
+    const rawStart = viewStart !== undefined ? viewStart + viewSpan / 2 : regionStartEpoch;
+    const latestStart = Math.max(regionStartEpoch, regionEndEpoch - 0.1);
+    const playStart = Math.min(Math.max(rawStart, regionStartEpoch), latestStart);
+    const duration = Math.min(Math.max(regionEndEpoch - playStart, 0.1), 30);
+    playbackRef.current?.play(playStart, duration);
+  }, [selectedRegion, viewStart, viewSpan, regionEpoch]);
 
   // Keyboard shortcuts
   const togglePlayback = useCallback(() => {
@@ -502,18 +521,10 @@ export function SegmentReviewWorkspace({
         regionEpoch.toEpoch(selectedEvent.startSec),
         duration,
       );
-    } else if (selectedRegion && regionEpoch) {
-      // viewStart is already in epoch space when the timeline is mounted;
-      // padded_start_sec is region-relative and needs translation.
-      const playStart =
-        viewStart ?? regionEpoch.toEpoch(selectedRegion.padded_start_sec);
-      const regionEndEpoch = regionEpoch.toEpoch(
-        selectedRegion.padded_end_sec,
-      );
-      const duration = Math.min(regionEndEpoch - playStart, 30);
-      playbackRef.current?.play(playStart, duration);
+    } else {
+      playFromPlayhead();
     }
-  }, [isPlaying, selectedEvent, selectedRegion, viewStart, regionEpoch]);
+  }, [isPlaying, selectedEvent, regionEpoch, playFromPlayhead]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -708,14 +719,14 @@ export function SegmentReviewWorkspace({
                 playbackRef.current?.pause();
                 return;
               }
-              if (!selectedRegion) return;
-              const playStart =
-                viewStart ?? regionEpoch.toEpoch(selectedRegion.padded_start_sec);
-              const regionEndEpoch = regionEpoch.toEpoch(
-                selectedRegion.padded_end_sec,
-              );
-              const duration = Math.min(regionEndEpoch - playStart, 30);
-              playbackRef.current?.play(playStart, duration);
+              if (selectedEvent) {
+                playbackRef.current?.play(
+                  regionEpoch.toEpoch(selectedEvent.startSec),
+                  selectedEvent.endSec - selectedEvent.startSec,
+                );
+                return;
+              }
+              playFromPlayhead();
             }}
             hasCorrections={hasCorrections}
             onRetrain={handleRetrain}
@@ -758,6 +769,12 @@ export function SegmentReviewWorkspace({
               regionEvents={regionEvents}
               selectedEventId={selectedEventId}
               onSelectEvent={(eventId) => {
+                if (eventId === null) {
+                  setSelectionCleared(true);
+                  setSelectedEventId(null);
+                  return;
+                }
+                setSelectionCleared(false);
                 setSelectedEventId(eventId);
                 const idx = navigableEvents.findIndex((e) => e.eventId === eventId);
                 if (idx >= 0) setCurrentEventIndex(idx);
