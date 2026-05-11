@@ -958,9 +958,6 @@ function SegmentViewerBody({
     return () => window.removeEventListener("keydown", handleKey);
   }, [ctxZoomIn, ctxZoomOut, ctxPan, ctxCenter, ctxSpan]);
 
-  // Show region bands at wide zoom (1m or 5m)
-  const showBands = ctx.activePreset.key === "5m" || ctx.activePreset.key === "1m";
-
   // Translate region/event coordinates from job-relative to absolute epoch
   // before handing them to overlays, which operate in the timeline provider's
   // (now epoch) coordinate space.
@@ -1011,14 +1008,15 @@ function SegmentViewerBody({
             startEpoch={regionStart + region.start_sec}
             endEpoch={regionStart + region.end_sec}
             dimOutside={false}
+            lineColor="rgba(96, 165, 250, 1)"
+            lineStyle="solid"
+            lineWidth={3}
           />
-          {showBands && (
-            <RegionBandOverlay
-              regions={regionsEpoch}
-              activeRegionId={selectedRegionId}
-              onSelectRegion={onSelectRegion}
-            />
-          )}
+          <RegionBandOverlay
+            regions={regionsEpoch}
+            activeRegionId={selectedRegionId}
+            onSelectRegion={onSelectRegion}
+          />
           <EventBarOverlay
             events={regionEventsEpoch}
             selectedEventId={selectedEventId}

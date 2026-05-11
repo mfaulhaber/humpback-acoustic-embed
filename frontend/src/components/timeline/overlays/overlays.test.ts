@@ -159,7 +159,7 @@ describe("RegionBandOverlay", () => {
     expect(onSelectRegion).toHaveBeenCalledWith("r-2");
   });
 
-  it("renders transparent region boxes with a stronger active border", () => {
+  it("renders transparent region boxes with thick visible borders", () => {
     const { getByTestId } = render(
       React.createElement(
         OverlayContext.Provider,
@@ -177,8 +177,10 @@ describe("RegionBandOverlay", () => {
 
     expect(activeBand.style.background).toBe("transparent");
     expect(inactiveBand.style.background).toBe("transparent");
-    expect(activeBand.style.border).toContain("3px solid");
-    expect(inactiveBand.style.border).toContain("1.5px solid");
+    expect(activeBand.style.border).toContain("5px solid");
+    expect(inactiveBand.style.border).toContain("3px solid");
+    expect(activeBand.style.boxSizing).toBe("border-box");
+    expect(inactiveBand.style.boxSizing).toBe("border-box");
   });
 
   it("does not select a region when the pointer moved like a pan gesture", () => {

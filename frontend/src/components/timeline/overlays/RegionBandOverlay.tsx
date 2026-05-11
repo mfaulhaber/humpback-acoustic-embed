@@ -9,6 +9,8 @@ interface RegionBandOverlayProps {
 }
 
 const CLICK_DRAG_TOLERANCE_PX = 4;
+const ACTIVE_REGION_BORDER = "5px solid rgba(59, 130, 246, 1)";
+const INACTIVE_REGION_BORDER = "3px solid rgba(226, 232, 240, 0.95)";
 
 export function RegionBandOverlay({ regions, activeRegionId, onSelectRegion }: RegionBandOverlayProps) {
   const { viewStart, viewEnd, pxPerSec, canvasHeight } = useOverlayContext();
@@ -58,9 +60,11 @@ export function RegionBandOverlay({ regions, activeRegionId, onSelectRegion }: R
               width: w,
               height: canvasHeight,
               background: "transparent",
-              border: isActive
-                ? "3px solid rgba(59, 130, 246, 0.95)"
-                : "1.5px solid rgba(148, 163, 184, 0.75)",
+              border: isActive ? ACTIVE_REGION_BORDER : INACTIVE_REGION_BORDER,
+              boxSizing: "border-box",
+              boxShadow: isActive
+                ? "0 0 0 1px rgba(15, 23, 42, 0.9)"
+                : "0 0 0 1px rgba(15, 23, 42, 0.7)",
               pointerEvents: isActive ? "none" : "auto",
               cursor: isActive ? "default" : "pointer",
               zIndex: 1,

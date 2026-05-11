@@ -87,10 +87,16 @@ vi.mock("@/components/timeline/spectrogram/Spectrogram", () => ({
 }));
 
 vi.mock("@/components/timeline/overlays/RegionBoundaryMarkers", () => ({
-  RegionBoundaryMarkers: (props: { dimOutside?: boolean }) => (
+  RegionBoundaryMarkers: (props: {
+    dimOutside?: boolean;
+    lineStyle?: string;
+    lineWidth?: number;
+  }) => (
     <div
       data-testid="region-boundary-markers"
       data-dim-outside={String(props.dimOutside)}
+      data-line-style={props.lineStyle ?? ""}
+      data-line-width={String(props.lineWidth ?? "")}
     />
   ),
 }));
@@ -346,6 +352,35 @@ describe("SegmentReviewWorkspace — epoch wiring", () => {
         .getByTestId("region-boundary-markers")
         .getAttribute("data-dim-outside"),
     ).toBe("false");
+    expect(
+      screen
+        .getByTestId("region-boundary-markers")
+        .getAttribute("data-line-style"),
+    ).toBe("solid");
+    expect(
+      screen
+        .getByTestId("region-boundary-markers")
+        .getAttribute("data-line-width"),
+    ).toBe("3");
+  });
+
+  it.each([
+    { key: "5m", span: 300, tileDuration: 50 },
+    { key: "1m", span: 60, tileDuration: 10 },
+    { key: "30s", span: 30, tileDuration: 5 },
+    { key: "10s", span: 10, tileDuration: 2 },
+  ])("renders all-region borders at $key zoom", (preset) => {
+    mockTimelineContext.viewportSpan = preset.span;
+    mockTimelineContext.activePreset = preset;
+    mockTimelineContext.viewStart = REGION_EPOCH_BASE + 150 - preset.span / 2;
+    mockTimelineContext.viewEnd = REGION_EPOCH_BASE + 150 + preset.span / 2;
+    setupHooks({
+      regionJob: makeRegionJob(),
+      regions: defaultRegions,
+    });
+    render(<SegmentReviewWorkspace initialJobId={SEG_JOB_ID} />);
+
+    expect(screen.getByTestId("region-band-overlay")).toBeTruthy();
   });
 
   it("keeps selection cleared after a blank timeline click", async () => {
