@@ -12,8 +12,9 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.call_parsing.storage import (
@@ -37,6 +38,10 @@ logger = logging.getLogger(__name__)
 MAX_CROP_SEC: float = 30.0
 CROP_HOP_SEC: float = 15.0
 
+CorrectionResolutionMode = Literal[
+    "scoped", "legacy_unambiguous", "legacy_ambiguous", "none"
+]
+
 
 @dataclass
 class CorrectedSample:
@@ -48,6 +53,24 @@ class CorrectedSample:
     crop_start_sec: float
     crop_end_sec: float
     events_json: str
+
+
+@dataclass
+class TrainingCorrectionResolution:
+    """Boundary corrections selected for one segmentation training source."""
+
+    corrections: list[EventBoundaryCorrection]
+    mode: CorrectionResolutionMode
+    skipped_reason: str | None = None
+
+
+@dataclass
+class CorrectedSampleCollection:
+    """Training samples plus correction-resolution provenance."""
+
+    samples: list[CorrectedSample]
+    correction_mode: CorrectionResolutionMode
+    skipped_reason: str | None = None
 
 
 def apply_corrections(
@@ -364,12 +387,70 @@ def subdivide_region(
     return samples
 
 
+async def resolve_training_corrections(
+    session: AsyncSession,
+    region_detection_job_id: str,
+    segmentation_job_id: str,
+) -> TrainingCorrectionResolution:
+    """Resolve boundary corrections for a segmentation training source.
+
+    Modern segmentation-scoped corrections are authoritative.  Legacy
+    region-scoped corrections are only safe to use when the Pass 1 region job
+    has a single Pass 2 segmentation job, so the historical correction intent is
+    unambiguous.
+    """
+    scoped_result = await session.execute(
+        select(EventBoundaryCorrection)
+        .where(EventBoundaryCorrection.event_segmentation_job_id == segmentation_job_id)
+        .order_by(EventBoundaryCorrection.created_at, EventBoundaryCorrection.id)
+    )
+    scoped = list(scoped_result.scalars().all())
+    if scoped:
+        return TrainingCorrectionResolution(corrections=scoped, mode="scoped")
+
+    legacy_result = await session.execute(
+        select(EventBoundaryCorrection)
+        .where(
+            EventBoundaryCorrection.region_detection_job_id == region_detection_job_id,
+            EventBoundaryCorrection.event_segmentation_job_id.is_(None),
+        )
+        .order_by(EventBoundaryCorrection.created_at, EventBoundaryCorrection.id)
+    )
+    legacy = list(legacy_result.scalars().all())
+    if not legacy:
+        return TrainingCorrectionResolution(
+            corrections=[],
+            mode="none",
+            skipped_reason="no usable boundary corrections",
+        )
+
+    segmentation_job_count = await session.scalar(
+        select(func.count(EventSegmentationJob.id)).where(
+            EventSegmentationJob.region_detection_job_id == region_detection_job_id
+        )
+    )
+    if segmentation_job_count == 1:
+        return TrainingCorrectionResolution(
+            corrections=legacy,
+            mode="legacy_unambiguous",
+        )
+
+    return TrainingCorrectionResolution(
+        corrections=[],
+        mode="legacy_ambiguous",
+        skipped_reason=(
+            "legacy region-scoped corrections are ambiguous because the "
+            "region detection job has multiple segmentation jobs"
+        ),
+    )
+
+
 async def collect_corrected_samples(
     session: AsyncSession,
     region_detection_job_id: str,
     segmentation_job_id: str,
     storage_root: Path,
-) -> list[CorrectedSample]:
+) -> CorrectedSampleCollection:
     """Collect training samples from corrected regions.
 
     Queries corrections by *region_detection_job_id*, reads events from
@@ -397,10 +478,18 @@ async def collect_corrected_samples(
         logger.warning(
             "events.parquet missing for segmentation job %s", segmentation_job_id
         )
-        return []
+        return CorrectedSampleCollection(
+            samples=[],
+            correction_mode="none",
+            skipped_reason="events.parquet missing",
+        )
     if not regions_path.exists():
         logger.warning("regions.parquet missing for region job %s", upstream.id)
-        return []
+        return CorrectedSampleCollection(
+            samples=[],
+            correction_mode="none",
+            skipped_reason="regions.parquet missing",
+        )
 
     all_events = read_events(events_path)
     all_regions = read_regions(regions_path)
@@ -410,14 +499,20 @@ async def collect_corrected_samples(
     for e in all_events:
         events_by_region[e.region_id].append(e)
 
-    corr_result = await session.execute(
-        select(EventBoundaryCorrection).where(
-            EventBoundaryCorrection.event_segmentation_job_id == segmentation_job_id
-        )
+    resolution = await resolve_training_corrections(
+        session,
+        region_detection_job_id=region_detection_job_id,
+        segmentation_job_id=segmentation_job_id,
     )
-    corrections = list(corr_result.scalars().all())
+    if not resolution.corrections:
+        return CorrectedSampleCollection(
+            samples=[],
+            correction_mode=resolution.mode,
+            skipped_reason=resolution.skipped_reason,
+        )
+
     corrections_by_region: dict[str, list[EventBoundaryCorrection]] = defaultdict(list)
-    for c in corrections:
+    for c in resolution.corrections:
         corrections_by_region[c.region_id].append(c)
 
     samples: list[CorrectedSample] = []
@@ -439,4 +534,14 @@ async def collect_corrected_samples(
             )
         )
 
-    return samples
+    if not samples:
+        return CorrectedSampleCollection(
+            samples=[],
+            correction_mode=resolution.mode,
+            skipped_reason="no corrected regions matched available region artifacts",
+        )
+
+    return CorrectedSampleCollection(
+        samples=samples,
+        correction_mode=resolution.mode,
+    )

@@ -1097,7 +1097,7 @@ async def _seed_training_samples(app_settings, dataset_id: str, count: int) -> N
     try:
         session_factory = create_session_factory(engine)
         async with session_factory() as session:
-            for _ in range(count):
+            for idx in range(count):
                 session.add(
                     SegmentationTrainingSample(
                         training_dataset_id=dataset_id,
@@ -1106,6 +1106,7 @@ async def _seed_training_samples(app_settings, dataset_id: str, count: int) -> N
                         crop_end_sec=10.0,
                         events_json="[]",
                         source="test",
+                        source_ref=f"source-{idx % 2}",
                     )
                 )
             await session.commit()
@@ -1136,6 +1137,7 @@ async def test_list_segmentation_training_datasets_with_counts(
     match = next(d for d in data if d["id"] == ds_id)
     assert match["name"] == "router-test-dataset"
     assert match["sample_count"] == 5
+    assert match["source_job_count"] == 2
     assert "created_at" in match
 
 

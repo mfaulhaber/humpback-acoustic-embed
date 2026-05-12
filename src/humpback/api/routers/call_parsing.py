@@ -56,6 +56,7 @@ from humpback.schemas.call_parsing import (
     SegmentationJobWithCorrectionCount,
     SegmentationModelResponse,
     SegmentationTrainingDatasetSummary,
+    SkippedDatasetSourceResponse,
     VocalizationCorrectionRequest,
     VocalizationCorrectionResponse,
     WindowClassificationJobSummary,
@@ -688,7 +689,7 @@ async def create_dataset_from_corrections(
     settings: SettingsDep,
 ):
     try:
-        dataset, sample_count = await service.create_dataset_from_corrections(
+        result = await service.create_dataset_from_corrections(
             session,
             segmentation_job_ids=request.segmentation_job_ids,
             settings=settings,
@@ -701,10 +702,21 @@ async def create_dataset_from_corrections(
             raise HTTPException(status_code=404, detail=msg) from exc
         raise HTTPException(status_code=400, detail=msg) from exc
     return CreateDatasetFromCorrectionsResponse(
-        id=dataset.id,
-        name=dataset.name,
-        sample_count=sample_count,
-        created_at=dataset.created_at,
+        id=result.dataset.id,
+        name=result.dataset.name,
+        sample_count=result.sample_count,
+        selected_job_count=result.selected_job_count,
+        source_job_count=result.source_job_count,
+        skipped_job_count=result.skipped_job_count,
+        skipped_jobs=[
+            SkippedDatasetSourceResponse(
+                segmentation_job_id=skipped.segmentation_job_id,
+                reason=skipped.reason,
+                correction_mode=skipped.correction_mode,
+            )
+            for skipped in result.skipped_jobs
+        ],
+        created_at=result.dataset.created_at,
     )
 
 

@@ -14,6 +14,9 @@
   inference artifacts.
 - New downstream consumers must choose raw events or effective events
   explicitly.
+- Segment Training dataset extraction uses segmentation-scoped boundary
+  corrections first, and may include legacy region-scoped boundary corrections
+  only when one Pass 2 segmentation job exists for the Pass 1 region job.
 - Boundary corrections must not create overlapping effective events within the
   same segmentation job and region.
 - Event type corrections are single-label at the event level.
