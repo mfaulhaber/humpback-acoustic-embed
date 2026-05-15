@@ -17,7 +17,7 @@ const event: EffectiveEvent = {
 };
 
 describe("EventDetailPanel", () => {
-  it("confirms before marking an event for deletion", () => {
+  it("marks an event for deletion immediately", () => {
     const onDelete = vi.fn();
     render(
       <EventDetailPanel
@@ -30,11 +30,7 @@ describe("EventDetailPanel", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Delete Event" }));
-    expect(screen.getByRole("heading", { name: "Delete event" })).toBeTruthy();
-    expect(screen.getByText(/Mark event/).textContent ?? "").toContain("ev-1");
-    expect(onDelete).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     expect(onDelete).toHaveBeenCalledWith("ev-1");
+    expect(screen.queryByRole("heading", { name: "Delete event" })).toBeNull();
   });
 });

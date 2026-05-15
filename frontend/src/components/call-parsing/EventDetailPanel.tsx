@@ -1,5 +1,5 @@
 import { formatRecordingTime } from "@/utils/format";
-import { DeleteConfirmButton } from "@/components/shared/DeleteConfirmationDialog";
+import { DeleteActionButton } from "@/components/shared/DeleteConfirmationDialog";
 import type { EffectiveEvent } from "@/components/timeline/overlays/EventBarOverlay";
 
 interface EventDetailPanelProps {
@@ -98,25 +98,13 @@ export function EventDetailPanel({
               Undo Delete
             </button>
           ) : (
-            <DeleteConfirmButton
+            <DeleteActionButton
               size="sm"
               className="h-8 px-3 text-xs"
-              resourceType="event"
-              resourceName={event.eventId}
-              confirmationText={
-                <>
-                  Mark event{" "}
-                  <strong className="font-semibold text-foreground">
-                    {event.eventId}
-                  </strong>{" "}
-                  for deletion?
-                </>
-              }
-              consequence="This event will be marked as deleted in pending corrections. Save the corrections to apply it to effective event readers."
-              onConfirm={() => onDelete(event.eventId)}
+              onClick={() => onDelete(event.eventId)}
             >
               Delete Event
-            </DeleteConfirmButton>
+            </DeleteActionButton>
           )}
         </div>
       </div>

@@ -14,10 +14,10 @@
 - Modify: `frontend/src/components/call-parsing/EventDetailPanel.test.tsx`
 
 **Acceptance criteria:**
-- [ ] The segmentation detail event panel Delete Event action calls the pending delete handler directly.
-- [ ] Undo Delete remains available for pending deleted events.
-- [ ] No shared delete confirmation dialog is shown for this pending correction flow.
-- [ ] The focused component test documents immediate pending-delete behavior.
+- [x] The segmentation detail event panel Delete Event action calls the pending delete handler directly.
+- [x] Undo Delete remains available for pending deleted events.
+- [x] No shared delete confirmation dialog is shown for this pending correction flow.
+- [x] The focused component test documents immediate pending-delete behavior.
 
 **Tests needed:**
 - Update the focused EventDetailPanel component test for immediate delete behavior.
