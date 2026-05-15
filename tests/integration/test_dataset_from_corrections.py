@@ -25,6 +25,7 @@ from humpback.models.segmentation_training import (
     SegmentationTrainingDataset,
     SegmentationTrainingSample,
 )
+from humpback.schemas.call_parsing import SegmentationTrainingConfig
 from humpback.storage import ensure_dir
 
 BASE = "/call-parsing"
@@ -667,6 +668,148 @@ async def test_create_training_job_from_dataset(client: AsyncClient, app_setting
     assert data["training_dataset_id"] == dataset_id
     assert data["status"] == "queued"
     assert "id" in data
+
+
+@pytest.mark.asyncio
+async def test_create_training_job_from_segmentation_jobs(
+    client: AsyncClient, app_settings
+):
+    """POST /segmentation-training-jobs can build the dataset internally."""
+    seg_job_id, _ = await _seed_job_with_corrections(app_settings)
+
+    resp = await client.post(
+        f"{BASE}/segmentation-training-jobs",
+        json={"segmentation_job_ids": [seg_job_id]},
+    )
+
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["status"] == "queued"
+    assert data["training_dataset_id"]
+    assert data["segmentation_model_id"] is None
+
+    engine = create_engine(app_settings.database_url)
+    try:
+        sf = create_session_factory(engine)
+        async with sf() as session:
+            dataset = await session.get(
+                SegmentationTrainingDataset, data["training_dataset_id"]
+            )
+            assert dataset is not None
+
+            from sqlalchemy import select
+
+            samples_result = await session.execute(
+                select(SegmentationTrainingSample).where(
+                    SegmentationTrainingSample.training_dataset_id
+                    == data["training_dataset_id"]
+                )
+            )
+            samples = list(samples_result.scalars().all())
+            assert samples
+            assert {s.source_ref for s in samples} == {seg_job_id}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_list_segmentation_training_jobs(client: AsyncClient, app_settings):
+    seg_job_id, _ = await _seed_job_with_corrections(app_settings)
+    create_resp = await client.post(
+        f"{BASE}/segmentation-training-jobs",
+        json={"segmentation_job_ids": [seg_job_id]},
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    created_id = create_resp.json()["id"]
+
+    resp = await client.get(f"{BASE}/segmentation-training-jobs")
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data
+    assert data[0]["id"] == created_id
+    assert data[0]["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_create_training_job_rejects_missing_source(client: AsyncClient):
+    resp = await client.post(f"{BASE}/segmentation-training-jobs", json={})
+
+    assert resp.status_code == 422
+    assert "exactly one" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_create_training_job_rejects_multiple_sources(
+    client: AsyncClient, app_settings
+):
+    seg_job_id, _ = await _seed_job_with_corrections(app_settings)
+
+    resp = await client.post(
+        f"{BASE}/segmentation-training-jobs",
+        json={
+            "training_dataset_id": "dataset-1",
+            "segmentation_job_ids": [seg_job_id],
+        },
+    )
+
+    assert resp.status_code == 422
+    assert "exactly one" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_create_training_job_accepts_advanced_config(
+    client: AsyncClient, app_settings
+):
+    seg_job_id, _ = await _seed_job_with_corrections(app_settings)
+
+    resp = await client.post(
+        f"{BASE}/segmentation-training-jobs",
+        json={
+            "segmentation_job_ids": [seg_job_id],
+            "config": {
+                "epochs": 4,
+                "batch_size": 2,
+                "learning_rate": 0.0005,
+                "n_mels": 48,
+                "feature_config": {
+                    "sample_rate": 24000,
+                    "n_fft": 1024,
+                    "hop_length": 256,
+                    "n_mels": 48,
+                    "fmin": 30.0,
+                    "fmax": 5000.0,
+                    "normalize": "per_region_zscore",
+                },
+            },
+        },
+    )
+
+    assert resp.status_code == 201, resp.text
+    config = json.loads(resp.json()["config_json"])
+    assert config["epochs"] == 4
+    assert config["batch_size"] == 2
+    assert config["learning_rate"] == 0.0005
+    assert config["n_mels"] == 48
+    assert config["feature_config"]["sample_rate"] == 24000
+    assert config["feature_config"]["hop_length"] == 256
+
+
+def test_segmentation_training_config_preserves_legacy_flat_n_mels():
+    config = SegmentationTrainingConfig.model_validate({"n_mels": 32})
+
+    assert config.n_mels == 32
+    assert config.feature_config.n_mels == 32
+
+
+def test_segmentation_training_config_rejects_mismatched_feature_n_mels():
+    with pytest.raises(ValueError, match="feature_config.n_mels"):
+        SegmentationTrainingConfig.model_validate(
+            {
+                "n_mels": 64,
+                "feature_config": {"n_mels": 32},
+            }
+        )
 
 
 @pytest.mark.asyncio

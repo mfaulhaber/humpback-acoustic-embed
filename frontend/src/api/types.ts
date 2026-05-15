@@ -1047,6 +1047,16 @@ export interface SegmentationModel {
   created_at: string;
 }
 
+export interface SegmentationFeatureConfig {
+  sample_rate: number;
+  n_fft: number;
+  hop_length: number;
+  n_mels: number;
+  fmin: number;
+  fmax: number;
+  normalize: string;
+}
+
 export interface SegmentationTrainingConfig {
   epochs: number;
   batch_size: number;
@@ -1055,6 +1065,12 @@ export interface SegmentationTrainingConfig {
   early_stopping_patience: number;
   grad_clip: number;
   seed: number;
+  val_fraction: number;
+  n_mels: number;
+  conv_channels: number[];
+  gru_hidden: number;
+  gru_layers: number;
+  feature_config: SegmentationFeatureConfig;
 }
 
 // ---- Multi-job segmentation training ----
@@ -1110,7 +1126,8 @@ export interface SegmentationTrainingDatasetSummary {
 }
 
 export interface CreateSegmentationTrainingJobRequest {
-  training_dataset_id: string;
+  training_dataset_id?: string;
+  segmentation_job_ids?: string[];
   config?: Partial<SegmentationTrainingConfig>;
 }
 

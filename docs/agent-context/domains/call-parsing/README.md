@@ -27,6 +27,13 @@ Call Parsing UI.
 - Segmentation and classifier model artifact roots are referenced by database
   rows and model registry paths.
 
+## Current UI Notes
+
+- Segment Training queues Pass 2 model training directly from selected
+  completed segmentation jobs. Persisted segmentation training datasets remain
+  the internal worker contract, but dataset creation and management are not a
+  visible page step.
+
 ## Likely Neighbors
 
 - `signal-timeline` for audio resolution, playback, and timeline overlays.

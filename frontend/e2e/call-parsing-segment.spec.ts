@@ -111,6 +111,45 @@ const TRAINING_DATASET = {
   created_at: "2026-04-12T06:00:00Z",
 };
 
+const SEG_TRAINING_JOBS = [
+  {
+    id: "stj-queued-1",
+    status: "queued",
+    training_dataset_id: TRAINING_DATASET.id,
+    config_json: JSON.stringify({
+      epochs: 30,
+      batch_size: 16,
+      n_mels: 64,
+      feature_config: { n_mels: 64 },
+    }),
+    segmentation_model_id: null,
+    result_summary: null,
+    error_message: null,
+    created_at: "2026-04-12T07:00:00Z",
+    updated_at: "2026-04-12T07:00:00Z",
+    started_at: null,
+    completed_at: null,
+  },
+  {
+    id: "stj-complete-1",
+    status: "complete",
+    training_dataset_id: TRAINING_DATASET.id,
+    config_json: JSON.stringify({
+      epochs: 20,
+      batch_size: 8,
+      n_mels: 48,
+      feature_config: { n_mels: 48 },
+    }),
+    segmentation_model_id: SEG_MODEL.id,
+    result_summary: null,
+    error_message: null,
+    created_at: "2026-04-11T07:00:00Z",
+    updated_at: "2026-04-11T08:00:00Z",
+    started_at: "2026-04-11T07:01:00Z",
+    completed_at: "2026-04-11T08:00:00Z",
+  },
+];
+
 const SEG_EVENTS = [
   {
     event_id: "ev-1",
@@ -246,6 +285,20 @@ async function setupMocks(page: Page) {
       body: JSON.stringify([TRAINING_DATASET]),
     }),
   );
+  await page.route("**/call-parsing/segmentation-training-jobs", (route) => {
+    if (route.request().method() === "POST") {
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(SEG_TRAINING_JOBS[0]),
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(SEG_TRAINING_JOBS),
+    });
+  });
   await page.route("**/call-parsing/segmentation-jobs/*/events", (route) =>
     route.fulfill({
       status: 200,
@@ -309,10 +362,12 @@ function regionRow(page: Page, timeLabel: string) {
 
 async function deleteSelectedEvent(page: Page) {
   await page.getByRole("button", { name: "Delete Event" }).click();
-  await page
+  const dialogDelete = page
     .getByRole("dialog")
-    .getByRole("button", { name: "Delete" })
-    .click();
+    .getByRole("button", { name: "Delete" });
+  if (await dialogDelete.isVisible({ timeout: 500 }).catch(() => false)) {
+    await dialogDelete.click();
+  }
 }
 
 test.describe("Call Parsing Segment page", () => {
@@ -726,9 +781,11 @@ test.describe("Call Parsing Segment Training page", () => {
     await setupMocks(page);
   });
 
-  test("page loads with models section", async ({ page }) => {
+  test("page loads with models, training, and previous jobs sections", async ({ page }) => {
     await page.goto("/app/call-parsing/segment-training");
     await expect(page.locator("text=Segmentation Models")).toBeVisible();
+    await expect(page.locator("text=Train Segmentation Model")).toBeVisible();
+    await expect(page.locator("text=Previous Jobs")).toBeVisible();
   });
 
   test("models table shows model with metrics", async ({ page }) => {
@@ -740,18 +797,82 @@ test.describe("Call Parsing Segment Training page", () => {
     await expect(row).toContainText("0.73");
   });
 
-  test("dataset creation toast reports contributing and skipped jobs", async ({
+  test("direct training queues from selected segmentation jobs", async ({ page }) => {
+    let requestBody: Record<string, unknown> | null = null;
+    await page.route("**/call-parsing/segmentation-training-jobs", (route) => {
+      if (route.request().method() === "POST") {
+        requestBody = route.request().postDataJSON() as Record<string, unknown>;
+        return route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify(SEG_TRAINING_JOBS[0]),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(SEG_TRAINING_JOBS),
+      });
+    });
+
+    await page.goto("/app/call-parsing/segment-training");
+    await page.getByLabel("Select all training jobs on this page").click();
+    await page.getByRole("button", { name: "Train Model (2 jobs)" }).click();
+
+    await expect(page.getByText("Training job queued")).toBeVisible();
+    expect(requestBody?.segmentation_job_ids).toEqual([
+      "sj-complete-1",
+      "sj-complete-2",
+    ]);
+    expect(requestBody?.training_dataset_id).toBeUndefined();
+  });
+
+  test("advanced options are submitted with the training request", async ({
+    page,
+  }) => {
+    let requestBody: Record<string, any> | null = null;
+    await page.route("**/call-parsing/segmentation-training-jobs", (route) => {
+      if (route.request().method() === "POST") {
+        requestBody = route.request().postDataJSON() as Record<string, any>;
+        return route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify(SEG_TRAINING_JOBS[0]),
+        });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(SEG_TRAINING_JOBS),
+      });
+    });
+
+    await page.goto("/app/call-parsing/segment-training");
+    await page.getByRole("button", { name: "Advanced Options" }).click();
+    await page.getByLabel("Epochs").fill("4");
+    await page.getByLabel("Batch Size").fill("2");
+    await page.getByLabel("Mel Bins").fill("48");
+    await page.getByLabel("Sample Rate").fill("24000");
+    await page.getByLabel("Select segmentation job sj-compl").first().click();
+    await page.getByRole("button", { name: "Train Model (1 job)" }).click();
+
+    expect(requestBody?.config.epochs).toBe(4);
+    expect(requestBody?.config.batch_size).toBe(2);
+    expect(requestBody?.config.n_mels).toBe(48);
+    expect(requestBody?.config.feature_config.n_mels).toBe(48);
+    expect(requestBody?.config.feature_config.sample_rate).toBe(24000);
+  });
+
+  test("previous jobs panel shows queued and completed training jobs", async ({
     page,
   }) => {
     await page.goto("/app/call-parsing/segment-training");
-    await page.getByLabel("Select all on this page").click();
-    await page.getByRole("button", { name: "Create Training Dataset (2 jobs)" }).click();
-
-    await expect(page.getByText("Training dataset created")).toBeVisible();
+    await expect(page.locator("text=Previous Jobs")).toBeVisible();
     await expect(
-      page.getByText(
-        "7 samples from 1 contributing job. 1 selected job had no usable corrections.",
-      ),
+      page.locator("tbody tr").filter({ hasText: "queued" }),
+    ).toBeVisible();
+    await expect(
+      page.locator("tbody tr").filter({ hasText: "complete" }),
     ).toBeVisible();
   });
 });
