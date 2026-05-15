@@ -248,6 +248,32 @@ class SegmentationTrainingConfig(BaseModel):
     conv_channels: list[int] = Field(default_factory=lambda: [32, 64, 96, 128])
     gru_hidden: int = 64
     gru_layers: int = 2
+    feature_config: SegmentationFeatureConfig = Field(
+        default_factory=SegmentationFeatureConfig
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _materialize_feature_config(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+        feature_config = normalized.get("feature_config")
+        flat_n_mels = normalized.get("n_mels")
+
+        if feature_config is None:
+            if flat_n_mels is not None:
+                normalized["feature_config"] = {"n_mels": flat_n_mels}
+            return normalized
+
+        if isinstance(feature_config, dict):
+            nested = dict(feature_config)
+            nested_n_mels = nested.get("n_mels")
+            if flat_n_mels is None and nested_n_mels is not None:
+                normalized["n_mels"] = nested_n_mels
+            normalized["feature_config"] = nested
+        return normalized
 
     @field_validator("val_fraction")
     @classmethod
@@ -255,6 +281,12 @@ class SegmentationTrainingConfig(BaseModel):
         if not 0.0 <= v < 1.0:
             raise ValueError("val_fraction must satisfy 0.0 <= val_fraction < 1.0")
         return v
+
+    @model_validator(mode="after")
+    def _feature_model_mels_match(self) -> "SegmentationTrainingConfig":
+        if self.feature_config.n_mels != self.n_mels:
+            raise ValueError("feature_config.n_mels must match n_mels")
+        return self
 
 
 class SegmentationDecoderConfig(BaseModel):
@@ -283,10 +315,21 @@ class SegmentationDecoderConfig(BaseModel):
 class CreateSegmentationTrainingJobRequest(BaseModel):
     """Request body for ``POST /call-parsing/segmentation-training-jobs``."""
 
-    training_dataset_id: str
+    training_dataset_id: Optional[str] = None
+    segmentation_job_ids: Optional[list[str]] = Field(default=None, min_length=1)
     config: SegmentationTrainingConfig = Field(
         default_factory=SegmentationTrainingConfig
     )
+
+    @model_validator(mode="after")
+    def _exactly_one_source(self) -> "CreateSegmentationTrainingJobRequest":
+        has_dataset = self.training_dataset_id is not None
+        has_segmentation_jobs = self.segmentation_job_ids is not None
+        if has_dataset == has_segmentation_jobs:
+            raise ValueError(
+                "Provide exactly one of training_dataset_id or segmentation_job_ids"
+            )
+        return self
 
 
 class CreateSegmentationJobRequest(BaseModel):

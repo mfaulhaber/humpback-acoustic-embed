@@ -915,6 +915,9 @@ export const createSegmentationTrainingJob = (
     body,
   );
 
+export const fetchSegmentationTrainingJobs = () =>
+  api<SegmentationTrainingJob[]>("/call-parsing/segmentation-training-jobs");
+
 export const quickRetrain = (body: QuickRetrainRequest) =>
   post<QuickRetrainResponse>(
     "/call-parsing/segmentation-training/quick-retrain",

@@ -16,12 +16,12 @@
 - Modify: `tests/integration/test_dataset_from_corrections.py`
 
 **Acceptance criteria:**
-- [ ] `SegmentationTrainingConfig` supports nested feature extraction defaults while preserving existing flat config JSON compatibility.
-- [ ] `CreateSegmentationTrainingJobRequest` accepts exactly one source mode: existing `training_dataset_id` or new `segmentation_job_ids`.
-- [ ] `POST /call-parsing/segmentation-training-jobs` can create a dataset internally from selected segmentation jobs and queue a training job.
-- [ ] `GET /call-parsing/segmentation-training-jobs` lists training jobs newest first.
-- [ ] Existing dataset-based job creation still works.
-- [ ] Invalid source-mode combinations return validation errors before service work.
+- [x] `SegmentationTrainingConfig` supports nested feature extraction defaults while preserving existing flat config JSON compatibility.
+- [x] `CreateSegmentationTrainingJobRequest` accepts exactly one source mode: existing `training_dataset_id` or new `segmentation_job_ids`.
+- [x] `POST /call-parsing/segmentation-training-jobs` can create a dataset internally from selected segmentation jobs and queue a training job.
+- [x] `GET /call-parsing/segmentation-training-jobs` lists training jobs newest first.
+- [x] Existing dataset-based job creation still works.
+- [x] Invalid source-mode combinations return validation errors before service work.
 
 **Tests needed:**
 - Router coverage for direct job creation, dataset-based compatibility, list jobs, invalid source modes, and advanced config override serialization.
@@ -35,10 +35,10 @@
 - Modify: `tests/integration/test_dataset_from_corrections.py` or matching worker test if one exists
 
 **Acceptance criteria:**
-- [ ] The worker reads `training_config.feature_config` instead of reconstructing feature config from only `n_mels`.
-- [ ] Model checkpoint/config payloads preserve the effective feature config used during training.
-- [ ] Old training job config JSON remains loadable.
-- [ ] Mismatched model/feature `n_mels` is rejected by schema validation.
+- [x] The worker reads `training_config.feature_config` instead of reconstructing feature config from only `n_mels`.
+- [x] Model checkpoint/config payloads preserve the effective feature config used during training.
+- [x] Old training job config JSON remains loadable.
+- [x] Mismatched model/feature `n_mels` is rejected by schema validation.
 
 **Tests needed:**
 - Schema or worker-level coverage proving nested feature config is accepted and legacy config JSON is normalized.
@@ -60,12 +60,12 @@
 - Modify: `frontend/e2e/call-parsing-segment.spec.ts`
 
 **Acceptance criteria:**
-- [ ] Segment Training page renders models first, the direct training form second, and previous jobs after that.
-- [ ] Training form selects completed segmentation jobs and posts `segmentation_job_ids` directly to the training jobs endpoint.
-- [ ] Training-dataset creation and management UI is no longer visible on the page.
-- [ ] Advanced options expose feature, optimizer, split, and architecture defaults.
-- [ ] Previous jobs panel displays queued, running, complete, and failed jobs with appropriate status badges.
-- [ ] Query invalidation/polling makes newly queued jobs appear immediately and completed models refresh.
+- [x] Segment Training page renders models first, the direct training form second, and previous jobs after that.
+- [x] Training form selects completed segmentation jobs and posts `segmentation_job_ids` directly to the training jobs endpoint.
+- [x] Training-dataset creation and management UI is no longer visible on the page.
+- [x] Advanced options expose feature, optimizer, split, and architecture defaults.
+- [x] Previous jobs panel displays queued, running, complete, and failed jobs with appropriate status badges.
+- [x] Query invalidation/polling makes newly queued jobs appear immediately and completed models refresh.
 
 **Tests needed:**
 - Update Playwright coverage for the new layout, direct training submit, advanced options, and previous jobs status.
@@ -81,8 +81,8 @@
 - Modify: `docs/agent-context/domains/call-parsing/tests.md` if targeted frontend tests change names or scope
 
 **Acceptance criteria:**
-- [ ] Domain-local context records that Segment Training now trains directly from selected segmentation jobs while persisting datasets internally.
-- [ ] Existing correction and immutable artifact invariants remain intact.
+- [x] Domain-local context records that Segment Training now trains directly from selected segmentation jobs while persisting datasets internally.
+- [x] Existing correction and immutable artifact invariants remain intact.
 
 **Tests needed:**
 - Documentation-only changes do not require targeted tests beyond the task-level code verification already listed.

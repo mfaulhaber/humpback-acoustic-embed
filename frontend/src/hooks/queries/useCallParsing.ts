@@ -21,6 +21,7 @@ import {
   deleteSegmentationTrainingDataset,
   createDatasetFromCorrections,
   createSegmentationTrainingJob,
+  fetchSegmentationTrainingJobs,
   quickRetrain,
   fetchClassificationJobs,
   createClassificationJob,
@@ -272,10 +273,11 @@ const SEG_CORRECTION_COUNTS_KEY = ["segmentation-jobs-correction-counts"];
 const SEG_TRAINING_DATASETS_KEY = ["segmentation-training-datasets"];
 const SEG_TRAINING_JOBS_KEY = ["segmentation-training-jobs"];
 
-export function useSegmentationJobsWithCorrectionCounts() {
+export function useSegmentationJobsWithCorrectionCounts(refetchInterval?: number) {
   return useQuery({
     queryKey: SEG_CORRECTION_COUNTS_KEY,
     queryFn: fetchSegmentationJobsWithCorrectionCounts,
+    refetchInterval,
   });
 }
 
@@ -316,7 +318,16 @@ export function useCreateSegmentationTrainingJob() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: SEG_TRAINING_JOBS_KEY });
       qc.invalidateQueries({ queryKey: SEG_MODELS_KEY });
+      qc.invalidateQueries({ queryKey: SEG_TRAINING_DATASETS_KEY });
     },
+  });
+}
+
+export function useSegmentationTrainingJobs(refetchInterval?: number) {
+  return useQuery({
+    queryKey: SEG_TRAINING_JOBS_KEY,
+    queryFn: fetchSegmentationTrainingJobs,
+    refetchInterval,
   });
 }
 

@@ -770,6 +770,18 @@ async def list_segmentation_training_datasets(session: AsyncSession):
     return [row._asdict() for row in result.all()]
 
 
+async def list_segmentation_training_jobs(session: AsyncSession):
+    """List segmentation training jobs newest first."""
+    from humpback.models.segmentation_training import SegmentationTrainingJob
+
+    result = await session.execute(
+        select(SegmentationTrainingJob).order_by(
+            SegmentationTrainingJob.created_at.desc()
+        )
+    )
+    return list(result.scalars().all())
+
+
 async def delete_segmentation_training_dataset(
     session: AsyncSession, training_dataset_id: str
 ) -> bool:
@@ -1555,6 +1567,25 @@ async def create_segmentation_training_job(
     session.add(job)
     await session.commit()
     return job
+
+
+async def create_segmentation_training_job_from_segmentation_jobs(
+    session: AsyncSession,
+    segmentation_job_ids: list[str],
+    settings: Settings,
+    config: "SegmentationTrainingConfig | None" = None,  # noqa: F821
+):
+    """Create a correction-backed dataset internally and queue training."""
+    dataset_result = await create_dataset_from_corrections(
+        session,
+        segmentation_job_ids=segmentation_job_ids,
+        settings=settings,
+    )
+    return await create_segmentation_training_job(
+        session,
+        training_dataset_id=dataset_result.dataset.id,
+        config=config,
+    )
 
 
 async def create_dataset_and_train(

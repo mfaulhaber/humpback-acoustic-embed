@@ -33,7 +33,6 @@ from humpback.models.segmentation_training import (
 )
 from humpback.schemas.call_parsing import (
     SegmentationDecoderConfig,
-    SegmentationFeatureConfig,
     SegmentationTrainingConfig,
 )
 
@@ -98,7 +97,7 @@ async def run_segmentation_training(
         job.started_at = datetime.now(timezone.utc)
         await session.commit()
 
-        feature_config = SegmentationFeatureConfig(n_mels=training_config.n_mels)
+        feature_config = training_config.feature_config
         decoder_config = SegmentationDecoderConfig()
         audio_loader = build_training_audio_loader(
             target_sr=feature_config.sample_rate,

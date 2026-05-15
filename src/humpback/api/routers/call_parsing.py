@@ -735,6 +735,15 @@ async def delete_segmentation_training_dataset(dataset_id: str, session: Session
     return None
 
 
+@router.get(
+    "/segmentation-training-jobs",
+    response_model=list[SegmentationTrainingJobResponse],
+)
+async def list_segmentation_training_jobs(session: SessionDep):
+    jobs = await service.list_segmentation_training_jobs(session)
+    return [SegmentationTrainingJobResponse.model_validate(job) for job in jobs]
+
+
 @router.post(
     "/segmentation-training-jobs",
     response_model=SegmentationTrainingJobResponse,
@@ -743,15 +752,27 @@ async def delete_segmentation_training_dataset(dataset_id: str, session: Session
 async def create_segmentation_training_job(
     request: CreateSegmentationTrainingJobRequest,
     session: SessionDep,
+    settings: SettingsDep,
 ):
     try:
-        job = await service.create_segmentation_training_job(
-            session,
-            training_dataset_id=request.training_dataset_id,
-            config=request.config,
-        )
+        if request.training_dataset_id is not None:
+            job = await service.create_segmentation_training_job(
+                session,
+                training_dataset_id=request.training_dataset_id,
+                config=request.config,
+            )
+        else:
+            job = await service.create_segmentation_training_job_from_segmentation_jobs(
+                session,
+                segmentation_job_ids=request.segmentation_job_ids or [],
+                settings=settings,
+                config=request.config,
+            )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        msg = str(exc)
+        if "not found" in msg:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=400, detail=msg) from exc
     return SegmentationTrainingJobResponse.model_validate(job)
 
 
