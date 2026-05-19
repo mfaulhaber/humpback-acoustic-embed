@@ -1,12 +1,19 @@
 """Tests for the continuous-embedding service idempotency and validation."""
 
+import json
 from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from humpback.call_parsing.segmentation.model import SegmentationCRNN
 from humpback.database import create_session_factory
-from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
+from humpback.ml.checkpointing import save_checkpoint
+from humpback.models.call_parsing import (
+    EventSegmentationJob,
+    RegionDetectionJob,
+    SegmentationModel,
+)
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.schemas.sequence_models import ContinuousEmbeddingJobCreate
@@ -53,6 +60,44 @@ async def _seed_seg_job(
     await session.commit()
     await session.refresh(seg_job)
     return seg_job
+
+
+def _save_crnn_checkpoint(path, *, hop_length: int = 512) -> None:
+    model = SegmentationCRNN()
+    save_checkpoint(
+        path,
+        model,
+        optimizer=None,
+        config={
+            "model_type": "SegmentationCRNN",
+            "n_mels": 64,
+            "conv_channels": [32, 64, 96, 128],
+            "gru_hidden": 64,
+            "gru_layers": 2,
+            "feature_config": {
+                "sample_rate": 16000,
+                "n_fft": 2048,
+                "hop_length": hop_length,
+                "n_mels": 64,
+                "fmin": 20.0,
+                "fmax": 4000.0,
+                "normalize": "per_region_zscore",
+            },
+        },
+    )
+
+
+async def _seed_segmentation_model(session, checkpoint_path) -> SegmentationModel:
+    model = SegmentationModel(
+        name="test-crnn",
+        model_family="pytorch_crnn",
+        model_path=str(checkpoint_path),
+        config_json=None,
+    )
+    session.add(model)
+    await session.commit()
+    await session.refresh(model)
+    return model
 
 
 async def test_create_returns_new_job(session):
@@ -277,3 +322,32 @@ async def test_delete_succeeds_when_no_disk_artifacts(session, settings):
     result = await delete_continuous_embedding_job(session, job.id, settings)
     assert result is True
     assert await get_continuous_embedding_job(session, job.id) is None
+
+
+async def test_create_region_crnn_snapshots_checkpoint_feature_config(
+    session, settings
+):
+    seg_job = await _seed_seg_job(session)
+    checkpoint_path = settings.storage_root / "test-crnn-hop256.pt"
+    _save_crnn_checkpoint(checkpoint_path, hop_length=256)
+    seg_model = await _seed_segmentation_model(session, checkpoint_path)
+
+    payload = ContinuousEmbeddingJobCreate(
+        model_version="crnn-call-parsing-pytorch",
+        event_segmentation_job_id=seg_job.id,
+        region_detection_job_id=seg_job.region_detection_job_id,
+        crnn_segmentation_model_id=seg_model.id,
+        chunk_size_seconds=0.25,
+        chunk_hop_seconds=0.25,
+        projection_kind="identity",
+        projection_dim=1024,
+    )
+
+    job, created = await create_continuous_embedding_job(session, payload)
+
+    assert created is True
+    assert job.target_sample_rate == 16000
+    feature_config = json.loads(job.feature_config_json or "{}")
+    assert feature_config["hop_length"] == 256
+    assert job.projection_dim == 2048
+    assert job.encoding_signature

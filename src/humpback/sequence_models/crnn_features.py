@@ -41,13 +41,11 @@ from humpback.schemas.call_parsing import SegmentationFeatureConfig
 from humpback.sequence_models.chunk_projection import ChunkProjection
 
 # The Pass 2 CRNN currently ships with ``gru_hidden=64`` and a stride-2
-# time pool in the last conv block, giving a BiGRU output width of 128
-# at the spectrogram frame rate (~32 fps with hop_length=512 / sr=16k).
-# These are the values the embedding extractor was designed against; if
-# a checkpoint deviates, the producer fails fast at load time.
+# time pool in the last conv block, giving a BiGRU output width of 128.
+# Chunk frame counts are derived from each checkpoint's persisted feature
+# frame rate so Segment Training's feature-config overrides can flow through
+# without changing the CRNN architecture.
 EXPECTED_BIGRU_WIDTH = 128
-EXPECTED_FRAME_RATE_HZ = 32.0
-FRAME_RATE_TOLERANCE_HZ = 1.5
 
 
 @dataclass(frozen=True)
@@ -92,7 +90,7 @@ def _instantiate_from_config(model_config: dict[str, Any]) -> SegmentationCRNN:
 def _validate_model(
     model: SegmentationCRNN, feature_config: SegmentationFeatureConfig
 ) -> None:
-    """Assert the BiGRU width and feature frame rate match expectations."""
+    """Assert the CRNN architecture and feature config are extractable."""
     bigru_width = 2 * model.gru_hidden
     if bigru_width != EXPECTED_BIGRU_WIDTH:
         raise ValueError(
@@ -100,11 +98,16 @@ def _validate_model(
             f"{EXPECTED_BIGRU_WIDTH} (gru_hidden=64, bidirectional=True); "
             f"got width={bigru_width} (gru_hidden={model.gru_hidden})"
         )
-    frame_rate = feature_config.sample_rate / feature_config.hop_length
-    if abs(frame_rate - EXPECTED_FRAME_RATE_HZ) > FRAME_RATE_TOLERANCE_HZ:
+    if feature_config.sample_rate <= 0 or feature_config.hop_length <= 0:
         raise ValueError(
-            "CRNN extractor expects a feature frame rate of "
-            f"~{EXPECTED_FRAME_RATE_HZ} Hz (got {frame_rate:.3f} Hz from "
+            "CRNN extractor expects positive sample_rate and hop_length "
+            f"(got sample_rate={feature_config.sample_rate}, "
+            f"hop_length={feature_config.hop_length})"
+        )
+    frame_rate = feature_config.sample_rate / feature_config.hop_length
+    if not np.isfinite(frame_rate) or frame_rate <= 0:
+        raise ValueError(
+            "CRNN extractor could not derive a positive feature frame rate from "
             f"sample_rate={feature_config.sample_rate}, "
             f"hop_length={feature_config.hop_length})"
         )
@@ -119,6 +122,48 @@ class LoadedCRNN:
     checkpoint_sha256: str
 
 
+@dataclass(frozen=True)
+class CRNNExtractionMetadata:
+    """Checkpoint metadata needed before running CRNN extraction."""
+
+    feature_config: SegmentationFeatureConfig
+    checkpoint_sha256: str
+    bigru_width: int
+
+
+def _read_checkpoint_config(checkpoint_path: Path) -> dict[str, Any]:
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    model_config_raw = payload.get("config", {})
+    if not isinstance(model_config_raw, dict):
+        raise ValueError(f"checkpoint {checkpoint_path} has non-dict config")
+    return model_config_raw
+
+
+def _feature_config_from_model_config(
+    checkpoint_path: Path, model_config: dict[str, Any]
+) -> SegmentationFeatureConfig:
+    feature_config_raw = model_config.get("feature_config") or {}
+    if not isinstance(feature_config_raw, dict):
+        raise ValueError(f"checkpoint {checkpoint_path} has non-dict feature_config")
+    return SegmentationFeatureConfig(**feature_config_raw)
+
+
+def load_crnn_extraction_metadata(
+    checkpoint_path: str | Path,
+) -> CRNNExtractionMetadata:
+    """Read and validate CRNN checkpoint metadata without loading weights."""
+    path = Path(checkpoint_path)
+    model_config_raw = _read_checkpoint_config(path)
+    feature_config = _feature_config_from_model_config(path, model_config_raw)
+    model = _instantiate_from_config(model_config_raw)
+    _validate_model(model, feature_config)
+    return CRNNExtractionMetadata(
+        feature_config=feature_config,
+        checkpoint_sha256=compute_checkpoint_sha256(path),
+        bigru_width=2 * model.gru_hidden,
+    )
+
+
 def load_crnn_for_extraction(
     checkpoint_path: str | Path,
     device: torch.device,
@@ -130,14 +175,8 @@ def load_crnn_for_extraction(
     so the extractor never re-touches gradient state.
     """
     path = Path(checkpoint_path)
-    payload = torch.load(path, map_location="cpu", weights_only=False)
-    model_config_raw = payload.get("config", {})
-    if not isinstance(model_config_raw, dict):
-        raise ValueError(f"checkpoint {path} has non-dict config")
-    feature_config_raw = model_config_raw.get("feature_config") or {}
-    if not isinstance(feature_config_raw, dict):
-        raise ValueError(f"checkpoint {path} has non-dict feature_config")
-    feature_config = SegmentationFeatureConfig(**feature_config_raw)
+    model_config_raw = _read_checkpoint_config(path)
+    feature_config = _feature_config_from_model_config(path, model_config_raw)
 
     model = _instantiate_from_config(model_config_raw)
     load_checkpoint(path, model)
@@ -266,6 +305,25 @@ def _stitch_centre_half(
 def _frames_for_seconds(seconds: float, frame_rate: float) -> int:
     """Round seconds to an integer frame count."""
     return int(round(seconds * frame_rate))
+
+
+def expected_chunk_input_dim(
+    feature_config: SegmentationFeatureConfig,
+    chunk_size_seconds: float,
+    *,
+    bigru_width: int = EXPECTED_BIGRU_WIDTH,
+) -> int:
+    """Return concat-vector width for one CRNN chunk at this feature rate."""
+    if chunk_size_seconds <= 0:
+        raise ValueError("chunk_size_seconds must be > 0")
+    frame_rate = feature_config.sample_rate / feature_config.hop_length
+    frames_per_chunk = _frames_for_seconds(chunk_size_seconds, frame_rate)
+    if frames_per_chunk < 1:
+        raise ValueError(
+            f"chunk_size_seconds={chunk_size_seconds} resolves to <1 frame at "
+            f"frame_rate={frame_rate:.3f} Hz"
+        )
+    return int(frames_per_chunk * bigru_width)
 
 
 def _iter_chunk_slices(
