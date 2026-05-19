@@ -10,7 +10,7 @@
 Add a synchronized spectrogram timeline strip to the dedicated Event Encoder
 piano roll page. The strip gives researchers acoustic context while they use
 the piano roll's token-by-frequency view, without replacing the piano roll's
-smooth time zoom, frequency zoom, minimap, token filtering, event selection, or
+smooth time zoom, frequency zoom, token filtering, event selection, or
 playback behavior.
 
 The strip reuses existing timeline spectrogram tiles from the Call Parsing
@@ -24,9 +24,9 @@ timeline is better for verifying events against the spectrogram. Moving between
 the two views interrupts review when a researcher wants quick acoustic context
 for the same visible time range.
 
-A low-height spectrogram strip above the piano roll keeps the current piano
-roll workflow intact while making it easier to correlate token rectangles with
-visible energy, harmonics, silences, and broadband regions.
+A spectrogram strip below the piano roll keeps the current piano roll workflow
+intact while making it easier to correlate token rectangles with visible
+energy, harmonics, silences, and broadband regions.
 
 ## 3. Scope
 
@@ -41,12 +41,14 @@ visible energy, harmonics, silences, and broadband regions.
 - Support smooth piano roll zoom by continuously scaling the selected tile LOD
   and crossfading when the chosen LOD changes.
 - Align the strip's horizontal plot area with the piano roll plot area.
+- Use the strip's bottom time ticks as the single shared horizontal time axis.
 - Draw a strip playhead synchronized to the piano roll's visible playhead.
 - Allow strip drag and wheel interactions to update the same piano roll
   `timeRange`.
 - Let the strip frequency range follow the piano roll frequency range.
-- Preserve current Event Encoder timeline, piano roll, token, minimap, and
-  playback semantics.
+- Preserve current Event Encoder timeline, piano roll, token, and playback
+  semantics.
+- Remove the piano roll minimap control.
 
 ### Non-goals
 
@@ -72,7 +74,6 @@ state for:
 - Smooth wheel-based time zoom centered on the cursor.
 - Shift-wheel frequency zoom.
 - Token filtering and event selection.
-- Minimap navigation.
 - Playback through shared `usePlayback`.
 
 The spectrogram strip should not introduce a second viewport owner. It should
@@ -87,7 +88,6 @@ page. The component receives controlled state and callbacks from
 
 - `timeline`
 - `timeRange`
-- `fullTimeRange`
 - `frequencyRange`
 - `playheadTime`
 - `onTimeRangeChange`
@@ -160,17 +160,16 @@ The piano roll's existing keyboard shortcuts remain unchanged.
 The piano roll page becomes four vertical bands:
 
 1. Top toolbar.
-2. Spectrogram strip.
-3. Main piano roll canvas area with minimap, token legend, selection, and
-   tooltip.
+2. Main piano roll canvas area with token legend, selection, and tooltip.
+3. Spectrogram strip with the shared horizontal time axis.
 4. Status bar.
 
-The strip should be approximately 120 to 150 px tall, default visible, and
-collapsible through a compact icon button in the toolbar or strip header. When
-collapsed, the piano roll canvas receives the recovered vertical space.
+The strip should be approximately 160 px tall, default visible, and collapsible
+through a compact icon button in the toolbar or strip header. When collapsed,
+the piano roll canvas receives the recovered vertical space.
 
-The strip must not hide the minimap or token legend, which remain owned by the
-main canvas area.
+The strip must not hide the token legend, which remains owned by the main
+canvas area.
 
 ## 9. API and Backend
 
@@ -201,8 +200,8 @@ No backend tests are required unless implementation discovers a backend issue.
 - Choosing LOD too aggressively can cause visible tile churn during smooth
   scroll. Hysteresis and preloading should keep this calm.
 - A very low strip height may make frequency-specific context hard to read.
-  Default to a readable height before adding user-resizable behavior.
+  Default to a readable bottom strip before adding user-resizable behavior.
 - The existing `TileCanvas` crossfade only triggers when `zoomLevel` changes,
   not while smooth-scaling within one LOD. This is expected.
-- Future follow-ups could add event tick overlays, selected-event shading, or a
-  draggable range minimap if the simple strip proves useful.
+- Future follow-ups could add event tick overlays or selected-event shading if
+  the simple strip proves useful.

@@ -1,6 +1,6 @@
 # Event Encoder Piano Roll Spectrogram Strip Implementation Plan
 
-**Goal:** Add a synchronized PCEN spectrogram strip above the Event Encoder piano roll using existing Call Parsing region timeline tiles while preserving smooth piano roll zoom.
+**Goal:** Add a synchronized PCEN spectrogram strip below the Event Encoder piano roll using existing Call Parsing region timeline tiles while preserving smooth piano roll zoom.
 **Spec:** `docs/specs/2026-05-19-event-encoder-piano-roll-spectrogram-strip-design.md`
 **Primary domain:** sequence-models
 **Neighbor domains:** signal-timeline, frontend-shell
@@ -66,12 +66,15 @@
 - Modify: `frontend/src/components/sequence-models/EventEncoderPianoRollPage.tsx`
 
 **Acceptance criteria:**
-- [x] Piano roll page renders the spectrogram strip between the toolbar and main canvas
+- [x] Piano roll page renders the spectrogram strip below the main canvas and above the status bar
 - [x] Strip is visible by default and can be collapsed without losing piano roll state
 - [x] Strip wheel zoom updates the same piano roll `timeRange` as main-canvas wheel zoom
 - [x] Strip shift-wheel updates the same piano roll `frequencyRange` as main-canvas shift-wheel zoom
 - [x] Strip drag pans the same piano roll `timeRange` as main-canvas drag
-- [x] Main canvas, minimap, token legend, tooltip, selection, and playback behavior remain unchanged
+- [x] The strip's bottom ticks are the single shared horizontal time axis
+- [x] Main canvas token legend, tooltip, selection, and playback behavior remain unchanged
+- [x] Piano roll minimap control is removed
+- [x] Spectrogram strip height is increased by 25 percent
 - [x] Smooth zoom continues to update the piano roll `data-view-start` and `data-view-end` test attributes
 
 **Tests needed:**
@@ -90,7 +93,8 @@
 - [x] Test asserts tile requests include `freq_min` and `freq_max`
 - [x] Test verifies strip collapse removes the strip and recovers page space
 - [x] Test verifies wheel or drag interaction on the strip changes the shared piano roll viewport
-- [x] Existing piano roll selection, legend, minimap, playback, and navigation assertions still pass
+- [x] Test verifies the minimap control is absent
+- [x] Existing piano roll selection, legend, playback, and navigation assertions still pass
 
 **Tests needed:**
 - Updated Event Encoder piano roll Playwright tests

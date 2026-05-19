@@ -172,7 +172,7 @@ export function EventEncoderSpectrogramStrip({
     <div
       ref={containerRef}
       className={cn(
-        "relative h-32 flex-shrink-0 select-none overflow-hidden border-b border-zinc-800 bg-zinc-950",
+        "relative h-40 flex-shrink-0 select-none overflow-hidden border-y border-zinc-800 bg-zinc-950",
         dragging ? "cursor-grabbing" : "cursor-grab",
       )}
       data-testid="eej-piano-roll-spectrogram-strip"

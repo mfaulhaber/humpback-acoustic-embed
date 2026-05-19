@@ -354,7 +354,7 @@ async function eventPoint(
   const height = box?.height ?? 1;
   const x =
     62 + ((eventCenter - viewStart) / (viewEnd - viewStart)) * (width - 72);
-  const y = 8 + (1 - centerFrequency / 2000) * (height - 32);
+  const y = 8 + (1 - centerFrequency / 2000) * (height - 16);
   return { box, x, y };
 }
 
@@ -399,7 +399,7 @@ async function setCapturedAudioCurrentTime(
 }
 
 test.describe("Sequence Models - Event Encoder Piano Roll", () => {
-  test("renders toolbar, canvas, minimap, legend, and k selector", async ({
+  test("renders toolbar, canvas, bottom spectrogram, legend, and k selector", async ({
     page,
   }) => {
     const state = await setupMocks(page);
@@ -419,7 +419,7 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
     await expect(
       page.getByTestId("eej-piano-roll-spectrogram-lod"),
     ).toBeVisible();
-    await expect(page.getByTestId("eej-piano-roll-minimap")).toBeVisible();
+    await expect(page.getByTestId("eej-piano-roll-minimap")).toHaveCount(0);
     await expect(page.getByTestId("eej-piano-roll-legend-body")).toBeVisible();
     await expect(page.getByTestId("eej-piano-roll-canvas")).toHaveAttribute(
       "data-view-start",
@@ -439,8 +439,15 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
     );
 
     const canvasBox = await page.getByTestId("eej-piano-roll-canvas").boundingBox();
+    const stripBox = await page
+      .getByTestId("eej-piano-roll-spectrogram-strip")
+      .boundingBox();
     expect(canvasBox?.width ?? 0).toBeGreaterThan(500);
     expect(canvasBox?.height ?? 0).toBeGreaterThan(300);
+    expect(stripBox?.height ?? 0).toBeGreaterThanOrEqual(150);
+    expect(stripBox?.y ?? 0).toBeGreaterThan(
+      (canvasBox?.y ?? 0) + (canvasBox?.height ?? 0) - 1,
+    );
     await expect
       .poll(() =>
         state.tileRequests.some(
@@ -539,7 +546,7 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
     );
   });
 
-  test("legend toggles, spectrogram collapses, minimap centers the viewport, and focused selects suppress shortcuts", async ({
+  test("legend toggles, spectrogram collapses, and focused selects suppress shortcuts", async ({
     page,
   }) => {
     await setupMocks(page);
@@ -578,12 +585,6 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
         return end - start;
       })
       .toBeLessThan(160);
-    const beforeMinimap = await canvas.getAttribute("data-view-start");
-    await page
-      .getByTestId("eej-piano-roll-minimap")
-      .click({ position: { x: 220, y: 20 } });
-    await expect(canvas).not.toHaveAttribute("data-view-start", beforeMinimap ?? "");
-
     const beforeKeyboard = await canvas.getAttribute("data-view-start");
     await page.getByTestId("eej-piano-roll-k-select").focus();
     await page.keyboard.press("f");
