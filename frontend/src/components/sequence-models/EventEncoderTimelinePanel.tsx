@@ -116,6 +116,7 @@ export function EventEncoderTimelinePanel({ job }: EventEncoderTimelinePanelProp
             key={`${job.id}-${data.region_detection_job_id}`}
             jobStart={data.job_start_timestamp}
             jobEnd={data.job_end_timestamp}
+            initialCenterTimestamp={initialEventCenter(data.events, selectedListIndex)}
             zoomLevels={REVIEW_ZOOM}
             defaultZoom="30s"
             playback="slice"
@@ -157,6 +158,16 @@ export function EventEncoderTimelinePanel({ job }: EventEncoderTimelinePanelProp
       </CardContent>
     </Card>
   );
+}
+
+function initialEventCenter(
+  events: EventEncoderTimelineEvent[],
+  selectedListIndex: number,
+): number | undefined {
+  const index = Math.min(Math.max(selectedListIndex, 0), events.length - 1);
+  const event = events[index];
+  if (!event) return undefined;
+  return (event.start_timestamp + event.end_timestamp) / 2;
 }
 
 function TimelineMessage({

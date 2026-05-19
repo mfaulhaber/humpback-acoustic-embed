@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+
 import type { EventEncoderTimelineEvent } from "@/api/sequenceModels";
 import { useOverlayContext } from "@/components/timeline/overlays/OverlayContext";
 import { cn } from "@/lib/utils";
@@ -23,6 +25,15 @@ export function EventEncoderTokenOverlay({
   const ctx = useOverlayContext();
   const barTop = Math.max(0, ctx.canvasHeight * 0.08);
   const barHeight = Math.max(24, ctx.canvasHeight * 0.84);
+  const visibleEvents = useMemo(
+    () =>
+      events.filter(
+        (event) =>
+          event.end_timestamp >= ctx.viewStart &&
+          event.start_timestamp <= ctx.viewEnd,
+      ),
+    [events, ctx.viewStart, ctx.viewEnd],
+  );
 
   return (
     <div
@@ -35,7 +46,7 @@ export function EventEncoderTokenOverlay({
         onSelectEvent(null);
       }}
     >
-      {events.map((event) => {
+      {visibleEvents.map((event) => {
         const x = ctx.epochToX(event.start_timestamp);
         const endX = ctx.epochToX(event.end_timestamp);
         const width = Math.max(MIN_BAR_WIDTH_PX, endX - x);

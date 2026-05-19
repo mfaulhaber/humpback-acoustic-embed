@@ -75,6 +75,7 @@ export interface TimelinePlaybackHandle {
 export interface TimelineProviderProps {
   jobStart: number;
   jobEnd: number;
+  initialCenterTimestamp?: number;
   zoomLevels: ZoomPreset[];
   defaultZoom?: string;
   playback: "gapless" | "slice";

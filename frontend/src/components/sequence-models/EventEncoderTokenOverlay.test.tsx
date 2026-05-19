@@ -52,11 +52,14 @@ const events: EventEncoderTimelineEvent[] = [
   },
 ];
 
-function renderOverlay(onSelectEvent = vi.fn()) {
+function renderOverlay(
+  onSelectEvent = vi.fn(),
+  eventList: EventEncoderTimelineEvent[] = events,
+) {
   return render(
     <OverlayContext.Provider value={overlayValue}>
       <EventEncoderTokenOverlay
-        events={events}
+        events={eventList}
         selectedEventId="evt-1"
         selectedK={200}
         onSelectEvent={onSelectEvent}
@@ -89,6 +92,44 @@ describe("EventEncoderTokenOverlay", () => {
     );
     expect(getByTestId("eej-token-badge-evt-1").textContent).toBe("T17");
     expect(getByTestId("eej-token-badge-evt-2").textContent).toBe("T199");
+  });
+
+  it("only renders bars whose event interval intersects the viewport", () => {
+    const offscreenEvents: EventEncoderTimelineEvent[] = [
+      {
+        ...events[0],
+        event_id: "evt-before",
+        start_timestamp: 90,
+        end_timestamp: 99.9,
+      },
+      {
+        ...events[0],
+        event_id: "evt-edge-left",
+        start_timestamp: 99,
+        end_timestamp: 100,
+      },
+      ...events,
+      {
+        ...events[0],
+        event_id: "evt-edge-right",
+        start_timestamp: 200,
+        end_timestamp: 201,
+      },
+      {
+        ...events[0],
+        event_id: "evt-after",
+        start_timestamp: 200.1,
+        end_timestamp: 205,
+      },
+    ];
+    const { getByTestId, queryByTestId } = renderOverlay(vi.fn(), offscreenEvents);
+
+    expect(queryByTestId("eej-token-bar-evt-before")).toBeNull();
+    expect(getByTestId("eej-token-bar-evt-edge-left")).toBeTruthy();
+    expect(getByTestId("eej-token-bar-evt-1")).toBeTruthy();
+    expect(getByTestId("eej-token-bar-evt-2")).toBeTruthy();
+    expect(getByTestId("eej-token-bar-evt-edge-right")).toBeTruthy();
+    expect(queryByTestId("eej-token-bar-evt-after")).toBeNull();
   });
 
   it("selects an event when its bar is clicked", () => {
