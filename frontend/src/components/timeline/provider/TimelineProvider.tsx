@@ -52,9 +52,14 @@ function findDefaultZoomIndex(zoomLevels: ZoomPreset[], defaultZoom?: string): n
   return idx >= 0 ? idx : 0;
 }
 
+function clampTimestamp(value: number, jobStart: number, jobEnd: number): number {
+  return Math.max(jobStart, Math.min(jobEnd, value));
+}
+
 export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProviderProps>(function TimelineProvider({
   jobStart,
   jobEnd,
+  initialCenterTimestamp,
   zoomLevels,
   defaultZoom,
   playback: playbackMode,
@@ -66,9 +71,11 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
   children,
 }, ref) {
   const defaultIndex = useMemo(() => findDefaultZoomIndex(zoomLevels, defaultZoom), [zoomLevels, defaultZoom]);
+  const initialCenter =
+    initialCenterTimestamp ?? jobStart + (jobEnd - jobStart) / 2;
 
   const [state, dispatch] = useReducer(reducer, {
-    centerTimestamp: jobStart + (jobEnd - jobStart) / 2,
+    centerTimestamp: clampTimestamp(initialCenter, jobStart, jobEnd),
     zoomLevel: defaultIndex,
     isPlaying: false,
     isDraggingTimeline: false,
@@ -85,7 +92,7 @@ export const TimelineProvider = forwardRef<TimelinePlaybackHandle, TimelineProvi
   const pxPerSec = state.viewportWidth > 0 ? state.viewportWidth / viewportSpan : 1;
 
   const clampCenter = useCallback(
-    (c: number) => Math.max(jobStart, Math.min(jobEnd, c)),
+    (c: number) => clampTimestamp(c, jobStart, jobEnd),
     [jobStart, jobEnd],
   );
 

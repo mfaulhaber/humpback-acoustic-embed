@@ -23,6 +23,7 @@ function wrapper(props?: {
   zoomLevels?: ZoomPreset[];
   jobStart?: number;
   jobEnd?: number;
+  initialCenterTimestamp?: number;
   defaultZoom?: string;
   disableKeyboardShortcuts?: boolean;
   onZoomChange?: (key: string) => void;
@@ -39,6 +40,7 @@ function wrapper(props?: {
       <TimelineProvider
         jobStart={jobStart}
         jobEnd={jobEnd}
+        initialCenterTimestamp={props?.initialCenterTimestamp}
         zoomLevels={zoomLevels}
         defaultZoom={defaultZoom}
         playback="slice"
@@ -106,6 +108,30 @@ describe("pxPerSec derivation", () => {
 });
 
 describe("pan clamping", () => {
+  it("uses an optional clamped initial center timestamp", () => {
+    const { result } = renderHook(() => useTimelineContext(), {
+      wrapper: wrapper({
+        jobStart: 1000,
+        jobEnd: 2000,
+        initialCenterTimestamp: 1200,
+      }),
+    });
+
+    expect(result.current.centerTimestamp).toBe(1200);
+  });
+
+  it("clamps the optional initial center timestamp to job bounds", () => {
+    const { result } = renderHook(() => useTimelineContext(), {
+      wrapper: wrapper({
+        jobStart: 1000,
+        jobEnd: 2000,
+        initialCenterTimestamp: 3000,
+      }),
+    });
+
+    expect(result.current.centerTimestamp).toBe(2000);
+  });
+
   it("clamps pan to jobStart", () => {
     const { result } = renderHook(() => useTimelineContext(), {
       wrapper: wrapper({ jobStart: 1000, jobEnd: 2000 }),

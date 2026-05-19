@@ -380,6 +380,7 @@ interface MockState {
   lastCreateBody?: CreatePayload;
   timelineRequests?: string[];
   projectionRequests?: string[];
+  tileRequests?: string[];
   audioRequests?: string[];
   timelineNoFeatures?: boolean;
 }
@@ -393,6 +394,7 @@ interface CreatePayload {
 async function setupMocks(page: Page, state: MockState) {
   state.timelineRequests ??= [];
   state.projectionRequests ??= [];
+  state.tileRequests ??= [];
   state.audioRequests ??= [];
 
   await page.route("**/call-parsing/segmentation-jobs**", (route) =>
@@ -418,13 +420,14 @@ async function setupMocks(page: Page, state: MockState) {
     },
   );
 
-  await page.route("**/call-parsing/region-jobs/*/tile**", (route) =>
-    route.fulfill({
+  await page.route("**/call-parsing/region-jobs/*/tile**", (route) => {
+    state.tileRequests?.push(route.request().url());
+    return route.fulfill({
       status: 200,
       contentType: "image/png",
       body: PNG_1X1,
-    }),
-  );
+    });
+  });
 
   await page.route("**/call-parsing/region-jobs/*/audio-slice**", (route) => {
     state.audioRequests?.push(route.request().url());
@@ -644,6 +647,11 @@ test.describe("Sequence Models - Event Encoder", () => {
     await expect(page.getByTestId("eej-token-badge-evt-17")).toHaveText("T17");
     await expect(page.getByTestId("eej-event-counter")).toHaveText("Event 1 / 3");
     await expect(page.getByTestId("eej-selected-token")).toHaveText("T17");
+    await expect.poll(() => state.tileRequests?.length ?? 0).toBeGreaterThan(0);
+    const initialTileIndexes = (state.tileRequests ?? []).map((url) =>
+      Number(new URL(url).searchParams.get("tile_index")),
+    );
+    expect(initialTileIndexes.every((index) => index < 20)).toBe(true);
     await expect(page.getByTestId("eej-token-nav-toggle")).toHaveAttribute(
       "aria-pressed",
       "false",
