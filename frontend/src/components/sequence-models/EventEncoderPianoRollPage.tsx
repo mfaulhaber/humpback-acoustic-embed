@@ -6,7 +6,7 @@ import {
   useState,
 } from "react";
 import type * as React from "react";
-import { ArrowLeft, Pause, Play } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Pause, Play } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 
 import {
@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import { labelColor } from "./constants";
+import { EventEncoderSpectrogramStrip } from "./EventEncoderSpectrogramStrip";
 
 type YMode = "f0" | "peak";
 type UnvoicedMode = "peak" | "bottom" | "hide";
@@ -254,6 +255,7 @@ function EventEncoderPianoRollViewer({
   const [playbackMode, setPlaybackMode] =
     useState<PianoRollPlaybackMode | null>(null);
   const [playheadTime, setPlayheadTime] = useState<number | null>(null);
+  const [spectrogramCollapsed, setSpectrogramCollapsed] = useState(false);
 
   const recordingTimeRange = useMemo(
     () => ({
@@ -481,6 +483,13 @@ function EventEncoderPianoRollViewer({
   const fitAll = useCallback(() => {
     setTimeRange(fullTimeRange);
   }, [fullTimeRange]);
+
+  const setClampedTimeRange = useCallback(
+    (range: TimeRange) => {
+      setTimeRange(clampTimeRange(range, fullTimeRange));
+    },
+    [fullTimeRange],
+  );
 
   const panTimeBy = useCallback(
     (deltaSeconds: number) => {
@@ -875,6 +884,31 @@ function EventEncoderPianoRollViewer({
           <Button
             type="button"
             variant="outline"
+            size="icon"
+            className="h-8 w-8 border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
+            onClick={() => setSpectrogramCollapsed((value) => !value)}
+            title={
+              spectrogramCollapsed
+                ? "Show spectrogram strip"
+                : "Hide spectrogram strip"
+            }
+            aria-label={
+              spectrogramCollapsed
+                ? "Show spectrogram strip"
+                : "Hide spectrogram strip"
+            }
+            aria-pressed={!spectrogramCollapsed}
+            data-testid="eej-piano-roll-spectrogram-toggle"
+          >
+            {spectrogramCollapsed ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronUp className="h-4 w-4" />
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
             size="sm"
             className="h-8 border-zinc-700 bg-zinc-900 px-2 text-zinc-100 hover:bg-zinc-800"
             onClick={togglePlayback}
@@ -906,6 +940,20 @@ function EventEncoderPianoRollViewer({
           </ToolbarSelect>
         </div>
       </div>
+
+      {!spectrogramCollapsed ? (
+        <EventEncoderSpectrogramStrip
+          timeline={timeline}
+          timeRange={timeRange}
+          frequencyRange={frequencyRange}
+          playheadTime={visiblePlayheadTime}
+          plotLeftPx={LEFT_MARGIN}
+          plotRightPx={RIGHT_MARGIN}
+          onTimeRangeChange={setClampedTimeRange}
+          onZoomTime={zoomTime}
+          onZoomFrequency={zoomFrequency}
+        />
+      ) : null}
 
       <div
         ref={canvasWrapRef}

@@ -14,11 +14,11 @@
 - Create: `frontend/src/components/sequence-models/eventEncoderSpectrogramLod.test.ts`
 
 **Acceptance criteria:**
-- [ ] Helper accepts viewport span, strip width, current zoom key, and supported tile LOD definitions
-- [ ] Helper chooses a stable tile LOD from seconds-per-pixel rather than requiring piano roll zoom buttons
-- [ ] Helper applies hysteresis so tiny wheel movements near a threshold keep the current LOD
-- [ ] Helper supports backend-backed zoom levels including `5m`, `1m`, `30s`, and `10s`
-- [ ] Tests cover coarse, medium, fine, and threshold-hysteresis cases
+- [x] Helper accepts viewport span, strip width, current zoom key, and supported tile LOD definitions
+- [x] Helper chooses a stable tile LOD from seconds-per-pixel rather than requiring piano roll zoom buttons
+- [x] Helper applies hysteresis so tiny wheel movements near a threshold keep the current LOD
+- [x] Helper supports backend-backed zoom levels including `5m`, `1m`, `30s`, and `10s`
+- [x] Tests cover coarse, medium, fine, and threshold-hysteresis cases
 
 **Tests needed:**
 - Unit tests for LOD selection and hysteresis behavior
@@ -31,9 +31,9 @@
 - Modify: `frontend/src/api/client.ts`
 
 **Acceptance criteria:**
-- [ ] `regionTileUrl` accepts optional `freqMin` and `freqMax` arguments with defaults matching current behavior
-- [ ] Existing three-argument `regionTileUrl` callers continue to work unchanged
-- [ ] Generated URLs include `freq_min` and `freq_max` query parameters
+- [x] `regionTileUrl` accepts optional `freqMin` and `freqMax` arguments with defaults matching current behavior
+- [x] Existing three-argument `regionTileUrl` callers continue to work unchanged
+- [x] Generated URLs include `freq_min` and `freq_max` query parameters
 
 **Tests needed:**
 - Covered by frontend typecheck and piano roll Playwright tile request assertions
@@ -46,14 +46,14 @@
 - Create: `frontend/src/components/sequence-models/EventEncoderSpectrogramStrip.tsx`
 
 **Acceptance criteria:**
-- [ ] Component renders a low-height strip using `TileCanvas` directly
-- [ ] Component receives piano roll `timeRange`, `frequencyRange`, and playhead timestamp as controlled props
-- [ ] Component aligns its tile canvas with the piano roll plot margins
-- [ ] Component uses the existing Call Parsing region tile source from the Event Encoder timeline response
-- [ ] Component passes smooth `viewportSpanOverride` to `TileCanvas`
-- [ ] Component passes selected tile LOD and tile duration from the LOD helper
-- [ ] Component draws a synchronized playhead over the tile canvas
-- [ ] Component renders a compact label or affordance without adding explanatory in-app text
+- [x] Component renders a low-height strip using `TileCanvas` directly
+- [x] Component receives piano roll `timeRange`, `frequencyRange`, and playhead timestamp as controlled props
+- [x] Component aligns its tile canvas with the piano roll plot margins
+- [x] Component uses the existing Call Parsing region tile source from the Event Encoder timeline response
+- [x] Component passes smooth `viewportSpanOverride` to `TileCanvas`
+- [x] Component passes selected tile LOD and tile duration from the LOD helper
+- [x] Component draws a synchronized playhead over the tile canvas
+- [x] Component renders a compact label or affordance without adding explanatory in-app text
 
 **Tests needed:**
 - Component-level or Playwright coverage that the strip renders with mocked timeline data
@@ -66,13 +66,13 @@
 - Modify: `frontend/src/components/sequence-models/EventEncoderPianoRollPage.tsx`
 
 **Acceptance criteria:**
-- [ ] Piano roll page renders the spectrogram strip between the toolbar and main canvas
-- [ ] Strip is visible by default and can be collapsed without losing piano roll state
-- [ ] Strip wheel zoom updates the same piano roll `timeRange` as main-canvas wheel zoom
-- [ ] Strip shift-wheel updates the same piano roll `frequencyRange` as main-canvas shift-wheel zoom
-- [ ] Strip drag pans the same piano roll `timeRange` as main-canvas drag
-- [ ] Main canvas, minimap, token legend, tooltip, selection, and playback behavior remain unchanged
-- [ ] Smooth zoom continues to update the piano roll `data-view-start` and `data-view-end` test attributes
+- [x] Piano roll page renders the spectrogram strip between the toolbar and main canvas
+- [x] Strip is visible by default and can be collapsed without losing piano roll state
+- [x] Strip wheel zoom updates the same piano roll `timeRange` as main-canvas wheel zoom
+- [x] Strip shift-wheel updates the same piano roll `frequencyRange` as main-canvas shift-wheel zoom
+- [x] Strip drag pans the same piano roll `timeRange` as main-canvas drag
+- [x] Main canvas, minimap, token legend, tooltip, selection, and playback behavior remain unchanged
+- [x] Smooth zoom continues to update the piano roll `data-view-start` and `data-view-end` test attributes
 
 **Tests needed:**
 - Playwright coverage for strip visibility, collapse behavior, and strip wheel or drag updating the shared viewport
@@ -85,12 +85,12 @@
 - Modify: `frontend/e2e/sequence-models/event-encoder-piano-roll.spec.ts`
 
 **Acceptance criteria:**
-- [ ] Mocked region tile route records strip tile requests
-- [ ] Route test asserts the spectrogram strip is visible by default
-- [ ] Test asserts tile requests include `freq_min` and `freq_max`
-- [ ] Test verifies strip collapse removes the strip and recovers page space
-- [ ] Test verifies wheel or drag interaction on the strip changes the shared piano roll viewport
-- [ ] Existing piano roll selection, legend, minimap, playback, and navigation assertions still pass
+- [x] Mocked region tile route records strip tile requests
+- [x] Route test asserts the spectrogram strip is visible by default
+- [x] Test asserts tile requests include `freq_min` and `freq_max`
+- [x] Test verifies strip collapse removes the strip and recovers page space
+- [x] Test verifies wheel or drag interaction on the strip changes the shared piano roll viewport
+- [x] Existing piano roll selection, legend, minimap, playback, and navigation assertions still pass
 
 **Tests needed:**
 - Updated Event Encoder piano roll Playwright tests

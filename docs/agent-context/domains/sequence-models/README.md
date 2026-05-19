@@ -38,7 +38,9 @@ helpers, or the retained Sequence Models UI.
 - The Event Encoder piano roll is also read-only and uses the same timeline
   endpoint. It renders tokenized events on a time-by-frequency canvas using
   job-local, k-local token ids, descriptor values, and Call Parsing region
-  audio slices for playback.
+  audio slices for playback. It includes a collapsible spectrogram strip backed
+  by Call Parsing region timeline tiles; the piano roll's smooth viewport state
+  remains the source of truth for that strip.
 - Event Encoder timeline previous/next navigation can be token-scoped by
   toggling the selected event's token badge. This is a frontend-only affordance
   derived from the currently loaded selected-k timeline rows; it does not hide
