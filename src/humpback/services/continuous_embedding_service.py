@@ -36,7 +36,10 @@ from humpback.models.call_parsing import (
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.schemas.sequence_models import ContinuousEmbeddingJobCreate
-from humpback.sequence_models.crnn_features import compute_checkpoint_sha256
+from humpback.sequence_models.crnn_features import (
+    expected_chunk_input_dim,
+    load_crnn_extraction_metadata,
+)
 from humpback.storage import continuous_embedding_dir
 
 # Source family discriminators. ``model_version`` carries the family;
@@ -58,9 +61,9 @@ SUPPORTED_MODEL_VERSIONS: dict[str, dict[str, Any]] = {
     },
     "crnn-call-parsing-pytorch": {
         "source_kind": SOURCE_KIND_REGION_CRNN,
-        # Sample rate is fixed to the segmentation CRNN's feature
-        # extractor (16 kHz mono); ``feature_config`` is read from the
-        # checkpoint at worker time.
+        # ``target_sample_rate`` and ``feature_config`` are read from the
+        # selected checkpoint at submission time because Segment Training
+        # can persist feature-config overrides.
         "target_sample_rate": 16000,
         "feature_config": None,
     },
@@ -266,7 +269,7 @@ async def _create_surfperch_job(
 async def _create_region_crnn_job(
     session: AsyncSession,
     payload: ContinuousEmbeddingJobCreate,
-    model_constants: dict[str, Any],
+    _model_constants: dict[str, Any],
 ) -> tuple[ContinuousEmbeddingJob, bool]:
     if payload.region_detection_job_id is None:
         raise ValueError(
@@ -324,10 +327,22 @@ async def _create_region_crnn_job(
     checkpoint_path = Path(seg_model.model_path)
     if not checkpoint_path.exists():
         raise ValueError(f"segmentation_model checkpoint missing at {checkpoint_path}")
-    crnn_sha = compute_checkpoint_sha256(checkpoint_path)
+    crnn_metadata = load_crnn_extraction_metadata(checkpoint_path)
+    crnn_sha = crnn_metadata.checkpoint_sha256
 
-    target_sample_rate = int(model_constants["target_sample_rate"])
-    feature_config = model_constants["feature_config"]
+    chunk_size_seconds = float(payload.chunk_size_seconds)
+    chunk_hop_seconds = float(payload.chunk_hop_seconds)
+    projection_kind = str(payload.projection_kind)
+    projection_dim = int(payload.projection_dim)
+    if projection_kind == "identity":
+        projection_dim = expected_chunk_input_dim(
+            crnn_metadata.feature_config,
+            chunk_size_seconds,
+            bigru_width=crnn_metadata.bigru_width,
+        )
+
+    target_sample_rate = int(crnn_metadata.feature_config.sample_rate)
+    feature_config = crnn_metadata.feature_config.model_dump()
     feature_config_json = _serialize_feature_config(feature_config)
 
     signature = compute_region_crnn_signature(
@@ -335,10 +350,10 @@ async def _create_region_crnn_job(
         event_segmentation_job_id=payload.event_segmentation_job_id,
         model_version=payload.model_version,
         crnn_checkpoint_sha256=crnn_sha,
-        chunk_size_seconds=payload.chunk_size_seconds,
-        chunk_hop_seconds=payload.chunk_hop_seconds,
-        projection_kind=payload.projection_kind,
-        projection_dim=payload.projection_dim,
+        chunk_size_seconds=chunk_size_seconds,
+        chunk_hop_seconds=chunk_hop_seconds,
+        projection_kind=projection_kind,
+        projection_dim=projection_dim,
         target_sample_rate=target_sample_rate,
         feature_config=feature_config,
     )
@@ -353,10 +368,10 @@ async def _create_region_crnn_job(
         region_detection_job_id=payload.region_detection_job_id,
         crnn_segmentation_model_id=payload.crnn_segmentation_model_id,
         crnn_checkpoint_sha256=crnn_sha,
-        chunk_size_seconds=payload.chunk_size_seconds,
-        chunk_hop_seconds=payload.chunk_hop_seconds,
-        projection_kind=payload.projection_kind,
-        projection_dim=payload.projection_dim,
+        chunk_size_seconds=chunk_size_seconds,
+        chunk_hop_seconds=chunk_hop_seconds,
+        projection_kind=projection_kind,
+        projection_dim=projection_dim,
         model_version=payload.model_version,
         target_sample_rate=target_sample_rate,
         feature_config_json=feature_config_json,

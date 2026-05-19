@@ -351,10 +351,13 @@ regions.
    CRNN rows leave SurfPerch-only configuration null. Per-source tables were
    rejected because they duplicate the same job lifecycle and idempotency
    behavior.
-2. **Concat-and-project chunk embeddings**. Eight 32 fps frames by 128 BiGRU
-   channels produce a 1024-d chunk vector, passed through the `ChunkProjection`
-   abstraction. `IdentityProjection` is the default; random and PCA projection
-   remain available for retained experiments.
+2. **Concat-and-project chunk embeddings**. Chunk vectors concatenate the
+   checkpoint-derived number of feature frames for the requested chunk duration
+   by 128 BiGRU channels. The default 16 kHz / 512-hop checkpoint still yields
+   eight frames and a 1024-d identity vector; checkpoints trained with other
+   feature configs derive their identity dimension from the persisted
+   `feature_config`. `IdentityProjection` is the default; random and PCA
+   projection remain available for retained experiments.
 3. **Shared inference windowing**. Pass 2 inference and the CRNN extractor share
    `iter_inference_windows()`, keeping frame/chunk geometry consistent.
 
@@ -368,8 +371,9 @@ regions.
   `nearest_event_id`, `distance_to_nearest_event_seconds`, `call_probability`,
   and `embedding`.
 - Encoding signatures differ by source kind: CRNN signatures fold in the region
-  job, Pass 2 disambiguator, checkpoint, chunk geometry, and projection config;
-  SurfPerch signatures include the event source mode and SurfPerch geometry.
+  job, Pass 2 disambiguator, checkpoint, checkpoint feature config, chunk
+  geometry, and projection config; SurfPerch signatures include the event
+  source mode and SurfPerch geometry.
 - The Continuous Embedding API rejects CRNN-only fields on SurfPerch requests
   and SurfPerch-only fields on CRNN requests.
 - The frontend Continuous Embedding create form exposes both retained sources

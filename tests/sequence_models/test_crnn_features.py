@@ -16,7 +16,9 @@ from humpback.sequence_models.crnn_features import (
     _iter_chunk_slices,
     _stitch_centre_half,
     compute_checkpoint_sha256,
+    expected_chunk_input_dim,
     extract_chunk_embeddings,
+    load_crnn_extraction_metadata,
     load_crnn_for_extraction,
 )
 
@@ -119,10 +121,17 @@ def test_load_crnn_rejects_wrong_bigru_width(tmp_path):
         load_crnn_for_extraction(bad, torch.device("cpu"))
 
 
-def test_load_crnn_rejects_wrong_frame_rate(tmp_path):
-    bad = _save_test_checkpoint(tmp_path, hop_length=160)  # 100 fps, far from 32
-    with pytest.raises(ValueError, match="frame rate"):
-        load_crnn_for_extraction(bad, torch.device("cpu"))
+def test_load_crnn_accepts_checkpoint_feature_frame_rate_overrides(tmp_path):
+    checkpoint = _save_test_checkpoint(tmp_path, hop_length=256)
+
+    loaded = load_crnn_for_extraction(checkpoint, torch.device("cpu"))
+    metadata = load_crnn_extraction_metadata(checkpoint)
+
+    assert loaded.feature_config.hop_length == 256
+    assert metadata.feature_config.hop_length == 256
+    assert expected_chunk_input_dim(loaded.feature_config, 0.250) == (
+        16 * EXPECTED_BIGRU_WIDTH
+    )
 
 
 def test_extract_chunk_embeddings_shape_and_timestamps(stub_checkpoint):
@@ -158,6 +167,30 @@ def test_extract_chunk_embeddings_shape_and_timestamps(stub_checkpoint):
     # Probabilities are mean of 8 sigmoid frames → in (0, 1).
     assert np.all(result.call_probabilities > 0.0)
     assert np.all(result.call_probabilities < 1.0)
+
+
+def test_extract_chunk_embeddings_uses_checkpoint_frame_rate(tmp_path):
+    checkpoint = _save_test_checkpoint(tmp_path, hop_length=256)
+    loaded = load_crnn_for_extraction(checkpoint, torch.device("cpu"))
+    audio = _make_audio(3.0, loaded.feature_config.sample_rate)
+    projection = IdentityProjection(
+        input_dim=expected_chunk_input_dim(loaded.feature_config, 0.250)
+    )
+
+    result = extract_chunk_embeddings(
+        model=loaded.model,
+        audio=audio,
+        feature_config=loaded.feature_config,
+        chunk_size_seconds=0.250,
+        chunk_hop_seconds=0.250,
+        projection=projection,
+        device=torch.device("cpu"),
+    )
+
+    assert result.embeddings.shape[1] == 16 * EXPECTED_BIGRU_WIDTH
+    spans = result.chunk_ends - result.chunk_starts
+    assert np.allclose(spans, spans[0])
+    assert abs(spans[0] - 0.250) < 0.010
 
 
 def test_extract_chunk_embeddings_doubles_count_at_125ms_hop(stub_checkpoint):
