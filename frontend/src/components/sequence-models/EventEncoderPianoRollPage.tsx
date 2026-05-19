@@ -6,7 +6,7 @@ import {
   useState,
 } from "react";
 import type * as React from "react";
-import { ArrowLeft, Pause, Play } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Pause, Play } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 
 import {
@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import { labelColor } from "./constants";
+import { EventEncoderSpectrogramStrip } from "./EventEncoderSpectrogramStrip";
 
 type YMode = "f0" | "peak";
 type UnvoicedMode = "peak" | "bottom" | "hide";
@@ -77,7 +78,7 @@ interface TokenSummary {
 const LEFT_MARGIN = 62;
 const RIGHT_MARGIN = 10;
 const TOP_MARGIN = 8;
-const BOTTOM_MARGIN = 24;
+const BOTTOM_MARGIN = 8;
 const TOOLTIP_WIDTH = 256;
 const TOOLTIP_ESTIMATED_HEIGHT = 222;
 const TOOLTIP_OFFSET = 14;
@@ -230,7 +231,6 @@ function EventEncoderPianoRollViewer({
   onSelectedKChange: (k: number) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const minimapRef = useRef<HTMLCanvasElement | null>(null);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const playbackModeRef = useRef<PianoRollPlaybackMode | null>(null);
@@ -254,6 +254,7 @@ function EventEncoderPianoRollViewer({
   const [playbackMode, setPlaybackMode] =
     useState<PianoRollPlaybackMode | null>(null);
   const [playheadTime, setPlayheadTime] = useState<number | null>(null);
+  const [spectrogramCollapsed, setSpectrogramCollapsed] = useState(false);
 
   const recordingTimeRange = useMemo(
     () => ({
@@ -482,6 +483,13 @@ function EventEncoderPianoRollViewer({
     setTimeRange(fullTimeRange);
   }, [fullTimeRange]);
 
+  const setClampedTimeRange = useCallback(
+    (range: TimeRange) => {
+      setTimeRange(clampTimeRange(range, fullTimeRange));
+    },
+    [fullTimeRange],
+  );
+
   const panTimeBy = useCallback(
     (deltaSeconds: number) => {
       setTimeRange((current) =>
@@ -650,27 +658,6 @@ function EventEncoderPianoRollViewer({
     yMode,
   ]);
 
-  useEffect(() => {
-    drawMinimap({
-      canvas: minimapRef.current,
-      timeline,
-      timeRange,
-      frequencyRange,
-      yMode,
-      selectedK,
-      playheadTime: visiblePlayheadTime,
-      fullTimeRange,
-    });
-  }, [
-    frequencyRange,
-    fullTimeRange,
-    selectedK,
-    timeRange,
-    timeline,
-    visiblePlayheadTime,
-    yMode,
-  ]);
-
   const handleMouseMove = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const point = canvasPoint(event);
     const transform = makeTransform();
@@ -770,20 +757,6 @@ function EventEncoderPianoRollViewer({
     zoomTime(transform.xToTime(point.x), factor);
   };
 
-  const handleMinimapClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    const fullSpan = fullTimeRange.end - fullTimeRange.start;
-    const center = fullTimeRange.start + fullSpan * ratio;
-    const span = timeRange.end - timeRange.start;
-    setTimeRange(
-      clampTimeRange(
-        { start: center - span / 2, end: center + span / 2 },
-        fullTimeRange,
-      ),
-    );
-  };
-
   const canvasCursorClass = isDraggingTimeline
     ? "cursor-grabbing"
     : hoveredEventId
@@ -875,6 +848,31 @@ function EventEncoderPianoRollViewer({
           <Button
             type="button"
             variant="outline"
+            size="icon"
+            className="h-8 w-8 border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
+            onClick={() => setSpectrogramCollapsed((value) => !value)}
+            title={
+              spectrogramCollapsed
+                ? "Show spectrogram strip"
+                : "Hide spectrogram strip"
+            }
+            aria-label={
+              spectrogramCollapsed
+                ? "Show spectrogram strip"
+                : "Hide spectrogram strip"
+            }
+            aria-pressed={!spectrogramCollapsed}
+            data-testid="eej-piano-roll-spectrogram-toggle"
+          >
+            {spectrogramCollapsed ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronUp className="h-4 w-4" />
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
             size="sm"
             className="h-8 border-zinc-700 bg-zinc-900 px-2 text-zinc-100 hover:bg-zinc-800"
             onClick={togglePlayback}
@@ -931,14 +929,6 @@ function EventEncoderPianoRollViewer({
           onMouseUp={handleMouseUp}
           onWheel={handleWheel}
         />
-        <canvas
-          ref={minimapRef}
-          className="absolute bottom-4 right-4 h-10 w-60 cursor-pointer rounded border border-zinc-700 bg-zinc-950/90"
-          data-testid="eej-piano-roll-minimap"
-          width={240}
-          height={40}
-          onClick={handleMinimapClick}
-        />
         <TokenLegend
           collapsed={legendCollapsed}
           selectedToken={tokenFilter}
@@ -961,6 +951,20 @@ function EventEncoderPianoRollViewer({
           />
         ) : null}
       </div>
+
+      {!spectrogramCollapsed ? (
+        <EventEncoderSpectrogramStrip
+          timeline={timeline}
+          timeRange={timeRange}
+          frequencyRange={frequencyRange}
+          playheadTime={visiblePlayheadTime}
+          plotLeftPx={LEFT_MARGIN}
+          plotRightPx={RIGHT_MARGIN}
+          onTimeRangeChange={setClampedTimeRange}
+          onZoomTime={zoomTime}
+          onZoomFrequency={zoomFrequency}
+        />
+      ) : null}
 
       <div
         className="flex h-7 flex-shrink-0 items-center gap-4 border-t border-zinc-800 bg-zinc-950 px-3 font-mono text-[11px] text-zinc-400"
@@ -1305,8 +1309,6 @@ function drawGrid(
       0,
       Math.ceil((transform.timeRange.start - jobStart) / timeStep) * timeStep,
     );
-  ctx.textAlign = "center";
-  ctx.textBaseline = "alphabetic";
   for (
     let offset = startOffset;
     jobStart + offset <= transform.timeRange.end;
@@ -1321,11 +1323,6 @@ function drawGrid(
     ctx.lineTo(x, transform.plotBottom);
     ctx.stroke();
     ctx.globalAlpha = 1;
-    ctx.fillText(
-      formatRelativeTime(time, jobStart),
-      x,
-      transform.size.height - 7,
-    );
   }
 
   if (unvoicedMode === "bottom") {
@@ -1473,61 +1470,6 @@ function drawTokenLabel(
   ctx.textBaseline = "middle";
   ctx.fillText(label, rect.x + rect.width / 2, rect.y + rect.height / 2 + 0.5);
   ctx.restore();
-}
-
-function drawMinimap({
-  canvas,
-  timeline,
-  timeRange,
-  fullTimeRange,
-  frequencyRange,
-  yMode,
-  selectedK,
-  playheadTime,
-}: {
-  canvas: HTMLCanvasElement | null;
-  timeline: EventEncoderTimelineResponse;
-  timeRange: TimeRange;
-  fullTimeRange: TimeRange;
-  frequencyRange: FrequencyRange;
-  yMode: YMode;
-  selectedK: number;
-  playheadTime: number | null;
-}) {
-  if (!canvas) return;
-  const size = { width: 240, height: 40 };
-  const ctx = prepareCanvas(canvas, size);
-  ctx.clearRect(0, 0, size.width, size.height);
-  ctx.fillStyle = "rgba(9, 9, 11, 0.95)";
-  ctx.fillRect(0, 0, size.width, size.height);
-
-  const fullStart = fullTimeRange.start;
-  const fullSpan = Math.max(1, fullTimeRange.end - fullStart);
-  for (const event of timeline.events) {
-    const x = ((event.start_timestamp - fullStart) / fullSpan) * size.width;
-    const frequency = eventCenterFrequency(event, yMode);
-    const y = size.height * (1 - clamp(frequency / MAX_FREQUENCY_HZ, 0, 1));
-    ctx.fillStyle = labelColor(event.token_id, Math.max(selectedK, 1));
-    ctx.globalAlpha = 0.85;
-    ctx.fillRect(Math.round(x), Math.round(y), 2, 2);
-  }
-  ctx.globalAlpha = 1;
-  const x1 = ((timeRange.start - fullStart) / fullSpan) * size.width;
-  const x2 = ((timeRange.end - fullStart) / fullSpan) * size.width;
-  const y1 = size.height * (1 - clamp(frequencyRange.max / MAX_FREQUENCY_HZ, 0, 1));
-  const y2 = size.height * (1 - clamp(frequencyRange.min / MAX_FREQUENCY_HZ, 0, 1));
-  ctx.strokeStyle = "#f8fafc";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x1, y1, Math.max(2, x2 - x1), Math.max(4, y2 - y1));
-
-  if (playheadTime != null) {
-    const playheadX = ((playheadTime - fullStart) / fullSpan) * size.width;
-    ctx.strokeStyle = "#facc15";
-    ctx.beginPath();
-    ctx.moveTo(playheadX, 0);
-    ctx.lineTo(playheadX, size.height);
-    ctx.stroke();
-  }
 }
 
 function createTransform({

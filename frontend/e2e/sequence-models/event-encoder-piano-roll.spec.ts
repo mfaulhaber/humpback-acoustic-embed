@@ -171,6 +171,7 @@ const TIMELINE_100 = {
 interface MockState {
   timelineRequests: string[];
   audioRequests: string[];
+  tileRequests: string[];
 }
 
 function buildSilentWav(seconds: number) {
@@ -235,7 +236,11 @@ function timelineEvent(
 }
 
 async function setupMocks(page: Page): Promise<MockState> {
-  const state: MockState = { timelineRequests: [], audioRequests: [] };
+  const state: MockState = {
+    timelineRequests: [],
+    audioRequests: [],
+    tileRequests: [],
+  };
 
   await page.addInitScript(() => {
     const nativeAudio = window.Audio;
@@ -261,16 +266,17 @@ async function setupMocks(page: Page): Promise<MockState> {
     });
   });
 
-  await page.route("**/call-parsing/region-jobs/*/tile**", (route) =>
-    route.fulfill({
+  await page.route("**/call-parsing/region-jobs/*/tile**", (route) => {
+    state.tileRequests.push(route.request().url());
+    return route.fulfill({
       status: 200,
       contentType: "image/png",
       body: Buffer.from(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+P+/HgAFeAJ5g5r0ZQAAAABJRU5ErkJggg==",
         "base64",
       ),
-    }),
-  );
+    });
+  });
 
   await page.route("**/sequence-models/event-encoders**", (route) => {
     const url = route.request().url();
@@ -348,7 +354,7 @@ async function eventPoint(
   const height = box?.height ?? 1;
   const x =
     62 + ((eventCenter - viewStart) / (viewEnd - viewStart)) * (width - 72);
-  const y = 8 + (1 - centerFrequency / 2000) * (height - 32);
+  const y = 8 + (1 - centerFrequency / 2000) * (height - 16);
   return { box, x, y };
 }
 
@@ -393,10 +399,10 @@ async function setCapturedAudioCurrentTime(
 }
 
 test.describe("Sequence Models - Event Encoder Piano Roll", () => {
-  test("renders toolbar, canvas, minimap, legend, and k selector", async ({
+  test("renders toolbar, canvas, bottom spectrogram, legend, and k selector", async ({
     page,
   }) => {
-    await setupMocks(page);
+    const state = await setupMocks(page);
     await page.goto(
       `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
     );
@@ -407,7 +413,13 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
     await expect(page.getByTestId("eej-piano-roll-duration")).toHaveText("2:40");
     await expect(page.getByTestId("eej-piano-roll-k-select")).toHaveValue("50");
     await expect(page.getByTestId("eej-piano-roll-play")).toBeVisible();
-    await expect(page.getByTestId("eej-piano-roll-minimap")).toBeVisible();
+    await expect(
+      page.getByTestId("eej-piano-roll-spectrogram-strip"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("eej-piano-roll-spectrogram-lod"),
+    ).toBeVisible();
+    await expect(page.getByTestId("eej-piano-roll-minimap")).toHaveCount(0);
     await expect(page.getByTestId("eej-piano-roll-legend-body")).toBeVisible();
     await expect(page.getByTestId("eej-piano-roll-canvas")).toHaveAttribute(
       "data-view-start",
@@ -427,8 +439,22 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
     );
 
     const canvasBox = await page.getByTestId("eej-piano-roll-canvas").boundingBox();
+    const stripBox = await page
+      .getByTestId("eej-piano-roll-spectrogram-strip")
+      .boundingBox();
     expect(canvasBox?.width ?? 0).toBeGreaterThan(500);
     expect(canvasBox?.height ?? 0).toBeGreaterThan(300);
+    expect(stripBox?.height ?? 0).toBeGreaterThanOrEqual(150);
+    expect(stripBox?.y ?? 0).toBeGreaterThan(
+      (canvasBox?.y ?? 0) + (canvasBox?.height ?? 0) - 1,
+    );
+    await expect
+      .poll(() =>
+        state.tileRequests.some(
+          (url) => url.includes("freq_min=0") && url.includes("freq_max=2000"),
+        ),
+      )
+      .toBe(true);
   });
 
   test("loading, not-found, and incomplete states render", async ({ page }) => {
@@ -520,7 +546,7 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
     );
   });
 
-  test("legend toggles, minimap centers the viewport, and focused selects suppress shortcuts", async ({
+  test("legend toggles, spectrogram collapses, and focused selects suppress shortcuts", async ({
     page,
   }) => {
     await setupMocks(page);
@@ -535,6 +561,22 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
 
     const canvas = page.getByTestId("eej-piano-roll-canvas");
     await expect(canvas).toBeVisible();
+    const beforeCollapseBox = await canvas.boundingBox();
+    await page.getByTestId("eej-piano-roll-spectrogram-toggle").click();
+    await expect(
+      page.getByTestId("eej-piano-roll-spectrogram-strip"),
+    ).toHaveCount(0);
+    await expect
+      .poll(async () => {
+        const afterCollapseBox = await canvas.boundingBox();
+        return afterCollapseBox?.height ?? 0;
+      })
+      .toBeGreaterThan(beforeCollapseBox?.height ?? 0);
+    await page.getByTestId("eej-piano-roll-spectrogram-toggle").click();
+    await expect(
+      page.getByTestId("eej-piano-roll-spectrogram-strip"),
+    ).toBeVisible();
+
     await page.keyboard.press("=");
     await expect
       .poll(async () => {
@@ -543,16 +585,47 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
         return end - start;
       })
       .toBeLessThan(160);
-    const beforeMinimap = await canvas.getAttribute("data-view-start");
-    await page
-      .getByTestId("eej-piano-roll-minimap")
-      .click({ position: { x: 220, y: 20 } });
-    await expect(canvas).not.toHaveAttribute("data-view-start", beforeMinimap ?? "");
-
     const beforeKeyboard = await canvas.getAttribute("data-view-start");
     await page.getByTestId("eej-piano-roll-k-select").focus();
     await page.keyboard.press("f");
     await expect(canvas).toHaveAttribute("data-view-start", beforeKeyboard ?? "");
+  });
+
+  test("spectrogram strip zoom and drag update the shared piano roll viewport", async ({
+    page,
+  }) => {
+    await setupMocks(page);
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const canvas = page.getByTestId("eej-piano-roll-canvas");
+    const strip = page.getByTestId("eej-piano-roll-spectrogram-strip");
+    await expect(strip).toBeVisible();
+    const stripBox = await strip.boundingBox();
+    expect(stripBox).not.toBeNull();
+
+    await page.mouse.move(
+      (stripBox?.x ?? 0) + (stripBox?.width ?? 0) / 2,
+      (stripBox?.y ?? 0) + (stripBox?.height ?? 0) / 2,
+    );
+    await page.mouse.wheel(0, -500);
+    await expect
+      .poll(async () => {
+        const start = Number(await canvas.getAttribute("data-view-start"));
+        const end = Number(await canvas.getAttribute("data-view-end"));
+        return end - start;
+      })
+      .toBeLessThan(160);
+
+    const beforeDrag = await canvas.getAttribute("data-view-start");
+    await page.mouse.down();
+    await page.mouse.move(
+      (stripBox?.x ?? 0) + (stripBox?.width ?? 0) / 2 + 120,
+      (stripBox?.y ?? 0) + (stripBox?.height ?? 0) / 2,
+    );
+    await page.mouse.up();
+    await expect(canvas).not.toHaveAttribute("data-view-start", beforeDrag ?? "");
   });
 
   test("canvas cursor, drag panning, and tooltip placement stay usable", async ({

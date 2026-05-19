@@ -793,8 +793,13 @@ export const regionTileUrl = (
   jobId: string,
   zoomLevel: string,
   tileIndex: number,
-) =>
-  `/call-parsing/region-jobs/${jobId}/tile?zoom_level=${zoomLevel}&tile_index=${tileIndex}`;
+  freqMin = 0,
+  freqMax = 3000,
+) => {
+  const min = Math.max(0, Math.round(freqMin));
+  const max = Math.max(min + 1, Math.round(freqMax));
+  return `/call-parsing/region-jobs/${jobId}/tile?zoom_level=${zoomLevel}&tile_index=${tileIndex}&freq_min=${min}&freq_max=${max}`;
+};
 
 export const regionAudioSliceUrl = (
   jobId: string,
