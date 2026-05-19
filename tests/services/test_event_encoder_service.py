@@ -210,7 +210,7 @@ async def test_descriptor_config_changes_signature(session):
     changed_payload = EventEncoderJobCreate(
         event_segmentation_job_id=seg.id,
         continuous_embedding_job_id=continuous.id,
-        descriptor=EventEncoderDescriptorConfig(ridge_max_frequency_hz=2500.0),
+        descriptor=EventEncoderDescriptorConfig(ridge_summary_low_percentile=5.0),
     )
     second, created = await create_event_encoder_job(session, changed_payload)
 

@@ -583,6 +583,21 @@ async def _build_encoded_events(
             ridge_peak_prominence_ratio=float(
                 descriptor_config.get("ridge_peak_prominence_ratio", 0.0)
             ),
+            ridge_summary_low_percentile=float(
+                descriptor_config.get("ridge_summary_low_percentile", 10.0)
+            ),
+            ridge_summary_high_percentile=float(
+                descriptor_config.get("ridge_summary_high_percentile", 90.0)
+            ),
+            band_peak_min_frequency_hz=float(
+                descriptor_config.get("band_peak_min_frequency_hz", 100.0)
+            ),
+            band_peak_max_frequency_hz=_optional_float(
+                descriptor_config.get("band_peak_max_frequency_hz")
+            ),
+            high_band_min_frequency_hz=float(
+                descriptor_config.get("high_band_min_frequency_hz", 1000.0)
+            ),
             f0_fmin=float(descriptor_config.get("f0_fmin", 70.0)),
             f0_fmax=float(descriptor_config.get("f0_fmax", 1200.0)),
             pulse_min_rate_hz=float(descriptor_config.get("pulse_min_rate_hz", 2.0)),
@@ -605,6 +620,10 @@ async def _build_encoded_events(
             )
         )
     return encoded, skip_reasons
+
+
+def _optional_float(value: Any) -> float | None:
+    return None if value is None else float(value)
 
 
 def _source_sequence_key(region_job: RegionDetectionJob) -> str:

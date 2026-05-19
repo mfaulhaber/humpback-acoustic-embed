@@ -7,6 +7,8 @@ from humpback.sequence_models.event_encoder import (
     ChunkEmbedding,
     DESCRIPTOR_ORDER,
     EventInterval,
+    _RidgePathResult,
+    _compute_ridge_summary_descriptors,
     build_event_embedding,
     compute_acoustic_descriptors,
     compute_gap_to_previous,
@@ -131,8 +133,16 @@ def test_acoustic_descriptors_identify_sine_peak_frequency():
     assert descriptors["bandwidth"] > 0
     assert 0 <= descriptors["spectral_entropy"] <= 1
     assert descriptors["ridge_log_frequency_slope"] == pytest.approx(0.0, abs=0.1)
+    assert descriptors["ridge_median_frequency"] == pytest.approx(437.5, abs=16.0)
+    assert descriptors["ridge_low_frequency"] == pytest.approx(437.5, abs=16.0)
+    assert descriptors["ridge_high_frequency"] == pytest.approx(437.5, abs=16.0)
+    assert descriptors["ridge_frequency_span"] == pytest.approx(0.0, abs=16.0)
+    assert descriptors["ridge_coverage"] > 0.9
+    assert descriptors["ridge_energy_ratio"] > 0.4
+    assert descriptors["band_limited_peak_frequency"] == pytest.approx(437.5, abs=16.0)
+    assert descriptors["high_band_energy_ratio"] < 0.1
     assert descriptors["gap_to_previous"] == pytest.approx(1.25)
-    assert vec.shape == (14,)
+    assert vec.shape == (22,)
     assert "frequency_slope" not in descriptors
 
 
@@ -295,6 +305,96 @@ def test_ridge_log_frequency_slope_tracks_log_chirp():
         expected,
         abs=0.5,
     )
+    assert 300.0 <= descriptors["ridge_median_frequency"] <= 1200.0
+    assert (
+        250.0
+        <= descriptors["ridge_low_frequency"]
+        <= descriptors["ridge_median_frequency"]
+    )
+    assert descriptors["ridge_high_frequency"] >= descriptors["ridge_median_frequency"]
+    assert descriptors["ridge_frequency_span"] > 200.0
+
+
+def test_ridge_summary_tracks_high_frequency_chirp():
+    sample_rate = 16000
+    audio = _log_chirp(
+        sample_rate=sample_rate,
+        duration=1.0,
+        start_hz=2200.0,
+        end_hz=4200.0,
+    )
+
+    descriptors = compute_acoustic_descriptors(
+        audio,
+        sample_rate=sample_rate,
+        n_fft=1024,
+        hop_length=256,
+        ridge_max_frequency_hz=6000.0,
+        band_peak_min_frequency_hz=1000.0,
+        high_band_min_frequency_hz=1000.0,
+    )
+
+    assert 2200.0 <= descriptors["ridge_median_frequency"] <= 4200.0
+    assert (
+        1800.0
+        <= descriptors["ridge_low_frequency"]
+        <= descriptors["ridge_median_frequency"]
+    )
+    assert descriptors["ridge_high_frequency"] >= descriptors["ridge_median_frequency"]
+    assert descriptors["ridge_frequency_span"] > 500.0
+    assert descriptors["ridge_coverage"] > 0.8
+    assert descriptors["ridge_energy_ratio"] > 0.2
+    assert descriptors["band_limited_peak_frequency"] >= 2000.0
+    assert descriptors["high_band_energy_ratio"] > 0.9
+
+
+def test_band_limited_peak_resists_low_frequency_rumble():
+    sample_rate = 16000
+    t = np.arange(sample_rate, dtype=np.float32) / sample_rate
+    rumble = np.sin(2.0 * np.pi * 62.5 * t)
+    whistle = 0.35 * np.sin(2.0 * np.pi * 2600.0 * t)
+    audio = (rumble + whistle).astype(np.float32)
+
+    descriptors = compute_acoustic_descriptors(
+        audio,
+        sample_rate=sample_rate,
+        n_fft=1024,
+        hop_length=512,
+        ridge_min_frequency_hz=500.0,
+        ridge_max_frequency_hz=6000.0,
+        band_peak_min_frequency_hz=500.0,
+    )
+
+    assert descriptors["peak_frequency"] < 100.0
+    assert descriptors["band_limited_peak_frequency"] == pytest.approx(
+        2600.0,
+        abs=20.0,
+    )
+    assert descriptors["ridge_median_frequency"] == pytest.approx(
+        2600.0,
+        abs=30.0,
+    )
+
+
+def test_ridge_summary_trimmed_bounds_resist_single_outlier_frame():
+    result = _RidgePathResult(
+        log_frequencies=np.log2(np.asarray([1000.0] * 9 + [6000.0], dtype=np.float64)),
+        frame_times=np.arange(10, dtype=np.float64),
+        strengths=np.ones(10, dtype=np.float64),
+        energy_ratios=np.ones(10, dtype=np.float64),
+        total_frames=10,
+    )
+
+    descriptors = _compute_ridge_summary_descriptors(
+        result,
+        low_percentile=10.0,
+        high_percentile=90.0,
+    )
+
+    assert descriptors["ridge_median_frequency"] == pytest.approx(1000.0)
+    assert descriptors["ridge_low_frequency"] == pytest.approx(1000.0)
+    assert descriptors["ridge_high_frequency"] < 6000.0
+    assert descriptors["ridge_frequency_span"] < 1000.0
 
 
 def test_ridge_log_frequency_slope_is_stable_across_harmonics():
@@ -398,7 +498,16 @@ def test_ridge_log_frequency_slope_returns_finite_zero_for_degenerate_inputs():
         assert descriptors["ridge_log_frequency_slope"] == 0.0
         assert np.isfinite(descriptors["inflection_count"])
         assert descriptors["inflection_count"] == 0.0
+        assert descriptors["ridge_median_frequency"] == 0.0
+        assert descriptors["ridge_low_frequency"] == 0.0
+        assert descriptors["ridge_high_frequency"] == 0.0
+        assert descriptors["ridge_frequency_span"] == 0.0
+        assert descriptors["ridge_coverage"] == 0.0
+        assert descriptors["ridge_energy_ratio"] == 0.0
         assert descriptor_vector(descriptors).shape == (len(DESCRIPTOR_ORDER),)
+    for descriptors in (empty, silent):
+        assert descriptors["band_limited_peak_frequency"] == 0.0
+        assert descriptors["high_band_energy_ratio"] == 0.0
 
 
 def _log_chirp(

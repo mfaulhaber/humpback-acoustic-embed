@@ -266,10 +266,15 @@ class EventEncoderDescriptorConfig(BaseModel):
     hop_length: int = 512
     eps: float = 1e-12
     ridge_min_frequency_hz: float = 100.0
-    ridge_max_frequency_hz: float = 3000.0
+    ridge_max_frequency_hz: float = 6000.0
     ridge_candidate_count: int = 5
     ridge_smoothness_penalty: float = 8.0
     ridge_peak_prominence_ratio: float = 0.0
+    ridge_summary_low_percentile: float = 10.0
+    ridge_summary_high_percentile: float = 90.0
+    band_peak_min_frequency_hz: float = 100.0
+    band_peak_max_frequency_hz: Optional[float] = None
+    high_band_min_frequency_hz: float = 1000.0
     f0_fmin: float = 70.0
     f0_fmax: float = 1200.0
     pulse_min_rate_hz: float = 2.0
@@ -311,6 +316,8 @@ class EventEncoderDescriptorConfig(BaseModel):
     @field_validator(
         "f0_fmin",
         "f0_fmax",
+        "band_peak_min_frequency_hz",
+        "high_band_min_frequency_hz",
         "pulse_min_rate_hz",
         "pulse_max_rate_hz",
         "pulse_envelope_smooth_ms",
@@ -319,6 +326,15 @@ class EventEncoderDescriptorConfig(BaseModel):
     def _validate_positive_descriptor_float(cls, value: float) -> float:
         if value <= 0:
             raise ValueError("tonal and pulse descriptor settings must be > 0")
+        return value
+
+    @field_validator("band_peak_max_frequency_hz")
+    @classmethod
+    def _validate_optional_positive_descriptor_float(
+        cls, value: Optional[float]
+    ) -> Optional[float]:
+        if value is not None and value <= 0:
+            raise ValueError("band_peak_max_frequency_hz must be > 0")
         return value
 
     @field_validator("pulse_confidence_threshold")
@@ -338,6 +354,23 @@ class EventEncoderDescriptorConfig(BaseModel):
             )
         if self.ridge_peak_prominence_ratio > 1:
             raise ValueError("ridge_peak_prominence_ratio must be <= 1")
+        if not (
+            0
+            <= self.ridge_summary_low_percentile
+            < self.ridge_summary_high_percentile
+            <= 100
+        ):
+            raise ValueError(
+                "ridge summary percentiles must satisfy 0 <= low < high <= 100"
+            )
+        if (
+            self.band_peak_max_frequency_hz is not None
+            and self.band_peak_max_frequency_hz <= self.band_peak_min_frequency_hz
+        ):
+            raise ValueError(
+                "band_peak_max_frequency_hz must be greater than "
+                "band_peak_min_frequency_hz"
+            )
         if self.f0_fmax <= self.f0_fmin:
             raise ValueError("f0_fmax must be greater than f0_fmin")
         if self.pulse_max_rate_hz <= self.pulse_min_rate_hz:
@@ -351,7 +384,7 @@ class EventEncoderPreprocessingConfig(BaseModel):
     l2_normalize_pools: bool = True
     pca_dim: Literal[64, 128] = 128
     embedding_weight: float = 1.0
-    descriptor_weight: float = 0.571
+    descriptor_weight: float = 0.364
     descriptor_clip_value: Optional[float] = 3.0
 
     @field_validator("embedding_weight", "descriptor_weight")
@@ -381,7 +414,7 @@ class EventEncoderJobCreate(BaseModel):
     event_segmentation_job_id: str
     event_source_mode: Literal["raw", "effective"] = "raw"
     continuous_embedding_job_id: str
-    tokenizer_version: str = "crnn-event-encoder-v2"
+    tokenizer_version: str = "crnn-event-encoder-v3"
     pooling: EventEncoderPoolingConfig = Field(
         default_factory=EventEncoderPoolingConfig
     )

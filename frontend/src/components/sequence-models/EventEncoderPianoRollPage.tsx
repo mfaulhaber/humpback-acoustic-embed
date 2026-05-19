@@ -21,9 +21,15 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import { labelColor } from "./constants";
+import {
+  hasRidgeFrequencyDescriptors,
+  isEventVoiced,
+  resolveEventDisplayBand,
+  type EventEncoderYMode,
+} from "./eventEncoderDisplayBand";
 import { EventEncoderSpectrogramStrip } from "./EventEncoderSpectrogramStrip";
 
-type YMode = "f0" | "peak";
+type YMode = EventEncoderYMode;
 type UnvoicedMode = "peak" | "bottom" | "hide";
 
 interface Size {
@@ -87,11 +93,10 @@ const UNVOICED_LANE_HEIGHT = 34;
 const MIN_TIME_SPAN_SECONDS = 2;
 const EVENT_TIME_BUFFER_SECONDS = 30;
 const CONTINUOUS_PLAYBACK_WINDOW_SECONDS = 300;
-const MAX_FREQUENCY_HZ = 5000;
+const MAX_FREQUENCY_HZ = 6000;
 const MIN_FREQUENCY_SPAN_HZ = 100;
 const DEFAULT_FREQUENCY_MAX = 2000;
-const VOICED_THRESHOLD = 0.3;
-const FREQUENCY_OPTIONS = [1500, 2000, 3000, 4000, 5000];
+const FREQUENCY_OPTIONS = [1500, 2000, 3000, 4000, 5000, 6000];
 
 export function EventEncoderPianoRollPage() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -243,7 +248,9 @@ function EventEncoderPianoRollViewer({
     min: 0,
     max: DEFAULT_FREQUENCY_MAX,
   });
-  const [yMode, setYMode] = useState<YMode>("f0");
+  const [yMode, setYMode] = useState<YMode>(() =>
+    hasRidgeFrequencyDescriptors(timeline.events) ? "ridge" : "f0",
+  );
   const [unvoicedMode, setUnvoicedMode] = useState<UnvoicedMode>("peak");
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
@@ -812,6 +819,7 @@ function EventEncoderPianoRollViewer({
             testId="eej-piano-roll-y-mode"
             onChange={(value) => setYMode(value as YMode)}
           >
+            <option value="ridge">Ridge</option>
             <option value="f0">Median F0</option>
             <option value="peak">Peak Frequency</option>
           </ToolbarSelect>
@@ -1154,6 +1162,18 @@ function EventTooltip({
       <TooltipRow label="median_f0" value={formatHz(values.median_f0)} />
       <TooltipRow label="f0_range" value={formatHz(values.f0_range)} />
       <TooltipRow label="peak" value={formatHz(values.peak_frequency)} />
+      {numeric(values.ridge_median_frequency) != null ? (
+        <>
+          <TooltipRow label="ridge_mid" value={formatHz(values.ridge_median_frequency)} />
+          <TooltipRow
+            label="ridge_band"
+            value={`${formatHz(values.ridge_low_frequency)} - ${formatHz(values.ridge_high_frequency)}`}
+          />
+          <TooltipRow label="ridge_cov" value={formatRatio(values.ridge_coverage)} />
+          <TooltipRow label="ridge_energy" value={formatRatio(values.ridge_energy_ratio)} />
+          <TooltipRow label="band_peak" value={formatHz(values.band_limited_peak_frequency)} />
+        </>
+      ) : null}
       <TooltipRow label="voicing" value={formatRatio(values.voicing_fraction)} />
       <TooltipRow
         label="ridge"
@@ -1526,7 +1546,8 @@ function eventRect(
   yMode: YMode,
   unvoicedMode: UnvoicedMode,
 ): DrawRect | null {
-  const voiced = isVoiced(event);
+  const displayBand = resolveEventDisplayBand(event, yMode);
+  const voiced = displayBand.ridgeTrusted || displayBand.voiced;
   if (!voiced && unvoicedMode === "hide") return null;
 
   const x1 = transform.timeToX(event.start_timestamp);
@@ -1547,10 +1568,9 @@ function eventRect(
     };
   }
 
-  const centerFrequency = eventCenterFrequency(event, yMode);
-  const f0Range = Math.max(0, numeric(event.descriptor_values.f0_range) ?? 0);
-  const yTop = transform.frequencyToY(centerFrequency + f0Range / 2);
-  const yBottom = transform.frequencyToY(centerFrequency - f0Range / 2);
+  const centerFrequency = displayBand.centerFrequency;
+  const yTop = transform.frequencyToY(displayBand.highFrequency);
+  const yBottom = transform.frequencyToY(displayBand.lowFrequency);
   const height = Math.max(4, yBottom - yTop);
   const y = height === 4
     ? transform.frequencyToY(centerFrequency) - 2
@@ -1566,17 +1586,6 @@ function eventRect(
     voiced,
     bottomLane: false,
   };
-}
-
-function eventCenterFrequency(event: EventEncoderTimelineEvent, yMode: YMode) {
-  const values = event.descriptor_values;
-  const peak = numeric(values.peak_frequency) ?? 0;
-  if (yMode === "peak" || !isVoiced(event)) return peak;
-  return numeric(values.median_f0) ?? peak;
-}
-
-function isVoiced(event: EventEncoderTimelineEvent) {
-  return (numeric(event.descriptor_values.voicing_fraction) ?? 0) > VOICED_THRESHOLD;
 }
 
 function prepareCanvas(canvas: HTMLCanvasElement, size: Size) {
@@ -1607,7 +1616,7 @@ function buildTokenSummaries(events: EventEncoderTimelineEvent[]): TokenSummary[
     };
     current.count += 1;
     const medianF0 = numeric(event.descriptor_values.median_f0);
-    if (isVoiced(event) && medianF0 != null) {
+    if (isEventVoiced(event) && medianF0 != null) {
       current.f0Sum += medianF0;
       current.f0Count += 1;
     }

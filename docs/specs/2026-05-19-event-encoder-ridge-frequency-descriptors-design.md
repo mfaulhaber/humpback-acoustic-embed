@@ -142,6 +142,10 @@ mean-spectrum peak only inside:
 - upper bound: `band_peak_max_frequency_hz`, default equal to the effective
   ridge maximum
 
+The high-band energy ratio should use:
+
+- lower bound: `high_band_min_frequency_hz`, default `1000.0`
+
 For high-frequency whistle/shriek work, new v3 jobs should increase the
 effective ridge upper bound from the current 3000 Hz default. Recommended
 default:
@@ -264,6 +268,7 @@ must tolerate missing ridge fields.
   - `ridge_summary_high_percentile`
   - `band_peak_min_frequency_hz`
   - `band_peak_max_frequency_hz`
+  - `high_band_min_frequency_hz`
 - Update default `tokenizer_version` to `crnn-event-encoder-v3`.
 - Update default `ridge_max_frequency_hz` to `6000.0`.
 - Update default `descriptor_weight` to `0.364`.

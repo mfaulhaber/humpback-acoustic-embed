@@ -31,6 +31,14 @@ DESCRIPTOR_ORDER = [
     "inflection_count",
     "pulse_rate",
     "pulse_rate_slope",
+    "ridge_median_frequency",
+    "ridge_low_frequency",
+    "ridge_high_frequency",
+    "ridge_frequency_span",
+    "ridge_coverage",
+    "ridge_energy_ratio",
+    "band_limited_peak_frequency",
+    "high_band_energy_ratio",
 ]
 
 DESCRIPTOR_UNITS = {
@@ -48,6 +56,14 @@ DESCRIPTOR_UNITS = {
     "inflection_count": "log count",
     "pulse_rate": "Hz",
     "pulse_rate_slope": "Hz/s",
+    "ridge_median_frequency": "Hz",
+    "ridge_low_frequency": "Hz",
+    "ridge_high_frequency": "Hz",
+    "ridge_frequency_span": "Hz",
+    "ridge_coverage": "normalized",
+    "ridge_energy_ratio": "normalized",
+    "band_limited_peak_frequency": "Hz",
+    "high_band_energy_ratio": "normalized",
 }
 
 
@@ -83,6 +99,15 @@ class EventEmbeddingResult:
     pools: dict[str, np.ndarray]
     chunk_count: int
     coverage_fraction: float
+
+
+@dataclass(frozen=True)
+class _RidgePathResult:
+    log_frequencies: np.ndarray
+    frame_times: np.ndarray
+    strengths: np.ndarray
+    energy_ratios: np.ndarray
+    total_frames: int
 
 
 def interval_overlap(
@@ -225,6 +250,11 @@ def compute_acoustic_descriptors(
     ridge_candidate_count: int = 5,
     ridge_smoothness_penalty: float = 8.0,
     ridge_peak_prominence_ratio: float = 0.0,
+    ridge_summary_low_percentile: float = 10.0,
+    ridge_summary_high_percentile: float = 90.0,
+    band_peak_min_frequency_hz: float = 100.0,
+    band_peak_max_frequency_hz: float | None = None,
+    high_band_min_frequency_hz: float = 1000.0,
     f0_fmin: float = 70.0,
     f0_fmax: float = 1200.0,
     pulse_min_rate_hz: float = 2.0,
@@ -253,6 +283,14 @@ def compute_acoustic_descriptors(
             "inflection_count": 0.0,
             "pulse_rate": 0.0,
             "pulse_rate_slope": 0.0,
+            "ridge_median_frequency": 0.0,
+            "ridge_low_frequency": 0.0,
+            "ridge_high_frequency": 0.0,
+            "ridge_frequency_span": 0.0,
+            "ridge_coverage": 0.0,
+            "ridge_energy_ratio": 0.0,
+            "band_limited_peak_frequency": 0.0,
+            "high_band_energy_ratio": 0.0,
         }
         return empty
 
@@ -276,8 +314,7 @@ def compute_acoustic_descriptors(
         entropy_raw = -float(np.sum(probs * np.log(probs + eps)))
         entropy = entropy_raw / float(np.log(len(probs))) if len(probs) > 1 else 0.0
 
-    ridge_frame_times: list[float] = []
-    ridge_path = _compute_ridge_path(
+    ridge_result = _compute_ridge_path_result(
         spectra,
         freqs,
         sample_rate=sample_rate,
@@ -288,18 +325,42 @@ def compute_acoustic_descriptors(
         candidate_count=ridge_candidate_count,
         smoothness_penalty=ridge_smoothness_penalty,
         peak_prominence_ratio=ridge_peak_prominence_ratio,
-        frame_times_out=ridge_frame_times,
     )
+    ridge_path = ridge_result.log_frequencies
     slope = (
         0.0
         if ridge_path.size < 2
         else _finite_float(
             _theil_sen_slope(
-                np.asarray(ridge_frame_times, dtype=np.float64), ridge_path
+                ridge_result.frame_times,
+                ridge_path,
             )
         )
     )
     inflection_count = _ridge_inflection_count(ridge_path)
+    ridge_summary = _compute_ridge_summary_descriptors(
+        ridge_result,
+        low_percentile=ridge_summary_low_percentile,
+        high_percentile=ridge_summary_high_percentile,
+    )
+    effective_band_peak_max = (
+        band_peak_max_frequency_hz
+        if band_peak_max_frequency_hz is not None
+        else ridge_max_frequency_hz
+    )
+    band_limited_peak = _band_limited_peak_frequency(
+        mean_spectrum,
+        freqs,
+        min_frequency_hz=band_peak_min_frequency_hz,
+        max_frequency_hz=effective_band_peak_max,
+        eps=eps,
+    )
+    high_band_energy_ratio = _energy_ratio_above_frequency(
+        mean_spectrum,
+        freqs,
+        min_frequency_hz=high_band_min_frequency_hz,
+        eps=eps,
+    )
     f0_descriptors = _compute_f0_descriptors(
         x,
         sample_rate=sample_rate,
@@ -327,6 +388,9 @@ def compute_acoustic_descriptors(
         **f0_descriptors,
         "inflection_count": inflection_count,
         **pulse_descriptors,
+        **ridge_summary,
+        "band_limited_peak_frequency": band_limited_peak,
+        "high_band_energy_ratio": high_band_energy_ratio,
     }
     return descriptors
 
@@ -380,16 +444,48 @@ def _compute_ridge_path(
     frame_times_out: list[float] | None = None,
 ) -> np.ndarray:
     """Return the Viterbi ridge path as log2 frequency values."""
+    result = _compute_ridge_path_result(
+        spectra,
+        freqs,
+        sample_rate=sample_rate,
+        hop_length=hop_length,
+        eps=eps,
+        min_frequency_hz=min_frequency_hz,
+        max_frequency_hz=max_frequency_hz,
+        candidate_count=candidate_count,
+        smoothness_penalty=smoothness_penalty,
+        peak_prominence_ratio=peak_prominence_ratio,
+    )
     if frame_times_out is not None:
         frame_times_out.clear()
+        frame_times_out.extend(result.frame_times.tolist())
+    return result.log_frequencies
+
+
+def _compute_ridge_path_result(
+    spectra: np.ndarray,
+    freqs: np.ndarray,
+    *,
+    sample_rate: int,
+    hop_length: int,
+    eps: float = 1e-12,
+    min_frequency_hz: float = 100.0,
+    max_frequency_hz: float = 3000.0,
+    candidate_count: int = 5,
+    smoothness_penalty: float = 8.0,
+    peak_prominence_ratio: float = 0.0,
+) -> _RidgePathResult:
+    """Return a tracked ridge path plus lightweight confidence summaries."""
+    total_frames = int(spectra.shape[0]) if spectra.ndim == 2 else 0
+    empty = _empty_ridge_path_result(total_frames)
     if sample_rate <= 0 or hop_length <= 0 or spectra.ndim != 2 or spectra.shape[0] < 2:
-        return np.asarray([], dtype=np.float64)
+        return empty
     freqs = np.asarray(freqs, dtype=np.float64)
     spectra = np.asarray(spectra, dtype=np.float64)
     if freqs.ndim != 1 or freqs.shape[0] != spectra.shape[1]:
-        return np.asarray([], dtype=np.float64)
+        return empty
     if min_frequency_hz <= 0 or max_frequency_hz <= min_frequency_hz:
-        return np.asarray([], dtype=np.float64)
+        return empty
 
     band_max = min(float(max_frequency_hz), float(freqs[-1]))
     band_mask = (
@@ -400,11 +496,15 @@ def _compute_ridge_path(
     )
     band_indices = np.flatnonzero(band_mask)
     if band_indices.size == 0:
-        return np.asarray([], dtype=np.float64)
+        return empty
 
     frame_candidates: list[tuple[np.ndarray, np.ndarray]] = []
     frame_times: list[float] = []
+    frame_energy_totals: list[float] = []
     for frame_idx, spectrum in enumerate(spectra[:, band_indices]):
+        spectrum = np.asarray(spectrum, dtype=np.float64)
+        spectrum = np.where(np.isfinite(spectrum), spectrum, 0.0)
+        spectrum = np.maximum(spectrum, 0.0)
         candidate_bins = _ridge_candidate_bins(
             spectrum,
             candidate_count=max(1, int(candidate_count)),
@@ -419,18 +519,50 @@ def _compute_ridge_path(
         candidate_freqs = freqs[band_indices[candidate_bins]]
         frame_candidates.append((np.log2(candidate_freqs), strengths))
         frame_times.append(float(frame_idx * hop_length / sample_rate))
+        frame_energy_totals.append(float(np.sum(spectrum)))
 
     if len(frame_candidates) < 2:
-        return np.asarray([], dtype=np.float64)
+        return empty
 
-    path = _track_log_frequency_path(
+    path, path_indices = _track_log_frequency_path(
         frame_candidates,
         smoothness_penalty=max(0.0, float(smoothness_penalty)),
         eps=eps,
     )
-    if frame_times_out is not None:
-        frame_times_out.extend(frame_times)
-    return path
+    selected_strengths = np.asarray(
+        [
+            frame_candidates[frame_idx][1][candidate_idx]
+            for frame_idx, candidate_idx in enumerate(path_indices)
+        ],
+        dtype=np.float64,
+    )
+    energy_ratios = np.asarray(
+        [
+            0.0
+            if total <= eps
+            else float(selected_strengths[frame_idx] / max(total, eps))
+            for frame_idx, total in enumerate(frame_energy_totals)
+        ],
+        dtype=np.float64,
+    )
+    return _RidgePathResult(
+        log_frequencies=path,
+        frame_times=np.asarray(frame_times, dtype=np.float64),
+        strengths=selected_strengths,
+        energy_ratios=energy_ratios,
+        total_frames=total_frames,
+    )
+
+
+def _empty_ridge_path_result(total_frames: int = 0) -> _RidgePathResult:
+    empty = np.asarray([], dtype=np.float64)
+    return _RidgePathResult(
+        log_frequencies=empty,
+        frame_times=empty,
+        strengths=empty,
+        energy_ratios=empty,
+        total_frames=max(0, int(total_frames)),
+    )
 
 
 def _ridge_candidate_bins(
@@ -478,7 +610,7 @@ def _track_log_frequency_path(
     *,
     smoothness_penalty: float,
     eps: float,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     previous_logs, previous_strengths = frame_candidates[0]
     previous_cost = _ridge_emission_cost(previous_strengths, eps=eps)
     backpointers: list[np.ndarray] = []
@@ -497,12 +629,128 @@ def _track_log_frequency_path(
         candidate_logs.append(current_logs)
 
     index = int(np.argmin(previous_cost))
-    path = [float(candidate_logs[-1][index])]
+    path_indices = [index]
     for frame_idx in range(len(backpointers) - 1, -1, -1):
         index = int(backpointers[frame_idx][index])
-        path.append(float(candidate_logs[frame_idx][index]))
-    path.reverse()
-    return np.asarray(path, dtype=np.float64)
+        path_indices.append(index)
+    path_indices.reverse()
+    path = [
+        float(candidate_logs[frame_idx][candidate_idx])
+        for frame_idx, candidate_idx in enumerate(path_indices)
+    ]
+    return (
+        np.asarray(path, dtype=np.float64),
+        np.asarray(path_indices, dtype=np.int64),
+    )
+
+
+def _compute_ridge_summary_descriptors(
+    result: _RidgePathResult,
+    *,
+    low_percentile: float,
+    high_percentile: float,
+) -> dict[str, float]:
+    empty = {
+        "ridge_median_frequency": 0.0,
+        "ridge_low_frequency": 0.0,
+        "ridge_high_frequency": 0.0,
+        "ridge_frequency_span": 0.0,
+        "ridge_coverage": 0.0,
+        "ridge_energy_ratio": 0.0,
+    }
+    if (
+        result.total_frames <= 0
+        or result.log_frequencies.size == 0
+        or low_percentile < 0
+        or high_percentile > 100
+        or high_percentile <= low_percentile
+    ):
+        return empty
+    ridge_hz = np.power(2.0, result.log_frequencies)
+    ridge_hz = ridge_hz[np.isfinite(ridge_hz) & (ridge_hz > 0)]
+    if ridge_hz.size == 0:
+        return empty
+    low = _finite_float(float(np.percentile(ridge_hz, low_percentile)))
+    high = _finite_float(float(np.percentile(ridge_hz, high_percentile)))
+    if high < low:
+        low, high = high, low
+    energy_ratios = result.energy_ratios[
+        np.isfinite(result.energy_ratios) & (result.energy_ratios >= 0)
+    ]
+    energy_ratio = (
+        _finite_float(float(np.median(np.clip(energy_ratios, 0.0, 1.0))))
+        if energy_ratios.size
+        else 0.0
+    )
+    return {
+        "ridge_median_frequency": _finite_float(float(np.median(ridge_hz))),
+        "ridge_low_frequency": low,
+        "ridge_high_frequency": high,
+        "ridge_frequency_span": _finite_float(max(0.0, high - low)),
+        "ridge_coverage": _finite_float(
+            min(1.0, float(result.log_frequencies.size / result.total_frames))
+        ),
+        "ridge_energy_ratio": energy_ratio,
+    }
+
+
+def _band_limited_peak_frequency(
+    mean_spectrum: np.ndarray,
+    freqs: np.ndarray,
+    *,
+    min_frequency_hz: float,
+    max_frequency_hz: float | None,
+    eps: float,
+) -> float:
+    if min_frequency_hz < 0:
+        return 0.0
+    freqs = np.asarray(freqs, dtype=np.float64)
+    spectrum = np.asarray(mean_spectrum, dtype=np.float64)
+    if freqs.ndim != 1 or spectrum.ndim != 1 or freqs.shape[0] != spectrum.shape[0]:
+        return 0.0
+    upper = float(freqs[-1]) if max_frequency_hz is None else float(max_frequency_hz)
+    if upper <= min_frequency_hz:
+        return 0.0
+    mask = (
+        np.isfinite(freqs)
+        & np.isfinite(spectrum)
+        & (freqs >= float(min_frequency_hz))
+        & (freqs <= min(upper, float(freqs[-1])))
+    )
+    if not np.any(mask):
+        return 0.0
+    band_spectrum = np.maximum(spectrum[mask], 0.0)
+    if band_spectrum.size == 0 or float(np.max(band_spectrum)) <= eps:
+        return 0.0
+    return _finite_float(float(freqs[mask][int(np.argmax(band_spectrum))]))
+
+
+def _energy_ratio_above_frequency(
+    mean_spectrum: np.ndarray,
+    freqs: np.ndarray,
+    *,
+    min_frequency_hz: float,
+    eps: float,
+) -> float:
+    freqs = np.asarray(freqs, dtype=np.float64)
+    spectrum = np.asarray(mean_spectrum, dtype=np.float64)
+    if (
+        min_frequency_hz < 0
+        or freqs.ndim != 1
+        or spectrum.ndim != 1
+        or freqs.shape[0] != spectrum.shape[0]
+    ):
+        return 0.0
+    valid = np.isfinite(freqs) & np.isfinite(spectrum)
+    if not np.any(valid):
+        return 0.0
+    clean_spectrum = np.maximum(spectrum[valid], 0.0)
+    clean_freqs = freqs[valid]
+    total = float(np.sum(clean_spectrum))
+    if total <= eps:
+        return 0.0
+    band = float(np.sum(clean_spectrum[clean_freqs >= float(min_frequency_hz)]))
+    return _finite_float(min(1.0, max(0.0, band / total)))
 
 
 def _ridge_inflection_count(path: np.ndarray) -> float:

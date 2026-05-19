@@ -124,7 +124,7 @@ async def test_event_encoder_worker_writes_artifacts(session, settings):
     assert job.total_events == 3
     assert job.encoded_events == 3
     assert job.skipped_events == 0
-    assert job.event_vector_dim == 16
+    assert job.event_vector_dim == 24
     assert job.event_vectors_path is not None
     assert job.event_tokens_path is not None
     assert job.token_sequences_path is not None
@@ -144,16 +144,23 @@ async def test_event_encoder_worker_writes_artifacts(session, settings):
     assert len(sequences) == 6
     assert "ridge_log_frequency_slope" in vector_columns
     assert "ridge_log_frequency_slope" in token_columns
+    assert "ridge_median_frequency" in vector_columns
+    assert "ridge_median_frequency" in token_columns
+    assert "band_limited_peak_frequency" in vector_columns
+    assert "band_limited_peak_frequency" in token_columns
     assert "frequency_slope" not in vector_columns
     assert "frequency_slope" not in token_columns
     assert "ridge_log_frequency_slope" in vectors[0]
     assert "ridge_log_frequency_slope" in tokens[0]
+    assert "ridge_median_frequency" in vectors[0]
+    assert "ridge_median_frequency" in tokens[0]
     assert manifest["descriptor_feature_names"] == DESCRIPTOR_ORDER
     assert manifest["valid_k_values"] == [1, 2]
     assert manifest["invalid_k_values"] == [99]
     assert report["summary"]["encoded_events"] == 3
     assert report["descriptor_feature_names"] == manifest["descriptor_feature_names"]
     assert "ridge_log_frequency_slope" in report["descriptor_summary"]
+    assert "ridge_median_frequency" in report["descriptor_summary"]
     assert report["token_examples"]["2"]["T00"][0]["event_id"]
     assert (
         event_encoder_dir(settings.storage_root, job.id) / "preprocess.joblib"

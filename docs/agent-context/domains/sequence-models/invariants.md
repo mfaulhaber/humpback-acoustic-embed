@@ -28,13 +28,21 @@
   raw or effective events.
 - Event Encoder token ids and `Txx` labels are job-local and k-local, not a
   stable global vocabulary.
-- The active Event Encoder non-CRNN descriptor order is `duration`,
+- The active v3 Event Encoder non-CRNN descriptor order is `duration`,
   `log_energy`, `peak_frequency`, `spectral_centroid`, `bandwidth`,
   `spectral_entropy`, `ridge_log_frequency_slope`, `gap_to_previous`,
   `median_f0`, `f0_range`, `voicing_fraction`, `inflection_count`,
-  `pulse_rate`, `pulse_rate_slope`.
+  `pulse_rate`, `pulse_rate_slope`, `ridge_median_frequency`,
+  `ridge_low_frequency`, `ridge_high_frequency`, `ridge_frequency_span`,
+  `ridge_coverage`, `ridge_energy_ratio`, `band_limited_peak_frequency`,
+  `high_band_energy_ratio`.
+- Existing v2 Event Encoder artifacts with the 14-entry descriptor order remain
+  readable because timeline endpoints derive descriptor fields from each
+  artifact manifest.
 - Event Encoder descriptor vectors are robust-z normalized, clipped to
   `descriptor_clip_value` (default 3.0, null disables clipping), then multiplied
   by `descriptor_weight`.
-- Event Encoder ridge slope persists only a scalar descriptor value; full STFT
-  matrices are not stored in Continuous Embedding artifacts for this feature.
+- Event Encoder ridge descriptors persist scalar summaries only, including
+  trimmed low/high ridge frequency bounds for piano roll display. Full STFT
+  matrices and frame-level ridge contours are not stored in Continuous
+  Embedding artifacts for this feature.

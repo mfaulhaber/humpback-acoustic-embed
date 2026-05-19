@@ -40,7 +40,9 @@ helpers, or the retained Sequence Models UI.
   job-local, k-local token ids, descriptor values, and Call Parsing region
   audio slices for playback. It includes a collapsible bottom spectrogram strip
   backed by Call Parsing region timeline tiles; the piano roll's smooth
-  viewport state remains the source of truth for that strip.
+  viewport state remains the source of truth for that strip. For v3 Event
+  Encoder artifacts it defaults to Ridge mode, using trimmed ridge low/high
+  frequency descriptors to set one token rectangle's vertical band.
 - Event Encoder timeline previous/next navigation can be token-scoped by
   toggling the selected event's token badge. This is a frontend-only affordance
   derived from the currently loaded selected-k timeline rows; it does not hide
@@ -69,12 +71,16 @@ helpers, or the retained Sequence Models UI.
 - `event_encoders/{job_id}/report.json`
 
 Event Encoder manifests record ordered `descriptor_feature_names`. The active
-14-entry non-CRNN descriptor block includes duration, energy, spectral shape,
-`ridge_log_frequency_slope`, `gap_to_previous`, F0 descriptors
+v3 22-entry non-CRNN descriptor block includes duration, energy, spectral
+shape, `ridge_log_frequency_slope`, `gap_to_previous`, F0 descriptors
 (`median_f0`, `f0_range`, `voicing_fraction`), contour complexity
-(`inflection_count`), and pulse descriptors (`pulse_rate`,
-`pulse_rate_slope`). Full STFT matrices, ridge traces, and F0 contours are not
-stored in Continuous Embedding artifacts.
+(`inflection_count`), pulse descriptors (`pulse_rate`, `pulse_rate_slope`),
+and ridge display descriptors (`ridge_median_frequency`,
+`ridge_low_frequency`, `ridge_high_frequency`, `ridge_frequency_span`,
+`ridge_coverage`, `ridge_energy_ratio`, `band_limited_peak_frequency`,
+`high_band_energy_ratio`). Older v2 artifacts with the 14-entry descriptor
+block remain readable through their manifests. Full STFT matrices, ridge
+traces, and F0 contours are not stored in Continuous Embedding artifacts.
 Descriptor vectors are robust-z normalized and clipped by the Event Encoder
 preprocessing config (`descriptor_clip_value`, default 3.0) before weighting and
 concatenation.
