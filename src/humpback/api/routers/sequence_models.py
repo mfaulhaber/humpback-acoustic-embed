@@ -58,6 +58,7 @@ from humpback.services.event_encoder_service import (
 )
 from humpback.services.piano_roll_notes_service import (
     PianoRollNotesJobConflict,
+    complete_for_encoder_job_version,
     enqueue_piano_roll_notes_job,
     latest_for_encoder_job,
 )
@@ -480,20 +481,27 @@ async def get_piano_roll_notes(
     if job is None:
         raise HTTPException(status_code=404, detail="event encoder job not found")
 
-    latest = await latest_for_encoder_job(session, event_encoder_job_id=job.id)
-    if latest is None or latest.status != JobStatus.complete.value:
-        raise HTTPException(
-            status_code=404,
-            detail="no completed piano roll notes job for this event encoder",
+    if extractor_version is not None:
+        latest = await complete_for_encoder_job_version(
+            session,
+            event_encoder_job_id=job.id,
+            extractor_version=extractor_version,
         )
-    if extractor_version is not None and latest.extractor_version != extractor_version:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"piano roll notes for extractor_version={extractor_version!r} "
-                "are not available"
-            ),
-        )
+        if latest is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"piano roll notes for extractor_version={extractor_version!r} "
+                    "are not available"
+                ),
+            )
+    else:
+        latest = await latest_for_encoder_job(session, event_encoder_job_id=job.id)
+        if latest is None or latest.status != JobStatus.complete.value:
+            raise HTTPException(
+                status_code=404,
+                detail="no completed piano roll notes job for this event encoder",
+            )
     if not latest.notes_path:
         raise HTTPException(status_code=404, detail="notes parquet not recorded")
 

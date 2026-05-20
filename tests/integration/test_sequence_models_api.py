@@ -986,3 +986,73 @@ async def test_get_notes_returns_404_without_completed_row(client, app_settings)
 
     response = await client.get(f"/sequence-models/event-encoders/{job_id}/notes")
     assert response.status_code == 404
+
+
+async def test_get_notes_pins_to_explicit_extractor_version(client, app_settings):
+    """Older complete row should be reachable by pinning to its version,
+    even when a newer version is the default ``latest_for_encoder_job`` pick."""
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+    base_rows = [
+        {
+            "event_id": "evt-a",
+            "event_token": 0,
+            "partial_index": 0,
+            "midi_pitch": 60,
+            "start_utc": 2100.0,
+            "start_offset_s": 0.0,
+            "duration_s": 0.5,
+            "velocity": 80,
+            "peak_magnitude": -2.5,
+            "track_id": 1,
+        }
+    ]
+    v1_path = await _write_notes_sidecar(app_settings, job_id, base_rows)
+    await _seed_notes_job(
+        app_settings,
+        job_id,
+        status=JobStatus.complete.value,
+        notes_path=str(v1_path),
+        n_notes=1,
+        extractor_version="v1",
+    )
+
+    v2_path = v1_path.with_name("event_notes_v2.parquet")
+    pq.write_table(
+        pa.Table.from_pylist(
+            [{**base_rows[0], "event_id": "evt-b", "midi_pitch": 72}],
+            schema=_NOTES_ROW_SCHEMA,
+        ),
+        v2_path,
+    )
+    await _seed_notes_job(
+        app_settings,
+        job_id,
+        status=JobStatus.complete.value,
+        notes_path=str(v2_path),
+        n_notes=1,
+        extractor_version="v2-experimental",
+    )
+
+    response_v1 = await client.get(
+        f"/sequence-models/event-encoders/{job_id}/notes",
+        params={"extractor_version": "v1"},
+    )
+    assert response_v1.status_code == 200, response_v1.text
+    body_v1 = response_v1.json()
+    assert body_v1["extractor_version"] == "v1"
+    assert body_v1["notes"][0]["event_id"] == "evt-a"
+
+    response_v2 = await client.get(
+        f"/sequence-models/event-encoders/{job_id}/notes",
+        params={"extractor_version": "v2-experimental"},
+    )
+    assert response_v2.status_code == 200, response_v2.text
+    body_v2 = response_v2.json()
+    assert body_v2["extractor_version"] == "v2-experimental"
+    assert body_v2["notes"][0]["event_id"] == "evt-b"
+
+    response_missing = await client.get(
+        f"/sequence-models/event-encoders/{job_id}/notes",
+        params={"extractor_version": "v99"},
+    )
+    assert response_missing.status_code == 404

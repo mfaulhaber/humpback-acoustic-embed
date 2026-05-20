@@ -21,6 +21,7 @@ from humpback.schemas.piano_roll_notes import (
 from humpback.services.piano_roll_notes_service import (
     PianoRollNotesJobConflict,
     auto_enqueue_after_encoder_complete,
+    complete_for_encoder_job_version,
     enqueue_piano_roll_notes_job,
     latest_for_encoder_job,
 )
@@ -180,6 +181,53 @@ async def test_latest_for_encoder_job_returns_none_when_absent(session) -> None:
     encoder_id = await _make_encoder_job(session)
     latest = await latest_for_encoder_job(session, event_encoder_job_id=encoder_id)
     assert latest is None
+
+
+@pytest.mark.asyncio
+async def test_complete_for_encoder_job_version_pinned_to_version(session) -> None:
+    encoder_id = await _make_encoder_job(session)
+    v1, _ = await enqueue_piano_roll_notes_job(
+        session, event_encoder_job_id=encoder_id, extractor_version="v1"
+    )
+    v1.status = JobStatus.complete.value
+    v1.finished_at = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    v2, _ = await enqueue_piano_roll_notes_job(
+        session, event_encoder_job_id=encoder_id, extractor_version="v2-experimental"
+    )
+    v2.status = JobStatus.complete.value
+    v2.finished_at = datetime(2026, 5, 2, tzinfo=timezone.utc)
+    await session.commit()
+
+    pinned = await complete_for_encoder_job_version(
+        session, event_encoder_job_id=encoder_id, extractor_version="v2-experimental"
+    )
+    assert pinned is not None
+    assert pinned.id == v2.id
+
+    pinned_v1 = await complete_for_encoder_job_version(
+        session, event_encoder_job_id=encoder_id, extractor_version="v1"
+    )
+    assert pinned_v1 is not None
+    assert pinned_v1.id == v1.id
+
+    missing = await complete_for_encoder_job_version(
+        session, event_encoder_job_id=encoder_id, extractor_version="v99"
+    )
+    assert missing is None
+
+
+@pytest.mark.asyncio
+async def test_complete_for_encoder_job_version_ignores_incomplete(session) -> None:
+    encoder_id = await _make_encoder_job(session)
+    queued, _ = await enqueue_piano_roll_notes_job(
+        session, event_encoder_job_id=encoder_id, extractor_version="v1"
+    )
+    # row is queued, not complete
+    pinned = await complete_for_encoder_job_version(
+        session, event_encoder_job_id=encoder_id, extractor_version="v1"
+    )
+    assert pinned is None
+    assert queued.status == JobStatus.queued.value
 
 
 @pytest.mark.asyncio

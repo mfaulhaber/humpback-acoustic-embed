@@ -164,6 +164,20 @@ def _atomic_write_parquet(table: pa.Table, dst: Path) -> None:
         raise
 
 
+def _cleanup_partial_parquet(path: Path) -> None:
+    """Remove the canonical parquet (and any leftover tmp) after a job failure."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    for candidate in (path, tmp):
+        try:
+            candidate.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(
+                "piano_roll_notes | could not remove partial artifact %s",
+                candidate,
+                exc_info=True,
+            )
+
+
 async def run_piano_roll_notes_job(
     session: AsyncSession,
     job: PianoRollNotesJob,
@@ -174,6 +188,7 @@ async def run_piano_roll_notes_job(
     started_wall = time.monotonic()
     started_dt = datetime.now(timezone.utc)
 
+    notes_path: Optional[Path] = None
     try:
         job = await session.merge(job)
         job.started_at = started_dt
@@ -226,6 +241,8 @@ async def run_piano_roll_notes_job(
         )
     except Exception as exc:
         logger.exception("piano_roll_notes job %s failed", job_id)
+        if notes_path is not None:
+            _cleanup_partial_parquet(notes_path)
         failed = await session.get(PianoRollNotesJob, job_id)
         target = failed if failed is not None else job
         target.status = JobStatus.failed.value
@@ -358,7 +375,6 @@ async def _extract_notes(
     )
 
     region_offset = float(region_job.start_timestamp or 0.0)
-    frame_seconds = params.cqt.hop_length / params.cqt.target_sample_rate
 
     failures: list[tuple[str, str]] = []
     per_frame_magnitudes: list[float] = []
@@ -430,13 +446,11 @@ async def _extract_notes(
         except Exception as exc:  # noqa: BLE001
             failures.append((event.event_id, _truncate(str(exc), limit=200)))
             logger.warning(
-                "piano_roll_notes | event=%s failed: %s", event.event_id, exc
+                "piano_roll_notes | event=%s failed",
+                event.event_id,
+                exc_info=True,
             )
 
-    del frame_seconds  # currently unused; reserved for future use
-
-    if not pending and failures and not events:
-        raise RuntimeError("piano roll notes had no events to process")
     if not pending and failures:
         raise RuntimeError(
             f"piano roll notes had no successful events ({len(failures)} failures)"
@@ -511,20 +525,21 @@ def _load_event_token_map(settings: Settings, encoder_job_id: str) -> dict[str, 
     tokens_path = event_encoder_tokens_path(settings.storage_root, encoder_job_id)
     if not tokens_path.exists():
         return {}
-    table = pq.read_table(tokens_path, columns=["k", "event_id", "token_id"])
-    if table.num_rows == 0:
+    k_values = pq.read_table(tokens_path, columns=["k"]).column("k").to_pylist()
+    if not k_values:
         return {}
-    ks = table.column("k").to_pylist()
-    if not ks:
-        return {}
-    target_k = max(int(k) for k in ks)
+    target_k = max(int(k) for k in k_values)
+    filtered = pq.read_table(
+        tokens_path,
+        columns=["event_id", "token_id"],
+        filters=[("k", "==", target_k)],
+    )
     out: dict[str, int] = {}
-    for k, event_id, token_id in zip(
-        ks, table.column("event_id").to_pylist(), table.column("token_id").to_pylist()
+    for event_id, token_id in zip(
+        filtered.column("event_id").to_pylist(),
+        filtered.column("token_id").to_pylist(),
     ):
-        if int(k) != target_k:
-            continue
-        out[str(event_id)] = int(token_id)
+        out.setdefault(str(event_id), int(token_id))
     return out
 
 

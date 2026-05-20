@@ -322,6 +322,19 @@ function EventEncoderPianoRollViewer({
     }
   }, [isNotesMode, lastRectangleMode, notesQueryError]);
 
+  useEffect(() => {
+    // Re-enable auto-switch only after recovering from a /notes fetch failure;
+    // a deliberate user mode pick stays put even if notesAvailable flips.
+    if (notesAvailable && notesFallbackToastedRef.current) {
+      notesFallbackToastedRef.current = false;
+      userViewModeOverrideRef.current = false;
+    }
+  }, [notesAvailable]);
+
+  useEffect(() => {
+    setHoveredNoteIndex(null);
+  }, [tokenFilter]);
+
   const setViewModeFromUser = useCallback((next: ViewMode) => {
     userViewModeOverrideRef.current = true;
     if (next !== "notes") {
@@ -1693,16 +1706,9 @@ function NoteTooltip({
           style={{ backgroundColor: color }}
           data-testid="eej-piano-roll-note-tooltip-color"
         >
-          MIDI {note.midi_pitch}
-        </span>
-        <span className="font-mono text-zinc-500">
-          {midiNoteName(note.midi_pitch)}
+          MIDI {note.midi_pitch} ({midiNoteName(note.midi_pitch)})
         </span>
       </div>
-      <TooltipRow
-        label="pitch"
-        value={`MIDI ${note.midi_pitch} (${midiNoteName(note.midi_pitch)})`}
-      />
       <TooltipRow label="velocity" value={String(note.velocity)} />
       <TooltipRow
         label="duration"

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from humpback.models.piano_roll_notes import (
@@ -144,6 +145,30 @@ async def latest_for_encoder_job(
     return any_q.scalar_one_or_none()
 
 
+async def complete_for_encoder_job_version(
+    session: AsyncSession,
+    *,
+    event_encoder_job_id: str,
+    extractor_version: str,
+) -> Optional[PianoRollNotesJob]:
+    """Most-recent ``complete`` row pinned to a specific extractor version.
+
+    Sorts by ``finished_at desc`` and falls back to ``id desc`` for determinism
+    if two rows share a timestamp.
+    """
+    result = await session.execute(
+        select(PianoRollNotesJob)
+        .where(
+            PianoRollNotesJob.event_encoder_job_id == event_encoder_job_id,
+            PianoRollNotesJob.extractor_version == extractor_version,
+            PianoRollNotesJob.status == _TERMINAL_COMPLETE,
+        )
+        .order_by(desc(PianoRollNotesJob.finished_at), desc(PianoRollNotesJob.id))
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def auto_enqueue_after_encoder_complete(
     session: AsyncSession,
     *,
@@ -159,22 +184,23 @@ async def auto_enqueue_after_encoder_complete(
             session,
             event_encoder_job_id=event_encoder_job_id,
         )
-        if created:
-            logger.info(
-                "piano_roll_notes | auto-enqueued | job=%s encoder=%s",
-                job.id,
-                event_encoder_job_id,
-            )
-        return job
     except PianoRollNotesJobConflict:
         # In-flight job already exists; nothing to do.
         return None
-    except Exception:
+    except (ValueError, IntegrityError, OperationalError):
         logger.exception(
             "piano_roll_notes | auto-enqueue failed for encoder=%s",
             event_encoder_job_id,
         )
         return None
+
+    if created:
+        logger.info(
+            "piano_roll_notes | auto-enqueued | job=%s encoder=%s",
+            job.id,
+            event_encoder_job_id,
+        )
+    return job
 
 
 async def _get_by_key(
@@ -197,5 +223,6 @@ __all__ = [
     "enqueue_piano_roll_notes_job",
     "get_piano_roll_notes_job",
     "latest_for_encoder_job",
+    "complete_for_encoder_job_version",
     "auto_enqueue_after_encoder_complete",
 ]
