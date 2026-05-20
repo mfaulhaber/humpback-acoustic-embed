@@ -572,3 +572,72 @@ whether to expose per-job overrides of the quantizer's
 extending the range bumps `extractor_version` and triggers a re-run on
 demand without invalidating older runs.
 
+## ADR-066: User-initiated async MIDI export for Piano Roll Notes
+
+**Status**: Accepted
+**Date**: 2026-05-20
+
+**Context**: The Piano Roll Notes worker (ADR-064) emits one parquet row
+per detected MIDI note. Users have no built-in path to export this data as
+a Standard MIDI File for use in DAWs or MIDI viewers. A persisted `.mid`
+artifact is also useful as a portable, browseable representation of the
+notes payload outside the app.
+
+**Decision**: Add a user-initiated asynchronous MIDI export pipeline
+parallel to (but independent of) the Piano Roll Notes worker.
+
+- Storage: a new top-level `<storage_root>/exports/` directory holds export
+  artifacts; MIDI exports specifically live under
+  `exports/event_encoders/{job_id}/notes_{extractor_version}.mid`.
+- Persistence: a new `piano_roll_midi_exports` table tracks each export
+  job, idempotent on `(event_encoder_job_id, extractor_version)`. The
+  unique key allows `force=true` to reset a `complete` row back to
+  `queued` so users can refresh exports.
+- Worker: `piano_roll_midi_export_worker.run_piano_roll_midi_export` mirrors
+  the Piano Roll Notes worker lifecycle (queued → running → complete /
+  failed, atomic write with `.tmp` rename, partial-file cleanup on
+  exception). The queue claim and runner dispatch follow the same pattern.
+- Synthesis: `humpback.processing.midi_synthesis.notes_table_to_midi_bytes`
+  is a pure, deterministic function that takes a pyarrow Table matching
+  the Piano Roll Notes schema and returns SMF Type 1 bytes. Conventions:
+  480 ticks-per-quarter, constant 120 BPM tempo (written once at tick 0),
+  all partials stacked on MIDI channel 1, time origin shifted to the
+  earliest note's `start_utc`, velocity used verbatim, pitches outside
+  `[0, 127]` clamped silently, zero-duration notes dropped.
+- API: `GET /event-encoders/{id}/midi-export-status`,
+  `POST /event-encoders/{id}/midi-exports`, and
+  `GET /event-encoders/{id}/midi-export` mirror the notes endpoint shape.
+- UI: an "Export MIDI" button to the left of the Notes status pill drives
+  the lifecycle (disabled until notes are `complete`; transitions through
+  "Exporting…" to "Download MIDI"). A small overflow menu next to the
+  download button exposes a "Re-export" item that submits `force=true`.
+- Library: `mido` (pure Python, no native deps). Chosen because it is the
+  de-facto MIDI standard, supports SMF read/write, and exposes every
+  primitive the deferred MPE pitch-bend extension will need (multi-channel
+  pitch bend, RPN sequences for the MPE Configuration Message and bend
+  range setup, CC 74 timbre, channel pressure). No library change will be
+  required when pitch-bend lands.
+
+Alternatives considered:
+- *Folding MIDI generation into the notes worker.* Rejected because it
+  ties the export rules to the notes lifecycle, forces every notes run to
+  pay the synthesis cost, and complicates re-export.
+- *Frontend-side MIDI synthesis.* Rejected because the user-stated
+  requirement is a persisted artifact under the root app path, which
+  client-side synthesis cannot satisfy.
+- *Lazy backend endpoint that synthesizes on demand.* Considered as a
+  fallback, but the user wanted an async worker so the UI can signal
+  completion status, matching the existing Notes pill pattern.
+
+**Consequences**:
+- One new table, model, schema, service, worker, and three API endpoints
+  added under the sequence-models domain.
+- `mido` becomes a base dependency (small, pure Python, no platform
+  considerations).
+- The export action is per-job and per-extractor-version. Users who want a
+  fresh `.mid` after editing notes parquet must POST with `force=true`.
+- Per-frame pitch contours and pitch-bend rendering remain explicitly out
+  of scope. When added, they require a parquet schema extension (notes
+  `v2`) and an MPE-aware synthesizer; both can be implemented inside this
+  module without library or API redesign.
+

@@ -18,6 +18,7 @@ from humpback.models.hyperparameter import (
 )
 from humpback.models.labeling import VocalizationLabel
 from humpback.models.model_registry import ModelConfig, TFLiteModelConfig
+from humpback.models.piano_roll_midi_export import PianoRollMidiExport
 from humpback.models.piano_roll_notes import (
     DEFAULT_EXTRACTOR_VERSION,
     PianoRollNotesJob,
@@ -46,6 +47,7 @@ __all__ = [
     "HyperparameterManifest",
     "HyperparameterSearchJob",
     "ModelConfig",
+    "PianoRollMidiExport",
     "PianoRollNotesJob",
     "DEFAULT_EXTRACTOR_VERSION",
     "RegionDetectionJob",

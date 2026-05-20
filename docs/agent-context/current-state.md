@@ -68,6 +68,11 @@ full. Read the relevant domain section when planning or implementing.
   completion, and persists `event_notes_{version}.parquet` next to the encoder
   artifacts. The UI surfaces a `Notes` pill on the Event Encoder job table and
   in the piano roll toolbar, plus a `Generate notes` / `Re-run` action.
+- Piano Roll Notes can also be exported to a Standard MIDI File via a
+  user-initiated async export worker (`piano_roll_midi_exports` table). The
+  artifact lives under `<storage_root>/exports/event_encoders/{job_id}/`.
+  An "Export MIDI" button in the piano roll toolbar drives the lifecycle and
+  becomes "Download MIDI" once the file is on disk.
 
 ## Frontend Shell
 

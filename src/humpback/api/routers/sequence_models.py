@@ -16,6 +16,12 @@ from humpback.models.call_parsing import RegionDetectionJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.sequence_models.event_encoder import DESCRIPTOR_ORDER, descriptor_units
+from humpback.schemas.piano_roll_midi_export import (
+    PianoRollMidiExportCreateRequest,
+    PianoRollMidiExportRead,
+    PianoRollMidiExportStatusAbsent,
+    PianoRollMidiExportStatusResponse,
+)
 from humpback.schemas.piano_roll_notes import (
     PianoRollNote,
     PianoRollNotesJobCreateRequest,
@@ -56,12 +62,19 @@ from humpback.services.event_encoder_service import (
     get_event_encoder_job,
     list_event_encoder_jobs,
 )
+from humpback.services.piano_roll_midi_export_service import (
+    PianoRollMidiExportConflict,
+    complete_for_encoder_job_version as midi_export_complete_for_encoder_job_version,
+    enqueue_piano_roll_midi_export,
+    latest_for_encoder_job as midi_export_latest_for_encoder_job,
+)
 from humpback.services.piano_roll_notes_service import (
     PianoRollNotesJobConflict,
     complete_for_encoder_job_version,
     enqueue_piano_roll_notes_job,
     latest_for_encoder_job,
 )
+from humpback.storage import event_encoder_midi_export_path
 
 router = APIRouter(prefix="/sequence-models", tags=["sequence-models"])
 
@@ -545,6 +558,107 @@ async def get_piano_roll_notes(
         extractor_version=latest.extractor_version,
         n_notes=len(filtered),
         notes=filtered,
+    )
+
+
+@router.get("/event-encoders/{job_id}/midi-export-status")
+async def get_piano_roll_midi_export_status(
+    job_id: str,
+    session: SessionDep,
+    extractor_version: Optional[str] = Query(default=None),
+) -> PianoRollMidiExportStatusResponse:
+    job = await get_event_encoder_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="event encoder job not found")
+
+    if extractor_version is not None:
+        pinned = await midi_export_complete_for_encoder_job_version(
+            session,
+            event_encoder_job_id=job.id,
+            extractor_version=extractor_version,
+        )
+        if pinned is None:
+            return PianoRollMidiExportStatusAbsent()
+        return PianoRollMidiExportRead.model_validate(pinned)
+
+    latest = await midi_export_latest_for_encoder_job(
+        session, event_encoder_job_id=job.id
+    )
+    if latest is None:
+        return PianoRollMidiExportStatusAbsent()
+    return PianoRollMidiExportRead.model_validate(latest)
+
+
+@router.post("/event-encoders/{job_id}/midi-exports")
+async def create_piano_roll_midi_export(
+    job_id: str,
+    body: PianoRollMidiExportCreateRequest,
+    session: SessionDep,
+    response: Response,
+) -> PianoRollMidiExportRead:
+    job = await get_event_encoder_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="event encoder job not found")
+
+    try:
+        row, created = await enqueue_piano_roll_midi_export(
+            session,
+            event_encoder_job_id=job.id,
+            extractor_version=body.extractor_version,
+            params=body.params,
+            force=body.force,
+        )
+    except PianoRollMidiExportConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    response.status_code = 201 if created else 200
+    return PianoRollMidiExportRead.model_validate(row)
+
+
+@router.get("/event-encoders/{job_id}/midi-export")
+async def download_piano_roll_midi_export(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    extractor_version: Optional[str] = Query(default=None),
+) -> Response:
+    job = await get_event_encoder_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="event encoder job not found")
+
+    if extractor_version is not None:
+        row = await midi_export_complete_for_encoder_job_version(
+            session,
+            event_encoder_job_id=job.id,
+            extractor_version=extractor_version,
+        )
+    else:
+        row = await midi_export_latest_for_encoder_job(
+            session, event_encoder_job_id=job.id
+        )
+        if row is not None and row.status != JobStatus.complete.value:
+            row = None
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="no completed MIDI export for this event encoder",
+        )
+
+    midi_file = event_encoder_midi_export_path(
+        settings.storage_root, job.id, row.extractor_version
+    )
+    if not midi_file.exists():
+        raise HTTPException(
+            status_code=404, detail="MIDI export file not found on disk"
+        )
+
+    filename = f"event_encoder_{job.id}_notes_{row.extractor_version}.mid"
+    return Response(
+        content=midi_file.read_bytes(),
+        media_type="audio/midi",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

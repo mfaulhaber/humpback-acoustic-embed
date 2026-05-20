@@ -16,10 +16,15 @@ helpers, or the retained Sequence Models UI.
 - `src/humpback/workers/continuous_embedding_worker.py`
 - `src/humpback/workers/event_encoder_worker.py`
 - `src/humpback/workers/piano_roll_notes_worker.py`
+- `src/humpback/workers/piano_roll_midi_export_worker.py`
+- `src/humpback/services/piano_roll_midi_export_service.py`
+- `src/humpback/processing/midi_synthesis.py`
 - `src/humpback/models/sequence_models.py`
 - `src/humpback/models/piano_roll_notes.py`
+- `src/humpback/models/piano_roll_midi_export.py`
 - `src/humpback/schemas/sequence_models.py`
 - `src/humpback/schemas/piano_roll_notes.py`
+- `src/humpback/schemas/piano_roll_midi_export.py`
 - `frontend/src/components/sequence-models/`
 - `frontend/src/api/sequenceModels.ts`
 - `frontend/src/components/sequence-models/EventEncoderTimelinePanel.tsx`
@@ -56,6 +61,20 @@ helpers, or the retained Sequence Models UI.
   gridlines, octave labels (C0…C8), and black-key shading. If the
   `.../notes` fetch fails, the page reverts to the previous rectangle mode
   with a non-blocking toast and leaves the Notes selector greyed out.
+- The Piano Roll page exposes an "Export MIDI" button to the left of the
+  Notes status badge. Clicking it enqueues an asynchronous MIDI export job
+  (`piano_roll_midi_exports` table) whose worker reads the notes parquet,
+  synthesizes a Standard MIDI File via `humpback.processing.midi_synthesis`,
+  and persists it under
+  `<storage_root>/exports/event_encoders/{job_id}/notes_{version}.mid`.
+  The button is disabled until notes status is `complete`. Status pill
+  states (`absent → queued → running → complete`) drive the button label;
+  on `complete` the button becomes "Download MIDI" and an overflow menu
+  exposes a "Re-export" affordance that POSTs with `force=true`. MIDI
+  conventions: SMF Type 1, 480 PPQ, constant 120 BPM, all partials stacked
+  on MIDI channel 1, time origin shifted to the earliest note's `start_utc`.
+  Pitch-bend is deferred; the underlying `mido` library already supports
+  the MPE primitives needed for the future extension.
 - Event Encoder timeline previous/next navigation can be token-scoped by
   toggling the selected event's token badge. This is a frontend-only affordance
   derived from the currently loaded selected-k timeline rows; it does not hide
@@ -83,6 +102,7 @@ helpers, or the retained Sequence Models UI.
 - `event_encoders/{job_id}/manifest.json`
 - `event_encoders/{job_id}/report.json`
 - `event_encoders/{job_id}/event_notes_{extractor_version}.parquet` (Piano Roll Notes sidecar; first version is `v1`)
+- `exports/event_encoders/{job_id}/notes_{extractor_version}.mid` (Piano Roll Notes MIDI export artifact produced on demand by the export worker)
 
 Event Encoder manifests record ordered `descriptor_feature_names`. The active
 v3 22-entry non-CRNN descriptor block includes duration, energy, spectral
@@ -106,6 +126,7 @@ concatenation.
 - ADR-063: Event Encoder v3 ridge frequency descriptors for piano-roll display.
 - ADR-064: Piano Roll Notes sidecar worker.
 - ADR-065: Extended Piano Roll Notes pitch range (deferred placeholder).
+- ADR-066: User-initiated async MIDI export for Piano Roll Notes.
 
 ## Likely Neighbors
 
