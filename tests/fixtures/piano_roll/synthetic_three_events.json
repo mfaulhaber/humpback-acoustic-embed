@@ -1,0 +1,54 @@
+{
+  "sample_rate": 22050,
+  "duration_s": 6.0,
+  "events": [
+    {
+      "event_id": "ev1",
+      "start_s": 0.5,
+      "end_s": 1.2,
+      "fundamental_hz": 220.0,
+      "n_harmonics": 3
+    },
+    {
+      "event_id": "ev2",
+      "start_s": 2.0,
+      "end_s": 2.8,
+      "fundamental_hz": 330.0,
+      "n_harmonics": 2
+    },
+    {
+      "event_id": "ev3",
+      "start_s": 4.0,
+      "end_s": 4.8,
+      "fundamental_hz": 523.25,
+      "n_harmonics": 2
+    }
+  ],
+  "expected_notes": [
+    {
+      "event_id": "ev1",
+      "midi_pitch": 57,
+      "partial_index": 0
+    },
+    {
+      "event_id": "ev1",
+      "midi_pitch": 69,
+      "partial_index": 1
+    },
+    {
+      "event_id": "ev2",
+      "midi_pitch": 64,
+      "partial_index": 0
+    },
+    {
+      "event_id": "ev3",
+      "midi_pitch": 72,
+      "partial_index": 0
+    },
+    {
+      "event_id": "ev3",
+      "midi_pitch": 84,
+      "partial_index": 1
+    }
+  ]
+}

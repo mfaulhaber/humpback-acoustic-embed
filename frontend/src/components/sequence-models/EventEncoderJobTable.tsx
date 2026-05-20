@@ -8,7 +8,9 @@ import {
   type EventEncoderJob,
   useCancelEventEncoderJob,
   useDeleteEventEncoderJob,
+  usePianoRollNotesStatus,
 } from "@/api/sequenceModels";
+import { PianoRollNotesStatusPill } from "./PianoRollNotesStatusPill";
 
 interface TableProps {
   jobs: EventEncoderJob[];
@@ -30,6 +32,7 @@ export function EventEncoderJobTable({ jobs, mode }: TableProps) {
           <th className="px-3 py-2 text-left font-medium">Events</th>
           <th className="px-3 py-2 text-left font-medium">Vector Dim</th>
           <th className="px-3 py-2 text-left font-medium">k</th>
+          <th className="px-3 py-2 text-left font-medium">Notes</th>
           <th className="px-3 py-2 text-left font-medium">
             {mode === "active" ? "Actions" : ""}
           </th>
@@ -57,6 +60,9 @@ export function EventEncoderJobTable({ jobs, mode }: TableProps) {
               {job.event_vector_dim ?? "-"}
             </td>
             <td className="px-3 py-2 text-xs">{formatKValues(job)}</td>
+            <td className="px-3 py-2 text-xs">
+              <NotesStatusCell job={job} />
+            </td>
             <td className="px-3 py-2">
               {mode === "active" ? (
                 <Button
@@ -96,7 +102,7 @@ export function EventEncoderJobTable({ jobs, mode }: TableProps) {
         {jobs.length === 0 ? (
           <tr>
             <td
-              colSpan={8}
+              colSpan={9}
               className="px-3 py-4 text-center text-muted-foreground text-xs"
             >
               No jobs found.
@@ -105,6 +111,26 @@ export function EventEncoderJobTable({ jobs, mode }: TableProps) {
         ) : null}
       </tbody>
     </table>
+  );
+}
+
+function NotesStatusCell({ job }: { job: EventEncoderJob }) {
+  const enabled = job.status === "complete";
+  const { data } = usePianoRollNotesStatus(enabled ? job.id : null);
+  if (!enabled) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+  if (!data) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+  return (
+    <Link
+      to={`/app/sequence-models/event-encoder/${job.id}/piano-roll`}
+      className="inline-block hover:opacity-80"
+      data-testid={`eej-notes-pill-link-${job.id}`}
+    >
+      <PianoRollNotesStatusPill status={data} />
+    </Link>
   );
 }
 

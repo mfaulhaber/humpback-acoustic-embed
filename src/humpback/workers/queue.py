@@ -315,6 +315,23 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count_eej:
         logger.warning(f"Recovered {count_eej} stale event encoder job(s)")
 
+    from humpback.models.piano_roll_notes import PianoRollNotesJob
+
+    result_prn = await session.execute(
+        update(PianoRollNotesJob)
+        .where(
+            PianoRollNotesJob.status == JobStatus.running.value,
+            PianoRollNotesJob.updated_at < cutoff,
+        )
+        .values(
+            status=JobStatus.queued.value,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count_prn = _rowcount(result_prn)
+    if count_prn:
+        logger.warning(f"Recovered {count_prn} stale piano roll notes job(s)")
+
     total = (
         count2
         + count3
@@ -331,6 +348,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
         + count17
         + count_cej
         + count_eej
+        + count_prn
     )
     if total:
         await session.commit()
@@ -729,6 +747,23 @@ async def claim_event_encoder_job(session: AsyncSession):
             queued_value=JobStatus.queued.value,
             running_value=JobStatus.running.value,
             order_attr=EventEncoderJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
+async def claim_piano_roll_notes_job(session: AsyncSession):
+    from humpback.models.piano_roll_notes import PianoRollNotesJob
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            PianoRollNotesJob,
+            status_attr=PianoRollNotesJob.status,
+            queued_value=JobStatus.queued.value,
+            running_value=JobStatus.running.value,
+            order_attr=PianoRollNotesJob.created_at,
         )
         if job is not None:
             return job

@@ -1,6 +1,41 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { expect, test, type Page } from "@playwright/test";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = resolve(__filename, "..");
+
 const SILENT_WAV = buildSilentWav(5);
+
+interface FixtureEvent {
+  event_id: string;
+  start_s: number;
+  end_s: number;
+  fundamental_hz: number;
+  n_harmonics: number;
+}
+
+interface FixtureExpectedNote {
+  event_id: string;
+  midi_pitch: number;
+  partial_index: number;
+}
+
+interface FixtureMetadata {
+  sample_rate: number;
+  duration_s: number;
+  events: FixtureEvent[];
+  expected_notes: FixtureExpectedNote[];
+}
+
+const FIXTURE: FixtureMetadata = JSON.parse(
+  readFileSync(
+    resolve(__dirname, "../../../tests/fixtures/piano_roll/synthetic_three_events.json"),
+    "utf-8",
+  ),
+);
 
 const REGION_JOB_ID = "rj-piano-roll-1";
 const JOB_START = 1_751_644_800;
@@ -280,10 +315,79 @@ const TIMELINE_RIDGE = {
   ],
 };
 
+type NotesStatusMock =
+  | { status: "absent" }
+  | {
+      id: string;
+      event_encoder_job_id: string;
+      extractor_version: string;
+      status: "queued" | "running" | "complete" | "failed" | "canceled";
+      started_at: string | null;
+      finished_at: string | null;
+      error_message: string | null;
+      notes_path: string | null;
+      n_events: number | null;
+      n_notes: number | null;
+      compute_seconds: number | null;
+      params_json: string;
+      created_at: string;
+      updated_at: string;
+    };
+
+interface NotesPayload {
+  job_id: string;
+  extractor_version: string;
+  n_notes: number;
+  notes: PianoRollNoteRow[];
+}
+
+interface PianoRollNoteRow {
+  event_id: string;
+  event_token: number;
+  partial_index: number;
+  midi_pitch: number;
+  start_utc: number;
+  start_offset_s: number;
+  duration_s: number;
+  velocity: number;
+  peak_magnitude: number;
+  track_id: number;
+}
+
 interface MockState {
   timelineRequests: string[];
   audioRequests: string[];
   tileRequests: string[];
+  notesStatusRequests: string[];
+  notesJobsRequests: string[];
+  notesRequests: string[];
+  notesStatus: NotesStatusMock;
+  notesPayload: NotesPayload | null;
+  notesFailWithStatus: number | null;
+}
+
+function buildNotesStatus(
+  status: Exclude<NotesStatusMock["status"], "absent">,
+  overrides: Partial<Exclude<NotesStatusMock, { status: "absent" }>> = {},
+): NotesStatusMock {
+  return {
+    id: "prn-1",
+    event_encoder_job_id: COMPLETE_JOB.id,
+    extractor_version: "v1",
+    status,
+    started_at: null,
+    finished_at: null,
+    error_message:
+      status === "failed" ? "audio missing for one event" : null,
+    notes_path: status === "complete" ? "/tmp/notes.parquet" : null,
+    n_events: status === "complete" ? 3 : null,
+    n_notes: status === "complete" ? 12 : null,
+    compute_seconds: status === "complete" ? 1.2 : null,
+    params_json: "{}",
+    created_at: "2026-05-20T01:00:00Z",
+    updated_at: "2026-05-20T01:05:00Z",
+    ...overrides,
+  };
 }
 
 function buildSilentWav(seconds: number) {
@@ -358,11 +462,24 @@ function timelineEvent(
   };
 }
 
-async function setupMocks(page: Page): Promise<MockState> {
+async function setupMocks(
+  page: Page,
+  options: {
+    notesStatus?: NotesStatusMock;
+    notesPayload?: NotesPayload | null;
+    notesFailWithStatus?: number;
+  } = {},
+): Promise<MockState> {
   const state: MockState = {
     timelineRequests: [],
     audioRequests: [],
     tileRequests: [],
+    notesStatusRequests: [],
+    notesJobsRequests: [],
+    notesRequests: [],
+    notesStatus: options.notesStatus ?? { status: "absent" },
+    notesPayload: options.notesPayload ?? null,
+    notesFailWithStatus: options.notesFailWithStatus ?? null,
   };
 
   await page.addInitScript(() => {
@@ -414,6 +531,43 @@ async function setupMocks(page: Page): Promise<MockState> {
     }
 
     const id = idMatch[1];
+    if (url.includes("/notes-status")) {
+      state.notesStatusRequests.push(url);
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(state.notesStatus),
+      });
+    }
+
+    if (url.includes("/notes-jobs")) {
+      state.notesJobsRequests.push(url);
+      state.notesStatus = buildNotesStatus("queued");
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(state.notesStatus),
+      });
+    }
+
+    if (/\/notes(?:$|\?)/.test(url)) {
+      state.notesRequests.push(url);
+      if (state.notesFailWithStatus != null) {
+        return route.fulfill({ status: state.notesFailWithStatus });
+      }
+      const payload: NotesPayload = state.notesPayload ?? {
+        job_id: id,
+        extractor_version: "v1",
+        n_notes: 0,
+        notes: [],
+      };
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(payload),
+      });
+    }
+
     if (url.includes("/timeline")) {
       state.timelineRequests.push(url);
       const selectedK = new URL(url).searchParams.get("k");
@@ -946,5 +1100,274 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
       .poll(async () => Number(await canvas.getAttribute("data-view-start")))
       .toBeGreaterThan(beforeStart);
     await expect(canvas).toHaveAttribute("data-playhead-time", /1751644863/);
+  });
+
+  test("notes status pill shows 'absent' and Generate notes triggers the mutation", async ({
+    page,
+  }) => {
+    const state = await setupMocks(page);
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const pill = page.getByTestId("piano-roll-notes-status-pill").first();
+    await expect(pill).toBeVisible();
+    await expect(pill).toHaveAttribute("data-notes-status", "absent");
+    await expect(pill).toHaveText("Notes: absent");
+
+    const generate = page.getByTestId("eej-piano-roll-notes-generate");
+    await expect(generate).toBeVisible();
+    await expect(generate).toHaveText("Generate notes");
+    await generate.click();
+    await expect
+      .poll(() => state.notesJobsRequests.length)
+      .toBeGreaterThanOrEqual(1);
+    await expect
+      .poll(async () =>
+        page.getByTestId("piano-roll-notes-status-pill").first()
+          .getAttribute("data-notes-status"),
+      )
+      .toBe("queued");
+  });
+
+  test("notes status pill shows 'queued' with disabled progress label", async ({
+    page,
+  }) => {
+    await setupMocks(page, { notesStatus: buildNotesStatus("queued") });
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const pill = page.getByTestId("piano-roll-notes-status-pill").first();
+    await expect(pill).toHaveAttribute("data-notes-status", "queued");
+    await expect(page.getByTestId("eej-piano-roll-notes-generate")).toHaveCount(0);
+    await expect(page.getByTestId("eej-piano-roll-notes-progress")).toBeVisible();
+  });
+
+  test("notes status pill shows 'running' with disabled progress label", async ({
+    page,
+  }) => {
+    await setupMocks(page, { notesStatus: buildNotesStatus("running") });
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const pill = page.getByTestId("piano-roll-notes-status-pill").first();
+    await expect(pill).toHaveAttribute("data-notes-status", "running");
+    await expect(page.getByTestId("eej-piano-roll-notes-progress")).toBeVisible();
+    await expect(page.getByTestId("eej-piano-roll-notes-generate")).toHaveCount(0);
+  });
+
+  test("notes status pill shows 'complete' with no generate action", async ({
+    page,
+  }) => {
+    await setupMocks(page, { notesStatus: buildNotesStatus("complete") });
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const pill = page.getByTestId("piano-roll-notes-status-pill").first();
+    await expect(pill).toHaveAttribute("data-notes-status", "complete");
+    await expect(page.getByTestId("eej-piano-roll-notes-generate")).toHaveCount(0);
+    await expect(page.getByTestId("eej-piano-roll-notes-progress")).toHaveCount(0);
+  });
+
+  test("Notes mode renders note bars and tooltip when status is complete", async ({
+    page,
+  }) => {
+    const notesPayload: NotesPayload = {
+      job_id: COMPLETE_JOB.id,
+      extractor_version: "v1",
+      n_notes: 2,
+      notes: [
+        {
+          event_id: "evt-a",
+          event_token: 3,
+          partial_index: 0,
+          midi_pitch: 60,
+          start_utc: JOB_START + 11,
+          start_offset_s: 0,
+          duration_s: 0.5,
+          velocity: 96,
+          peak_magnitude: -2.0,
+          track_id: 1,
+        },
+        {
+          event_id: "evt-b",
+          event_token: 7,
+          partial_index: 1,
+          midi_pitch: 72,
+          start_utc: JOB_START + 28,
+          start_offset_s: 0,
+          duration_s: 0.4,
+          velocity: 64,
+          peak_magnitude: -3.0,
+          track_id: 2,
+        },
+      ],
+    };
+    await setupMocks(page, {
+      notesStatus: buildNotesStatus("complete"),
+      notesPayload,
+    });
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const canvas = page.getByTestId("eej-piano-roll-canvas");
+    await expect(canvas).toHaveAttribute("data-view-mode", "notes");
+    await expect(canvas).toHaveAttribute("data-notes-mode", "true");
+    await expect
+      .poll(async () => canvas.getAttribute("data-notes-count"))
+      .toBe("2");
+
+    await expect(page.getByTestId("eej-piano-roll-y-mode")).toHaveValue("notes");
+
+    const box = await canvas.boundingBox();
+    expect(box).not.toBeNull();
+    const viewStart = Number(await canvas.getAttribute("data-view-start"));
+    const viewEnd = Number(await canvas.getAttribute("data-view-end"));
+    const width = box?.width ?? 1;
+    const height = box?.height ?? 1;
+    const noteCenterTime = JOB_START + 11.25;
+    const x = 62 + ((noteCenterTime - viewStart) / (viewEnd - viewStart)) * (width - 72);
+    const plotTop = 8;
+    const plotBottom = height - 8;
+    const ratio = (60 - 21 + 0.5) / 88;
+    const y = plotBottom - ratio * (plotBottom - plotTop);
+
+    await canvas.hover({ position: { x, y } });
+    await expect(page.getByTestId("eej-piano-roll-note-tooltip")).toBeVisible();
+    await expect(page.getByTestId("eej-piano-roll-note-tooltip")).toContainText(
+      "MIDI 60 (C4)",
+    );
+    await expect(page.getByTestId("eej-piano-roll-note-tooltip")).toContainText(
+      "F0",
+    );
+    await expect(page.getByTestId("eej-piano-roll-note-tooltip")).toContainText(
+      "96",
+    );
+  });
+
+  test("Notes mode falls back to rectangle view when /notes fetch fails", async ({
+    page,
+  }) => {
+    await setupMocks(page, {
+      notesStatus: buildNotesStatus("complete"),
+      notesFailWithStatus: 500,
+    });
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const canvas = page.getByTestId("eej-piano-roll-canvas");
+    await expect
+      .poll(async () => canvas.getAttribute("data-view-mode"))
+      .not.toBe("notes");
+    await expect(page.getByTestId("eej-piano-roll-y-mode")).not.toHaveValue(
+      "notes",
+    );
+  });
+
+  test("Notes mode renders all expected pitches from the synthetic three-event fixture", async ({
+    page,
+  }) => {
+    const eventById = new Map(FIXTURE.events.map((event) => [event.event_id, event]));
+    const fixtureNotes: PianoRollNoteRow[] = FIXTURE.expected_notes.map(
+      (expected, index) => {
+        const event = eventById.get(expected.event_id);
+        if (!event) {
+          throw new Error(`fixture references unknown event ${expected.event_id}`);
+        }
+        return {
+          event_id: expected.event_id,
+          event_token: 11,
+          partial_index: expected.partial_index,
+          midi_pitch: expected.midi_pitch,
+          start_utc: JOB_START + event.start_s,
+          start_offset_s: 0,
+          duration_s: event.end_s - event.start_s,
+          velocity: 80,
+          peak_magnitude: -2.5,
+          track_id: index + 1,
+        };
+      },
+    );
+    const notesPayload: NotesPayload = {
+      job_id: COMPLETE_JOB.id,
+      extractor_version: "v1",
+      n_notes: fixtureNotes.length,
+      notes: fixtureNotes,
+    };
+    await setupMocks(page, {
+      notesStatus: buildNotesStatus("complete"),
+      notesPayload,
+    });
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const canvas = page.getByTestId("eej-piano-roll-canvas");
+    await expect(canvas).toHaveAttribute("data-view-mode", "notes");
+    await expect
+      .poll(async () => canvas.getAttribute("data-notes-count"))
+      .toBe(String(fixtureNotes.length));
+
+    const targetEvent = eventById.get("ev1");
+    if (!targetEvent) throw new Error("fixture missing ev1");
+    const noteCenterTime = JOB_START + (targetEvent.start_s + targetEvent.end_s) / 2;
+    const box = await canvas.boundingBox();
+    expect(box).not.toBeNull();
+    const viewStart = Number(await canvas.getAttribute("data-view-start"));
+    const viewEnd = Number(await canvas.getAttribute("data-view-end"));
+    const width = box?.width ?? 1;
+    const height = box?.height ?? 1;
+    const x =
+      62 + ((noteCenterTime - viewStart) / (viewEnd - viewStart)) * (width - 72);
+    const plotTop = 8;
+    const plotBottom = height - 8;
+    const ratio = (57 - 21 + 0.5) / 88;
+    const y = plotBottom - ratio * (plotBottom - plotTop);
+
+    await canvas.hover({ position: { x, y } });
+    const tooltip = page.getByTestId("eej-piano-roll-note-tooltip");
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toContainText("MIDI 57 (A3)");
+    await expect(tooltip).toContainText("F0");
+  });
+
+  test("Notes option is disabled and labeled unavailable when notes are absent", async ({
+    page,
+  }) => {
+    await setupMocks(page);
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const yMode = page.getByTestId("eej-piano-roll-y-mode");
+    const notesOption = yMode.locator('option[value="notes"]');
+    await expect(notesOption).toHaveAttribute("disabled", "");
+    await expect(notesOption).toContainText("unavailable");
+  });
+
+  test("notes status pill shows 'failed' with Re-run and reveals error on click", async ({
+    page,
+  }) => {
+    await setupMocks(page, { notesStatus: buildNotesStatus("failed") });
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const pill = page.getByTestId("piano-roll-notes-status-pill").first();
+    await expect(pill).toHaveAttribute("data-notes-status", "failed");
+    const generate = page.getByTestId("eej-piano-roll-notes-generate");
+    await expect(generate).toHaveText("Re-run");
+
+    await expect(page.getByTestId("eej-piano-roll-notes-error")).toHaveCount(0);
+    await page.getByTestId("eej-piano-roll-notes-pill-button").click();
+    await expect(page.getByTestId("eej-piano-roll-notes-error")).toBeVisible();
+    await expect(page.getByTestId("eej-piano-roll-notes-error")).toHaveText(
+      "audio missing for one event",
+    );
   });
 });

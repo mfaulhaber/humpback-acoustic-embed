@@ -169,6 +169,69 @@ export interface EventEncoderTimelineEvent {
   descriptor_vector_values: Record<string, number>;
 }
 
+export type PianoRollNotesJobStatus =
+  | "queued"
+  | "running"
+  | "complete"
+  | "failed"
+  | "canceled";
+
+export interface PianoRollNotesJobRead {
+  id: string;
+  event_encoder_job_id: string;
+  extractor_version: string;
+  status: PianoRollNotesJobStatus;
+  started_at: string | null;
+  finished_at: string | null;
+  error_message: string | null;
+  notes_path: string | null;
+  n_events: number | null;
+  n_notes: number | null;
+  compute_seconds: number | null;
+  params_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PianoRollNotesStatusAbsent {
+  status: "absent";
+}
+
+export type PianoRollNotesStatus =
+  | PianoRollNotesJobRead
+  | PianoRollNotesStatusAbsent;
+
+export function isPianoRollNotesStatusAbsent(
+  status: PianoRollNotesStatus,
+): status is PianoRollNotesStatusAbsent {
+  return status.status === "absent";
+}
+
+export interface PianoRollNote {
+  event_id: string;
+  event_token: number;
+  partial_index: number;
+  midi_pitch: number;
+  start_utc: number;
+  start_offset_s: number;
+  duration_s: number;
+  velocity: number;
+  peak_magnitude: number;
+  track_id: number;
+}
+
+export interface PianoRollNotesResponse {
+  job_id: string;
+  extractor_version: string;
+  n_notes: number;
+  notes: PianoRollNote[];
+}
+
+export interface CreatePianoRollNotesJobRequest {
+  extractor_version?: string;
+  params?: Record<string, unknown>;
+}
+
 export interface EventEncoderTimelineResponse {
   job_id: string;
   event_segmentation_job_id: string;
@@ -182,6 +245,7 @@ export interface EventEncoderTimelineResponse {
   job_start_timestamp: number;
   job_end_timestamp: number;
   events: EventEncoderTimelineEvent[];
+  notes_status: PianoRollNotesStatus;
 }
 
 export type EventEncoderProjectionMethod = "umap" | "pca";
@@ -355,6 +419,56 @@ export function deleteEventEncoderJob(jobId: string): Promise<void> {
   return request<void>(`${EVENT_ENCODER_ROOT}/${jobId}`, { method: "DELETE" });
 }
 
+export function fetchPianoRollNotesStatus(
+  jobId: string,
+): Promise<PianoRollNotesStatus> {
+  return request<PianoRollNotesStatus>(
+    `${EVENT_ENCODER_ROOT}/${jobId}/notes-status`,
+  );
+}
+
+export interface PianoRollNotesViewport {
+  startUtc?: number | null;
+  endUtc?: number | null;
+  eventIds?: string[] | null;
+  extractorVersion?: string | null;
+}
+
+export function fetchPianoRollNotes(
+  jobId: string,
+  viewport: PianoRollNotesViewport = {},
+): Promise<PianoRollNotesResponse> {
+  const params = new URLSearchParams();
+  if (viewport.startUtc != null) params.set("start_utc", String(viewport.startUtc));
+  if (viewport.endUtc != null) params.set("end_utc", String(viewport.endUtc));
+  if (viewport.eventIds) {
+    for (const id of viewport.eventIds) {
+      params.append("event_ids", id);
+    }
+  }
+  if (viewport.extractorVersion) {
+    params.set("extractor_version", viewport.extractorVersion);
+  }
+  const qs = params.toString();
+  return request<PianoRollNotesResponse>(
+    `${EVENT_ENCODER_ROOT}/${jobId}/notes${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export function createPianoRollNotesJob(
+  jobId: string,
+  body: CreatePianoRollNotesJobRequest = {},
+): Promise<PianoRollNotesJobRead> {
+  return request<PianoRollNotesJobRead>(
+    `${EVENT_ENCODER_ROOT}/${jobId}/notes-jobs`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 
 export function isContinuousEmbeddingJobActive(
@@ -496,6 +610,59 @@ export function useDeleteEventEncoderJob() {
     mutationFn: (jobId: string) => deleteEventEncoderJob(jobId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["event-encoder-jobs"] });
+    },
+  });
+}
+
+const ACTIVE_NOTES_STATUSES = new Set<PianoRollNotesJobStatus>(["queued", "running"]);
+
+function isActiveNotesStatus(status: PianoRollNotesStatus): boolean {
+  return (
+    status.status !== "absent" && ACTIVE_NOTES_STATUSES.has(status.status)
+  );
+}
+
+export function usePianoRollNotesStatus(jobId: string | null) {
+  return useQuery({
+    queryKey: ["piano-roll-notes-status", jobId],
+    queryFn: () => fetchPianoRollNotesStatus(jobId as string),
+    enabled: jobId != null,
+    refetchInterval: (query) => {
+      const data = query.state.data as PianoRollNotesStatus | undefined;
+      if (!data) return 3000;
+      return isActiveNotesStatus(data) ? 3000 : false;
+    },
+  });
+}
+
+export function usePianoRollNotes(
+  jobId: string | null,
+  viewport: PianoRollNotesViewport,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: [
+      "piano-roll-notes",
+      jobId,
+      viewport.startUtc ?? null,
+      viewport.endUtc ?? null,
+      viewport.extractorVersion ?? null,
+      viewport.eventIds ? [...viewport.eventIds].sort().join(",") : null,
+    ],
+    queryFn: () => fetchPianoRollNotes(jobId as string, viewport),
+    enabled: enabled && jobId != null,
+  });
+}
+
+export function useCreatePianoRollNotesJob(jobId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreatePianoRollNotesJobRequest = {}) =>
+      createPianoRollNotesJob(jobId as string, body),
+    onSuccess: () => {
+      if (jobId == null) return;
+      qc.invalidateQueries({ queryKey: ["piano-roll-notes-status", jobId] });
+      qc.invalidateQueries({ queryKey: ["event-encoder-timeline", jobId] });
     },
   });
 }

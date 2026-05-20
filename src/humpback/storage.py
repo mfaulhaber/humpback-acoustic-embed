@@ -130,6 +130,16 @@ def event_encoder_kmeans_path(storage_root: Path, job_id: str, k: int) -> Path:
     return event_encoder_dir(storage_root, job_id) / f"kmeans_k{k}.joblib"
 
 
+def event_encoder_notes_path(
+    storage_root: Path, job_id: str, extractor_version: str
+) -> Path:
+    """Path to the Piano Roll Notes parquet sidecar for an Event Encoder job."""
+    return (
+        event_encoder_dir(storage_root, job_id)
+        / f"event_notes_{extractor_version}.parquet"
+    )
+
+
 def hyperparameter_manifest_dir(storage_root: Path, manifest_id: str) -> Path:
     return storage_root / "hyperparameter" / "manifests" / manifest_id
 

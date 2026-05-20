@@ -62,6 +62,12 @@ full. Read the relevant domain section when planning or implementing.
 - Continuous Embedding jobs are idempotent on `encoding_signature`.
 - Sequence Models depends on Call Parsing for upstream segmentation/region
   source identity and on Signal Timeline for audio resolution semantics.
+- Piano Roll Notes is a sidecar worker that decorates completed Event Encoder
+  jobs with per-event MIDI notes. The worker is idempotent on
+  `(event_encoder_job_id, extractor_version)`, auto-enqueues on encoder
+  completion, and persists `event_notes_{version}.parquet` next to the encoder
+  artifacts. The UI surfaces a `Notes` pill on the Event Encoder job table and
+  in the piano roll toolbar, plus a `Generate notes` / `Re-run` action.
 
 ## Frontend Shell
 
