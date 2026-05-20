@@ -151,11 +151,11 @@ Phases A and B are backend-only and can land in one PR or two. Phase C requires 
 - Modify: `src/humpback/api/routers/sequence_models.py`
 
 **Acceptance criteria:**
-- [ ] `GET /sequence-models/event-encoders/{job_id}/notes-status` returns `PianoRollNotesStatusResponse`.
-- [ ] `POST /sequence-models/event-encoders/{job_id}/notes-jobs` enqueues a job; body accepts optional `extractor_version` and `params`. Returns `PianoRollNotesJobRead`. 409 when a `running` row exists for the same key.
-- [ ] `GET /sequence-models/event-encoders/{job_id}/notes` reads `event_notes_v1.parquet` and returns rows filtered by `start_utc`, `end_utc`, and optional `event_ids`. Defaults to the latest completed `extractor_version` for the job.
-- [ ] `GET /sequence-models/event-encoders/{job_id}/timeline` payload extended with a `notes_status` field (the same shape as `/notes-status`). The existing response shape is otherwise unchanged.
-- [ ] Pyright clean; new schemas re-exported.
+- [x] `GET /sequence-models/event-encoders/{job_id}/notes-status` returns `PianoRollNotesStatusResponse`.
+- [x] `POST /sequence-models/event-encoders/{job_id}/notes-jobs` enqueues a job; body accepts optional `extractor_version` and `params`. Returns `PianoRollNotesJobRead`. 409 when a `running` row exists for the same key. Also returns 409 when the encoder job is not `complete`.
+- [x] `GET /sequence-models/event-encoders/{job_id}/notes` reads `event_notes_v1.parquet` and returns rows filtered by `start_utc`, `end_utc`, and optional `event_ids`. Defaults to the latest completed `extractor_version` for the job; an explicit `extractor_version` query param can pin to a specific version.
+- [x] `GET /sequence-models/event-encoders/{job_id}/timeline` payload extended with a `notes_status` field (the same shape as `/notes-status`). The existing response shape is otherwise unchanged.
+- [x] Pyright clean; new schemas re-exported.
 
 **Tests needed:**
 - One test per endpoint covering happy path and the 409 path for `POST`.
@@ -174,10 +174,10 @@ Phases A and B are backend-only and can land in one PR or two. Phase C requires 
 - Create: `frontend/src/hooks/queries/useGeneratePianoRollNotes.ts` (mutation)
 
 **Acceptance criteria:**
-- [ ] Typed client functions for the three new endpoints and the extended timeline payload.
-- [ ] React Query hooks for status, notes, and trigger. The trigger mutation invalidates the status query on success.
-- [ ] Notes query is paged or windowed by `(start_utc, end_utc)`, with stable keys keyed on encoder job id and viewport bounds.
-- [ ] `npx tsc --noEmit` clean.
+- [x] Typed client functions for the three new endpoints and the extended timeline payload. Co-located in `frontend/src/api/sequenceModels.ts` per the existing Sequence Models convention (rather than the `hooks/queries/` location suggested in the plan, which is used for other domains).
+- [x] React Query hooks for status, notes, and trigger. The trigger mutation invalidates both the status query and the timeline query on success. The status query auto-polls (3 s) while `queued` or `running`.
+- [x] Notes query is windowed by `(start_utc, end_utc)`, with stable keys including encoder job id, viewport bounds, and `extractor_version`.
+- [x] `npx tsc --noEmit` clean.
 
 **Tests needed:**
 - Type tests in existing TS test surface, where present.
@@ -192,10 +192,10 @@ Phases A and B are backend-only and can land in one PR or two. Phase C requires 
 - Possibly: small additions to a shared "status pill" primitive under `frontend/src/components/ui/` or `shared/`
 
 **Acceptance criteria:**
-- [ ] Job card shows a `Notes: <state>` pill next to the existing encoding pill. Click navigates to the piano roll route.
-- [ ] Piano roll page shows a notes status chip in the toolbar (next to the existing view dropdown). On `failed`, click reveals the error and a `Re-run` action that fires the mutation.
-- [ ] When `notes_status` is `absent` or `failed`, a `Generate notes` button is visible (disabled with a spinner when `queued` or `running`).
-- [ ] No change yet to canvas rendering: existing rectangle modes remain the default.
+- [x] Job card shows a `Notes: <state>` pill next to the existing encoding pill. The repo's Event Encoder UI uses `EventEncoderJobTable` rather than a card layout, so the pill landed as a new `Notes` column in that table. Clicking the pill navigates to the piano roll route. Non-complete encoder rows render `—` (the notes worker only runs for completed encoder jobs).
+- [x] Piano roll page shows a notes status chip in the toolbar. `Re-run` is the Generate button's label when `failed`; clicking the pill itself toggles a small inline error message captured from `error_message`.
+- [x] When `notes_status` is `absent` or `failed`, a `Generate notes` button is visible. When `queued` or `running`, the button is replaced with an inline `Generating…` label (the Generate button is removed so the user cannot double-fire the mutation).
+- [x] No change yet to canvas rendering: existing rectangle modes remain the default.
 
 **Tests needed:**
 - Playwright spec covering all five status states (`absent` / `queued` / `running` / `completed` / `failed`) with mocked backend; assert the correct chip text and button visibility.
