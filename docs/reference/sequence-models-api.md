@@ -113,7 +113,7 @@ and fits one k-means tokenizer per feasible k.
   Optional fields:
 
   - `event_source_mode`: `"raw"` (default) or `"effective"`.
-  - `tokenizer_version`: default `"crnn-event-encoder-v2"`.
+  - `tokenizer_version`: default `"crnn-event-encoder-v3"`.
   - `pooling.enabled_pools`: defaults to `mean_pool`, `top_k_pool`,
     `start_pool`, `middle_pool`, and `end_pool`.
   - `pooling.top_k_fraction`: default `0.25`.
@@ -121,12 +121,18 @@ and fits one k-means tokenizer per feasible k.
   - `pooling.min_chunks_per_event`: default `1`.
   - `descriptor.target_sample_rate`: default `16000`; `n_fft`: `1024`;
     `hop_length`: `512`; `eps`: `1e-12`;
-    `ridge_min_frequency_hz`: `100.0`; `ridge_max_frequency_hz`: `3000.0`;
+    `ridge_min_frequency_hz`: `100.0`; `ridge_max_frequency_hz`: `6000.0`;
     `ridge_candidate_count`: `5`; `ridge_smoothness_penalty`: `8.0`;
-    `ridge_peak_prominence_ratio`: `0.0`.
+    `ridge_peak_prominence_ratio`: `0.0`;
+    `ridge_summary_low_percentile`: `10.0`;
+    `ridge_summary_high_percentile`: `90.0`;
+    `band_peak_min_frequency_hz`: `100.0`;
+    `band_peak_max_frequency_hz`: `null`;
+    `high_band_min_frequency_hz`: `1000.0`.
   - `preprocessing.l2_normalize_pools`: default `true`.
   - `preprocessing.pca_dim`: `64` or `128`, default `128`.
-  - `preprocessing.embedding_weight` and `descriptor_weight`: default `1.0`.
+  - `preprocessing.embedding_weight`: default `1.0`;
+    `descriptor_weight`: default `0.364`.
   - `k_values`: default `[50, 100, 200]`.
   - `random_seed`: default `0`.
 
@@ -172,23 +178,34 @@ artifact paths, error state, and timestamps. Effective-mode signatures include
 the event-boundary correction revision fingerprint, matching ADR-062 raw versus
 effective event semantics.
 
-The active Event Encoder descriptor order is:
+The active v3 Event Encoder descriptor order is:
 `duration`, `log_energy`, `peak_frequency`, `spectral_centroid`, `bandwidth`,
-`spectral_entropy`, `ridge_log_frequency_slope`, and `gap_to_previous`.
+`spectral_entropy`, `ridge_log_frequency_slope`, `gap_to_previous`,
+`median_f0`, `f0_range`, `voicing_fraction`, `inflection_count`, `pulse_rate`,
+`pulse_rate_slope`, `ridge_median_frequency`, `ridge_low_frequency`,
+`ridge_high_frequency`, `ridge_frequency_span`, `ridge_coverage`,
+`ridge_energy_ratio`, `band_limited_peak_frequency`, and
+`high_band_energy_ratio`.
 `ridge_log_frequency_slope` is measured in octaves per second. It is computed
 inside Event Encoder descriptor extraction from each event crop using a
-band-limited ridge tracker over the event STFT; full STFT matrices are not
-persisted in Continuous Embedding artifacts for this feature.
+band-limited ridge tracker over the event STFT. Ridge low/high display bounds
+are trimmed path percentiles so a single outlier frame does not dominate piano
+roll token height. Full STFT matrices and frame-level ridge contours are not
+persisted in Continuous Embedding artifacts for this feature. Older v2 Event
+Encoder artifacts with the previous 14-entry descriptor order remain readable
+because timeline responses follow each artifact manifest.
 
 `event_vectors.parquet` contains one row per encoded event with source
 sequence key, sequence index, timestamps, descriptors, pooled embedding vector,
 scaled descriptor vector, and final event vector. Descriptor columns follow the
-active descriptor order and include `ridge_log_frequency_slope`.
+active descriptor order and include `ridge_log_frequency_slope` plus the
+appended ridge display descriptors for v3 artifacts.
 
 `event_tokens.parquet` contains one row per valid k/event with `event_id`,
 timing, `token_id`, `token_label`, `distance_to_centroid`,
 `second_centroid_distance`, `token_confidence`, and descriptors, including
-`ridge_log_frequency_slope`.
+`ridge_log_frequency_slope` and, for v3 artifacts, the appended ridge display
+descriptors.
 Token ids and labels are job-local and k-local; colors or labels in one Event
 Encoder job should not be interpreted as globally stable vocabulary entries.
 

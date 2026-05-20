@@ -104,6 +104,11 @@ export interface EventEncoderDescriptorConfig {
   ridge_candidate_count?: number;
   ridge_smoothness_penalty?: number;
   ridge_peak_prominence_ratio?: number;
+  ridge_summary_low_percentile?: number;
+  ridge_summary_high_percentile?: number;
+  band_peak_min_frequency_hz?: number;
+  band_peak_max_frequency_hz?: number | null;
+  high_band_min_frequency_hz?: number;
 }
 
 export interface EventEncoderPreprocessingConfig {

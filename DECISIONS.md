@@ -425,3 +425,64 @@ encoding signature.
   resolved by overlap against the effective event set.
 - Future event-aware consumers must explicitly choose raw versus effective
   event semantics and include that choice in provenance or idempotency keys.
+
+## ADR-063: Event Encoder v3 ridge frequency descriptors for piano-roll display
+
+**Date**: 2026-05-20
+
+**Status**: Accepted
+
+**Builds on**: ADR-056 (Sequence Models track), ADR-057 (CRNN region-based
+chunk embeddings)
+
+**Context**: Event Encoder piano-roll views previously placed events primarily
+from `median_f0` with fallback to full-spectrum `peak_frequency`. That was
+misleading for high whistles, shrieks, and harmonic moans: `pyin` can miss or
+lock to low subharmonics, and full-spectrum peaks can be dominated by rumble
+even when the spectrogram contains strong higher ridges. The existing STFT
+ridge tracker already recovers a dominant ridge path, but only persisted slope
+and inflection summaries, so the UI had no artifact-backed way to render the
+ridge's frequency band.
+
+**Decision**: Introduce Event Encoder tokenizer/default contract
+`crnn-event-encoder-v3`. V3 appends eight scalar DSP descriptors to the
+existing 14-entry descriptor block:
+`ridge_median_frequency`, `ridge_low_frequency`, `ridge_high_frequency`,
+`ridge_frequency_span`, `ridge_coverage`, `ridge_energy_ratio`,
+`band_limited_peak_frequency`, and `high_band_energy_ratio`.
+
+Ridge low/high values are trimmed percentile summaries of the tracked ridge
+path, not literal frame min/max values. `band_limited_peak_frequency` keeps a
+rumble-resistant display peak while preserving legacy `peak_frequency`.
+`high_band_energy_ratio` records how much mean-spectrum energy lies above the
+configured high-band floor. New v3 defaults raise `ridge_max_frequency_hz` to
+6000 Hz and lower the default descriptor block weight to 0.364 so the appended
+display descriptors do not increase aggregate descriptor influence solely by
+adding columns.
+
+The piano roll defaults v3 artifacts to Ridge mode. It still renders one
+rectangle per event: trusted ridge summaries provide the low/center/high
+frequency band, with F0 and peak fallbacks for older artifacts or weak ridge
+summaries. For broad harmonic events, the UI may conservatively expand the
+rendered upper bound to the spectral centroid when high-band energy,
+bandwidth, and low spectral entropy indicate a tonal high-band envelope.
+
+**Alternatives considered**:
+- Persisting full frame-level ridge contours: rejected for this feature because
+  the immediate display problem only needs scalar summaries, and contour
+  sidecars would create a larger artifact/versioning contract.
+- Drawing multiple ridges inside each token rectangle: rejected because token
+  identity remains one event token, and the first UI improvement should make
+  the existing rectangle's frequency extent truthful.
+- Replacing the existing ridge tracker with a new pitch estimator: rejected
+  because the STFT ridge path already captured the high-frequency examples and
+  avoids adding a second DSP pipeline.
+
+**Consequences**:
+- Completed v2 Event Encoder artifacts remain readable through each artifact's
+  manifest-recorded descriptor names.
+- New v3 tokenization signatures differ when ridge descriptor settings change.
+- Frontend display is artifact-authoritative: it uses persisted descriptor
+  values from the timeline endpoint and does not recompute audio descriptors.
+- Full STFT matrices, F0 contours, and ridge contours are still not persisted
+  for Event Encoder artifacts.

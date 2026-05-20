@@ -153,7 +153,7 @@ def test_event_encoder_job_create_defaults():
     )
 
     assert payload.event_source_mode == "raw"
-    assert payload.tokenizer_version == "crnn-event-encoder-v2"
+    assert payload.tokenizer_version == "crnn-event-encoder-v3"
     assert payload.pooling.enabled_pools == [
         "mean_pool",
         "top_k_pool",
@@ -162,7 +162,7 @@ def test_event_encoder_job_create_defaults():
         "end_pool",
     ]
     assert payload.preprocessing.pca_dim == 128
-    assert payload.preprocessing.descriptor_weight == 0.571
+    assert payload.preprocessing.descriptor_weight == 0.364
     assert payload.preprocessing.descriptor_clip_value == 3.0
     assert payload.k_values == [50, 100, 200]
     assert payload.random_seed == 0
@@ -172,10 +172,15 @@ def test_event_encoder_descriptor_config_defaults_include_ridge_settings():
     config = EventEncoderDescriptorConfig()
 
     assert config.ridge_min_frequency_hz == 100.0
-    assert config.ridge_max_frequency_hz == 3000.0
+    assert config.ridge_max_frequency_hz == 6000.0
     assert config.ridge_candidate_count == 5
     assert config.ridge_smoothness_penalty == 8.0
     assert config.ridge_peak_prominence_ratio == 0.0
+    assert config.ridge_summary_low_percentile == 10.0
+    assert config.ridge_summary_high_percentile == 90.0
+    assert config.band_peak_min_frequency_hz == 100.0
+    assert config.band_peak_max_frequency_hz is None
+    assert config.high_band_min_frequency_hz == 1000.0
     assert config.f0_fmin == 70.0
     assert config.f0_fmax == 1200.0
     assert config.pulse_min_rate_hz == 2.0
@@ -198,6 +203,18 @@ def test_event_encoder_descriptor_config_rejects_invalid_ridge_settings():
         EventEncoderDescriptorConfig(ridge_smoothness_penalty=-1.0)
     with pytest.raises(ValidationError, match="ridge_peak_prominence_ratio"):
         EventEncoderDescriptorConfig(ridge_peak_prominence_ratio=1.5)
+    with pytest.raises(ValidationError, match="ridge summary percentiles"):
+        EventEncoderDescriptorConfig(
+            ridge_summary_low_percentile=90.0,
+            ridge_summary_high_percentile=10.0,
+        )
+    with pytest.raises(ValidationError, match="band_peak_max_frequency_hz"):
+        EventEncoderDescriptorConfig(
+            band_peak_min_frequency_hz=1000.0,
+            band_peak_max_frequency_hz=500.0,
+        )
+    with pytest.raises(ValidationError, match="band_peak_max_frequency_hz"):
+        EventEncoderDescriptorConfig(band_peak_max_frequency_hz=0.0)
     with pytest.raises(ValidationError, match="f0_fmax"):
         EventEncoderDescriptorConfig(f0_fmin=500.0, f0_fmax=400.0)
     with pytest.raises(ValidationError, match="pulse_max_rate_hz"):

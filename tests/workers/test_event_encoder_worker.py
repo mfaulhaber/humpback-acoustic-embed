@@ -124,7 +124,7 @@ async def test_event_encoder_worker_writes_artifacts(session, settings):
     assert job.total_events == 3
     assert job.encoded_events == 3
     assert job.skipped_events == 0
-    assert job.event_vector_dim == 16
+    assert job.event_vector_dim == 24
     assert job.event_vectors_path is not None
     assert job.event_tokens_path is not None
     assert job.token_sequences_path is not None
@@ -144,16 +144,23 @@ async def test_event_encoder_worker_writes_artifacts(session, settings):
     assert len(sequences) == 6
     assert "ridge_log_frequency_slope" in vector_columns
     assert "ridge_log_frequency_slope" in token_columns
+    assert "ridge_median_frequency" in vector_columns
+    assert "ridge_median_frequency" in token_columns
+    assert "band_limited_peak_frequency" in vector_columns
+    assert "band_limited_peak_frequency" in token_columns
     assert "frequency_slope" not in vector_columns
     assert "frequency_slope" not in token_columns
     assert "ridge_log_frequency_slope" in vectors[0]
     assert "ridge_log_frequency_slope" in tokens[0]
+    assert "ridge_median_frequency" in vectors[0]
+    assert "ridge_median_frequency" in tokens[0]
     assert manifest["descriptor_feature_names"] == DESCRIPTOR_ORDER
     assert manifest["valid_k_values"] == [1, 2]
     assert manifest["invalid_k_values"] == [99]
     assert report["summary"]["encoded_events"] == 3
     assert report["descriptor_feature_names"] == manifest["descriptor_feature_names"]
     assert "ridge_log_frequency_slope" in report["descriptor_summary"]
+    assert "ridge_median_frequency" in report["descriptor_summary"]
     assert report["token_examples"]["2"]["T00"][0]["event_id"]
     assert (
         event_encoder_dir(settings.storage_root, job.id) / "preprocess.joblib"
@@ -161,6 +168,65 @@ async def test_event_encoder_worker_writes_artifacts(session, settings):
     assert (
         event_encoder_dir(settings.storage_root, job.id) / "kmeans_k2.joblib"
     ).exists()
+
+
+async def test_event_encoder_worker_partial_configs_use_v3_fallbacks(
+    session, settings, monkeypatch
+):
+    import humpback.workers.event_encoder_worker as worker_module
+
+    seg, continuous = await _seed_source(session, settings)
+    job, _ = await create_event_encoder_job(
+        session,
+        EventEncoderJobCreate(
+            event_segmentation_job_id=seg.id,
+            continuous_embedding_job_id=continuous.id,
+            k_values=[1],
+            preprocessing=EventEncoderPreprocessingConfig(pca_dim=64),
+        ),
+    )
+    job.descriptor_config_json = "{}"
+    job.preprocessing_config_json = json.dumps(
+        {
+            "l2_normalize_pools": True,
+            "pca_dim": 64,
+            "embedding_weight": 1.0,
+        }
+    )
+    await session.commit()
+
+    descriptor_kwargs: list[dict[str, object]] = []
+    preprocess_kwargs: list[dict[str, object]] = []
+    original_compute = worker_module.compute_acoustic_descriptors
+    original_preprocess = worker_module.preprocess_event_features
+
+    def capture_compute_acoustic_descriptors(*args, **kwargs):
+        descriptor_kwargs.append(dict(kwargs))
+        return original_compute(*args, **kwargs)
+
+    def capture_preprocess_event_features(*args, **kwargs):
+        preprocess_kwargs.append(dict(kwargs))
+        return original_preprocess(*args, **kwargs)
+
+    monkeypatch.setattr(
+        worker_module,
+        "compute_acoustic_descriptors",
+        capture_compute_acoustic_descriptors,
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "preprocess_event_features",
+        capture_preprocess_event_features,
+    )
+
+    await run_event_encoder_job(session, job, settings, audio_provider=_audio_provider)
+
+    assert descriptor_kwargs
+    assert preprocess_kwargs
+    assert {kwargs["ridge_max_frequency_hz"] for kwargs in descriptor_kwargs} == {
+        6000.0
+    }
+    assert preprocess_kwargs[0]["descriptor_weight"] == 0.364
 
 
 async def test_event_encoder_worker_fails_when_no_events_are_encodable(

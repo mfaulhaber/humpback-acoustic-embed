@@ -35,6 +35,20 @@ const COMPLETE_JOB = {
   updated_at: "2026-05-08T01:10:00Z",
 };
 
+const RIDGE_JOB = {
+  ...COMPLETE_JOB,
+  id: "eej-piano-roll-ridge",
+  tokenizer_version: "crnn-event-encoder-v3",
+  tokenization_signature: "piano-roll-ridge-token-sig",
+  event_vector_dim: 150,
+  event_vectors_path: "/tmp/event-encoders/eej-piano-roll-ridge/event_vectors.parquet",
+  event_tokens_path: "/tmp/event-encoders/eej-piano-roll-ridge/event_tokens.parquet",
+  token_sequences_path:
+    "/tmp/event-encoders/eej-piano-roll-ridge/token_sequences.parquet",
+  manifest_path: "/tmp/event-encoders/eej-piano-roll-ridge/manifest.json",
+  report_path: "/tmp/event-encoders/eej-piano-roll-ridge/report.json",
+};
+
 const QUEUED_JOB = {
   ...COMPLETE_JOB,
   id: "eej-piano-roll-queued",
@@ -71,6 +85,15 @@ const COMPLETE_DETAIL = {
       "50": ["T03", "T07", "T03", "T07", "T03"],
     },
   },
+};
+
+const RIDGE_DETAIL = {
+  job: RIDGE_JOB,
+  manifest: {
+    ...COMPLETE_DETAIL.manifest,
+    job_id: RIDGE_JOB.id,
+  },
+  report: COMPLETE_DETAIL.report,
 };
 
 const QUEUED_DETAIL = {
@@ -168,6 +191,95 @@ const TIMELINE_100 = {
   })),
 };
 
+const TIMELINE_RIDGE = {
+  ...TIMELINE_50,
+  job_id: RIDGE_JOB.id,
+  descriptor_feature_names: [
+    ...TIMELINE_50.descriptor_feature_names,
+    "ridge_median_frequency",
+    "ridge_low_frequency",
+    "ridge_high_frequency",
+    "ridge_frequency_span",
+    "ridge_coverage",
+    "ridge_energy_ratio",
+    "band_limited_peak_frequency",
+    "high_band_energy_ratio",
+    "spectral_centroid",
+    "bandwidth",
+    "spectral_entropy",
+  ],
+  descriptor_feature_units: {
+    ...TIMELINE_50.descriptor_feature_units,
+    ridge_median_frequency: "Hz",
+    ridge_low_frequency: "Hz",
+    ridge_high_frequency: "Hz",
+    ridge_frequency_span: "Hz",
+    ridge_coverage: "ratio",
+    ridge_energy_ratio: "ratio",
+    band_limited_peak_frequency: "Hz",
+    high_band_energy_ratio: "ratio",
+    spectral_centroid: "Hz",
+    bandwidth: "Hz",
+    spectral_entropy: "ratio",
+  },
+  events: [
+    timelineEvent("ridge-low", 2, "T02", 10, 11.2, {
+      median_f0: 430,
+      f0_range: 40,
+      peak_frequency: 430,
+      voicing_fraction: 0.9,
+      ridge_log_frequency_slope: 0.1,
+      pulse_rate: 0,
+      gap_to_previous: 0,
+      ridge_median_frequency: 430,
+      ridge_low_frequency: 400,
+      ridge_high_frequency: 470,
+      ridge_frequency_span: 70,
+      ridge_coverage: 0.9,
+      ridge_energy_ratio: 0.4,
+      band_limited_peak_frequency: 430,
+      high_band_energy_ratio: 0.05,
+    }),
+    timelineEvent("ridge-high", 12, "T12", 18, 19.2, {
+      median_f0: 71,
+      f0_range: 4,
+      peak_frequency: 62.5,
+      voicing_fraction: 1,
+      ridge_log_frequency_slope: 1.4,
+      pulse_rate: 0,
+      gap_to_previous: 6.8,
+      ridge_median_frequency: 2600,
+      ridge_low_frequency: 2300,
+      ridge_high_frequency: 2950,
+      ridge_frequency_span: 650,
+      ridge_coverage: 0.82,
+      ridge_energy_ratio: 0.011,
+      band_limited_peak_frequency: 2650,
+      high_band_energy_ratio: 0.88,
+    }),
+    timelineEvent("ridge-moan", 47, "T47", 25, 26.6, {
+      median_f0: 315.2,
+      f0_range: 43.6,
+      peak_frequency: 312.5,
+      voicing_fraction: 1,
+      ridge_log_frequency_slope: 0,
+      pulse_rate: 161.6,
+      gap_to_previous: 5.8,
+      ridge_median_frequency: 312.5,
+      ridge_low_frequency: 296.875,
+      ridge_high_frequency: 329.6875,
+      ridge_frequency_span: 32.8125,
+      ridge_coverage: 1,
+      ridge_energy_ratio: 0.09594432264566422,
+      band_limited_peak_frequency: 312.5,
+      high_band_energy_ratio: 0.5040363669395447,
+      spectral_centroid: 2101.532958984375,
+      bandwidth: 2097.9912109375,
+      spectral_entropy: 0.8581035733222961,
+    }),
+  ],
+};
+
 interface MockState {
   timelineRequests: string[];
   audioRequests: string[];
@@ -209,6 +321,17 @@ function timelineEvent(
     ridge_log_frequency_slope: number;
     pulse_rate: number;
     gap_to_previous: number;
+    ridge_median_frequency?: number;
+    ridge_low_frequency?: number;
+    ridge_high_frequency?: number;
+    ridge_frequency_span?: number;
+    ridge_coverage?: number;
+    ridge_energy_ratio?: number;
+    band_limited_peak_frequency?: number;
+    high_band_energy_ratio?: number;
+    spectral_centroid?: number;
+    bandwidth?: number;
+    spectral_entropy?: number;
   },
 ) {
   const duration = endOffset - startOffset;
@@ -286,7 +409,7 @@ async function setupMocks(page: Page): Promise<MockState> {
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify([COMPLETE_JOB, QUEUED_JOB]),
+        body: JSON.stringify([COMPLETE_JOB, RIDGE_JOB, QUEUED_JOB]),
       });
     }
 
@@ -294,6 +417,13 @@ async function setupMocks(page: Page): Promise<MockState> {
     if (url.includes("/timeline")) {
       state.timelineRequests.push(url);
       const selectedK = new URL(url).searchParams.get("k");
+      if (id === RIDGE_JOB.id) {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(TIMELINE_RIDGE),
+        });
+      }
       return route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -325,6 +455,14 @@ async function setupMocks(page: Page): Promise<MockState> {
       });
     }
 
+    if (id === RIDGE_JOB.id) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(RIDGE_DETAIL),
+      });
+    }
+
     if (id === QUEUED_JOB.id) {
       return route.fulfill({
         status: 200,
@@ -343,6 +481,7 @@ async function eventPoint(
   page: Page,
   eventCenter: number,
   centerFrequency: number,
+  frequencyMax = 2000,
 ) {
   const canvas = page.getByTestId("eej-piano-roll-canvas");
   await expect(canvas).toBeVisible();
@@ -354,7 +493,7 @@ async function eventPoint(
   const height = box?.height ?? 1;
   const x =
     62 + ((eventCenter - viewStart) / (viewEnd - viewStart)) * (width - 72);
-  const y = 8 + (1 - centerFrequency / 2000) * (height - 16);
+  const y = 8 + (1 - centerFrequency / frequencyMax) * (height - 16);
   return { box, x, y };
 }
 
@@ -412,6 +551,7 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
     await expect(page.getByTestId("eej-piano-roll-token-count")).toHaveText("2");
     await expect(page.getByTestId("eej-piano-roll-duration")).toHaveText("2:40");
     await expect(page.getByTestId("eej-piano-roll-k-select")).toHaveValue("50");
+    await expect(page.getByTestId("eej-piano-roll-y-mode")).toHaveValue("f0");
     await expect(page.getByTestId("eej-piano-roll-play")).toBeVisible();
     await expect(
       page.getByTestId("eej-piano-roll-spectrogram-strip"),
@@ -455,6 +595,41 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
         ),
       )
       .toBe(true);
+  });
+
+  test("v3 ridge descriptors render high-frequency tokens in Ridge mode", async ({
+    page,
+  }) => {
+    await setupMocks(page);
+    await page.goto(
+      `/app/sequence-models/event-encoder/${RIDGE_JOB.id}/piano-roll`,
+    );
+
+    await expect(page.getByTestId("eej-piano-roll-y-mode")).toHaveValue("ridge");
+    await expect(page.getByTestId("eej-piano-roll-frequency-max")).toHaveValue(
+      "6000",
+    );
+
+    const high = await eventPoint(page, JOB_START + 18.6, 2600, 6000);
+    const low = await eventPoint(page, JOB_START + 10.6, 430, 6000);
+    expect(high.y).toBeLessThan(low.y);
+
+    await page
+      .getByTestId("eej-piano-roll-canvas")
+      .click({ position: { x: high.x, y: high.y } });
+    const tooltip = page.getByTestId("eej-piano-roll-tooltip");
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toContainText("ridge_mid");
+    await expect(tooltip).toContainText("ridge_band");
+    await expect(tooltip).toContainText("band_peak");
+
+    const moanEnvelope = await eventPoint(page, JOB_START + 25.8, 1600, 6000);
+    await page
+      .getByTestId("eej-piano-roll-canvas")
+      .click({ position: { x: moanEnvelope.x, y: moanEnvelope.y } });
+    await expect(tooltip).toContainText("T47");
+    await expect(tooltip).toContainText("display_band");
+    await expect(tooltip).toContainText("297 Hz - 2102 Hz");
   });
 
   test("loading, not-found, and incomplete states render", async ({ page }) => {

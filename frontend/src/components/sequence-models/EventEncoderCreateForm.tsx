@@ -22,7 +22,7 @@ const ALL_POOLS = [
   "end_pool",
 ] as const;
 
-const DEFAULT_DESCRIPTOR_WEIGHT = 0.571;
+const DEFAULT_DESCRIPTOR_WEIGHT = 0.364;
 
 export function EventEncoderCreateForm() {
   const { data: segJobs = [] } = useSegmentationJobs(0);

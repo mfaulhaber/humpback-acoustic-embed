@@ -294,7 +294,7 @@ async def run_event_encoder_job(
             pca_dim=int(preprocessing_config.get("pca_dim", 128)),
             embedding_weight=float(preprocessing_config.get("embedding_weight", 1.0)),
             descriptor_weight=float(
-                preprocessing_config.get("descriptor_weight", 0.571)
+                preprocessing_config.get("descriptor_weight", 0.364)
             ),
             descriptor_clip_value=preprocessing_config.get(
                 "descriptor_clip_value", 3.0
@@ -572,7 +572,7 @@ async def _build_encoded_events(
                 descriptor_config.get("ridge_min_frequency_hz", 100.0)
             ),
             ridge_max_frequency_hz=float(
-                descriptor_config.get("ridge_max_frequency_hz", 3000.0)
+                descriptor_config.get("ridge_max_frequency_hz", 6000.0)
             ),
             ridge_candidate_count=int(
                 descriptor_config.get("ridge_candidate_count", 5)
@@ -582,6 +582,21 @@ async def _build_encoded_events(
             ),
             ridge_peak_prominence_ratio=float(
                 descriptor_config.get("ridge_peak_prominence_ratio", 0.0)
+            ),
+            ridge_summary_low_percentile=float(
+                descriptor_config.get("ridge_summary_low_percentile", 10.0)
+            ),
+            ridge_summary_high_percentile=float(
+                descriptor_config.get("ridge_summary_high_percentile", 90.0)
+            ),
+            band_peak_min_frequency_hz=float(
+                descriptor_config.get("band_peak_min_frequency_hz", 100.0)
+            ),
+            band_peak_max_frequency_hz=_optional_float(
+                descriptor_config.get("band_peak_max_frequency_hz")
+            ),
+            high_band_min_frequency_hz=float(
+                descriptor_config.get("high_band_min_frequency_hz", 1000.0)
             ),
             f0_fmin=float(descriptor_config.get("f0_fmin", 70.0)),
             f0_fmax=float(descriptor_config.get("f0_fmax", 1200.0)),
@@ -605,6 +620,10 @@ async def _build_encoded_events(
             )
         )
     return encoded, skip_reasons
+
+
+def _optional_float(value: Any) -> float | None:
+    return None if value is None else float(value)
 
 
 def _source_sequence_key(region_job: RegionDetectionJob) -> str:
