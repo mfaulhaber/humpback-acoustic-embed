@@ -89,10 +89,10 @@ Phases A and B are backend-only and can land in one PR or two. Phase C requires 
 - Create: `src/humpback/processing/piano_roll_cqt.py`
 
 **Acceptance criteria:**
-- [ ] `compute_event_cqt(audio, sr, params)` returns log-magnitude matrix with shape `(264, n_frames)` for the spec's default params, resampling input to 22050 Hz mono if necessary.
-- [ ] `pick_peaks_per_frame(log_mag, k_noise, top_k)` returns a list of per-frame peak lists `(bin, log_magnitude)`, filtered by the per-frame noise floor and capped at `top_k`.
-- [ ] All parameters surfaced as keyword arguments with the defaults from the spec.
-- [ ] Pure functions; no I/O.
+- [x] `compute_event_cqt(audio, sr, *, params=CQTParams())` returns log-magnitude matrix with shape `(264, n_frames)` for the spec's default params, resampling input to 22050 Hz mono if necessary. Uses `res_type="polyphase"` to avoid the optional `resampy` dependency.
+- [x] `pick_peaks_per_frame(log_mag, *, params=PeakParams())` returns a list of per-frame peak lists `(bin, log_magnitude)`, filtered by the per-frame noise floor and capped at `top_k`. Noise floor uses the **bottom-half** of each frame's bins for the median/MAD estimate, so strong signal peaks do not inflate MAD and push the floor above the harmonics — a known failure mode of full-frame MAD on clean sustained tones.
+- [x] All parameters surfaced via keyword-only frozen dataclasses (`CQTParams`, `PeakParams`) with the defaults from the spec.
+- [x] Pure functions; no I/O.
 
 **Tests needed:**
 - Sinusoid at 440 Hz (A4) → strong peak in CQT bin corresponding to MIDI 69.
@@ -107,11 +107,11 @@ Phases A and B are backend-only and can land in one PR or two. Phase C requires 
 - Create: `src/humpback/processing/piano_roll_tracker.py`
 
 **Acceptance criteria:**
-- [ ] `build_tracks(per_frame_peaks, params)` produces a list of tracks with `start_frame`, `end_frame`, `median_bin`, `median_log_magnitude`, using greedy nearest-neighbor matching within `bin_tolerance` and `miss_tolerance_frames`.
-- [ ] Tracks below `min_duration_s` (50 ms) or below the event-relative amplitude floor are dropped.
-- [ ] `label_harmonics(tracks, params)` mutates `partial_index` per spec §6.5; tracks that do not match keep `partial_index = -1`. Harmonic prior is a labeling pass only and never filters. Default `harmonic_prior_enabled = True`; when `False`, all surviving tracks keep `partial_index = -1`.
-- [ ] `quantize_to_midi(track, cqt_params, event_start_utc)` returns a `(midi_pitch, start_utc, start_offset_s, duration_s, peak_magnitude, track_id)` record with clamped pitch in `[21, 108]`.
-- [ ] Deterministic given the same inputs.
+- [x] `build_tracks(per_frame_peaks, *, cqt_params, params=TrackerParams())` produces `Track` objects with `start_frame`, `end_frame`, `bins`, `log_magnitudes` (median accessible via properties), using greedy nearest-neighbor matching within `bin_tolerance` and `miss_tolerance_frames`.
+- [x] Tracks below `min_duration_s` (50 ms at default CQT hop) are dropped first; surviving tracks are then filtered by `amplitude_floor_percentile` (event-relative).
+- [x] `label_harmonics(tracks, *, cqt_params, params=HarmonicParams())` mutates `partial_index` per spec §6.5. Lowest-bin overlapping track becomes F0 (`partial_index = 0`); harmonics that match within ±cents tolerance get their integer position; **all other tracks in the same overlap cluster are marked processed (partial_index stays at -1) so they do not get re-promoted to F0 on a later cluster iteration**. Default `harmonic_prior_enabled = True`; when `False`, the function is a no-op.
+- [x] `quantize_to_midi(track, *, cqt_params, midi_params=MIDIQuantizeParams())` returns a `MidiNote` record with `midi_pitch` clamped to `[min_pitch, max_pitch]` when the raw quantized pitch is within ±1 semitone of the range; returns `None` for tracks further out of range. (Note: the worker also derives `start_utc` from `region_offset + event.start_sec + (start_offset_s − pad)`; the tracker only emits relative offsets.)
+- [x] Deterministic given the same inputs.
 
 **Tests needed:**
 - Two-frame-gap continuity (gap below tolerance keeps one track; gap above splits it).
@@ -127,14 +127,14 @@ Phases A and B are backend-only and can land in one PR or two. Phase C requires 
 - Modify: `src/humpback/services/piano_roll_notes_service.py` (params resolution)
 
 **Acceptance criteria:**
-- [ ] Replace the Task 3 stub with the real extraction:
-  - Two passes over events. First pass accumulates per-event-frame max log-mag for job-level [p5, p99] percentile estimation. Second pass extracts notes per event using the percentile bounds for velocity mapping.
+- [x] Replace the Task 3 stub with the real extraction:
+  - **One pass with deferred velocity** rather than two physical passes. Per event: CQT → peak-pick → tracker → harmonic prior → quantize → emit notes with raw `peak_magnitude`. Per-frame max log-mag is accumulated as we go. After the loop, job-level [p5, p99] percentiles are computed once and each pending note's `peak_magnitude` is mapped to a uint8 velocity. Produces the same job-level velocity calibration as the spec's two-pass description but at half the CQT compute. Memory cost: ~8 bytes per frame across all events (a few MB on huge jobs).
   - Per-event extraction calls `compute_event_cqt`, `pick_peaks_per_frame`, `build_tracks`, `label_harmonics`, `quantize_to_midi`.
-  - Audio is loaded via the existing detection/event lineage utilities; no new audio resolution path is introduced.
-- [ ] Output parquet `event_notes_v1.parquet` matches schema in spec §5.2, sorted by `(start_utc, midi_pitch)`.
-- [ ] Per-event audio failure is captured and aggregated into the row's `error` field (truncated to ~2 KB). Job completes if ≥1 event succeeded; otherwise marks `failed`.
-- [ ] `params_json` reflects the actual config used (including resolved defaults).
-- [ ] `n_events` counts events scanned; `n_notes` counts notes emitted; `compute_seconds` recorded.
+  - Audio is loaded via `build_event_audio_loader` at the CQT target sample rate (22050 Hz); the existing audio lineage (`audio_file_id` or `hydrophone_id`) is honored exactly as the Event Encoder uses it.
+- [x] Output parquet `event_notes_v1.parquet` matches schema in spec §5.2, sorted by `(start_utc, midi_pitch)`. `event_token` is the token assigned at the **largest available k** in `event_tokens.parquet`; missing rows fall back to `-1`.
+- [x] Per-event audio failure is captured into a `(event_id, message)` aggregate. First 10 failures land in `error_message` (truncated to 2 KB); the job still marks `complete` so long as at least one event yielded a note.
+- [x] `params_json` is rewritten from the resolved `_ResolvedParams` dataclass at job completion, capturing every default that was effectively used.
+- [x] `n_events` counts events scanned (including skipped-short and failed); `n_notes` counts notes emitted; `compute_seconds` recorded.
 
 **Tests needed:**
 - End-to-end on a synthetic 3-event fixture (`tests/fixtures/piano_roll/`): verify expected MIDI pitches and partial labels.

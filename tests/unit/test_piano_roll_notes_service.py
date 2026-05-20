@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 
-import pyarrow.parquet as pq
+import pyarrow as pa
 import pytest
 
 from humpback.models.piano_roll_notes import (
@@ -210,13 +209,17 @@ async def test_auto_enqueue_swallows_conflict(session) -> None:
     assert result is None
 
 
-# ---------- Worker stub tests ----------
+# ---------- Worker scaffold tests ----------
+#
+# End-to-end extraction lives in test_piano_roll_notes_worker_extraction.py;
+# these focus on the lifecycle gates the worker enforces before extraction.
 
 
 @pytest.mark.asyncio
-async def test_worker_completes_and_writes_empty_parquet(
+async def test_worker_fails_when_dependencies_missing(
     session, settings, tmp_path
 ) -> None:
+    """A standalone encoder row with no segmentation/region data fails cleanly."""
     encoder_id = await _make_encoder_job(session)
     job, _ = await enqueue_piano_roll_notes_job(
         session, event_encoder_job_id=encoder_id
@@ -228,18 +231,10 @@ async def test_worker_completes_and_writes_empty_parquet(
 
     refreshed = await session.get(PianoRollNotesJob, job.id)
     assert refreshed is not None
-    assert refreshed.status == JobStatus.complete.value
-    assert refreshed.error_message is None
-    assert refreshed.notes_path is not None
-    assert refreshed.n_events == 0
-    assert refreshed.n_notes == 0
-    assert refreshed.compute_seconds is not None
-
-    parquet_path = Path(refreshed.notes_path)
-    assert parquet_path.exists()
-    table = pq.read_table(parquet_path)
-    assert table.num_rows == 0
-    assert table.schema.equals(NOTES_SCHEMA)
+    assert refreshed.status == JobStatus.failed.value
+    assert refreshed.error_message is not None
+    # The parquet schema is the one the worker would have written.
+    assert NOTES_SCHEMA.field("midi_pitch").type == pa.uint8()
 
 
 @pytest.mark.asyncio

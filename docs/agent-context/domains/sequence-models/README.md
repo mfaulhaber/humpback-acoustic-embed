@@ -11,6 +11,8 @@ helpers, or the retained Sequence Models UI.
 - `src/humpback/services/continuous_embedding_service.py`
 - `src/humpback/services/event_encoder_service.py`
 - `src/humpback/services/piano_roll_notes_service.py`
+- `src/humpback/processing/piano_roll_cqt.py`
+- `src/humpback/processing/piano_roll_tracker.py`
 - `src/humpback/workers/continuous_embedding_worker.py`
 - `src/humpback/workers/event_encoder_worker.py`
 - `src/humpback/workers/piano_roll_notes_worker.py`
