@@ -486,3 +486,89 @@ bandwidth, and low spectral entropy indicate a tonal high-band envelope.
   values from the timeline endpoint and does not recompute audio descriptors.
 - Full STFT matrices, F0 contours, and ridge contours are still not persisted
   for Event Encoder artifacts.
+
+## ADR-064: Piano Roll Notes sidecar worker
+
+**Status**: Accepted
+**Date**: 2026-05-20
+**Builds on**: ADR-056 (Sequence Models track), ADR-057 (CRNN region-based
+chunk embeddings), ADR-063 (v3 ridge frequency descriptors).
+
+**Context**: The Event Encoder piano roll renders one rectangle per
+tokenized event, which conveys token identity and rough frequency envelope
+but not the per-partial pitch content of each call. We want a MIDI-style
+view that resolves the F0 and visible harmonics inside each event without
+recomputing during render, without entangling the descriptor block, and
+without ever modifying immutable Event Encoder outputs.
+
+**Decision**: Introduce a Piano Roll Notes worker that runs independently
+and idempotently after each Event Encoder job. The worker reads the
+encoder's source audio plus its descriptor / token artifacts and writes a
+per-job parquet sidecar of per-event MIDI notes alongside the existing
+Event Encoder artifacts.
+
+- **Idempotent key**: `(event_encoder_job_id, extractor_version)`, mirroring
+  the encoder-level signature pattern from ADR-056. Re-submitting an
+  in-flight or completed key is a no-op; failed and canceled keys reset.
+- **Sidecar path**: `event_encoders/{job_id}/event_notes_{version}.parquet`.
+  One row per note (not per event), sorted by `(start_utc, midi_pitch)`.
+- **Auto-enqueue**: completing an Event Encoder job auto-enqueues a notes
+  job at the current default `extractor_version`. The hook swallows
+  conflicts so the encoder transition cannot be blocked.
+- **Algorithm**: CQT + per-frame peak picking + greedy nearest-neighbor
+  cross-frame tracking + harmonic-prior labeling + MIDI quantization, with
+  job-level velocity calibration from per-frame log-magnitude percentiles.
+  Defaults are persisted in `params_json` for reproducibility.
+- **Versioning**: `extractor_version` starts at `"v1"`. Future tracker /
+  range / quantizer changes bump the version. The notes-jobs table allows
+  multiple completed runs per encoder job at different versions; the UI
+  serves the latest completed row.
+- **UI**: a `Notes` view mode renders the sidecar on a log-frequency 88-key
+  Y axis (MIDI 21–108) with semitone gridlines, octave labels (C0…C8), and
+  black-key shading. It defaults when sidecar is available, falls back to
+  the prior rectangle mode on fetch failure, and exposes a `Generate notes`
+  / `Re-run` action backed by `POST .../notes-jobs`.
+
+**Alternatives considered**:
+- Extending the descriptor block with note-level fields: rejected because
+  it would couple per-partial MIDI quantization to the embedding /
+  tokenization signature and force a new encoder run for every algorithm
+  change.
+- Computing notes lazily in the frontend: rejected because CQT + tracking
+  is too expensive for interactive rendering at full-job scale, and any
+  later MIDI/MPE export needs the same per-job artifact.
+- Re-using the existing F0 contour pipeline: rejected because the
+  descriptor block intentionally persists only scalar summaries and a
+  contour sidecar would change the artifact contract from ADR-063.
+
+**Consequences**:
+- Existing Event Encoder artifacts remain untouched; piano roll notes can
+  be regenerated independently.
+- A new SQL table `piano_roll_notes_jobs` tracks lifecycle and per-version
+  history; canonical artifact paths follow the `event_encoder_dir` layout.
+- Failure or re-run of the notes worker never invalidates the descriptor
+  block. Encoder jobs without a notes sidecar render with the existing
+  rectangle modes.
+
+## ADR-065: Extended Piano Roll Notes pitch range (placeholder)
+
+**Status**: Deferred
+**Date**: 2026-05-20
+
+**Context**: Humpback social sounds extend above the standard 88-key piano
+range (above C8 ≈ 4186 Hz) and very low moans extend below A0 (27.5 Hz).
+The first Piano Roll Notes release intentionally clamps to MIDI 21–108 so
+the canvas matches the familiar 88-key piano metaphor and `extractor_version`
+stays scoped to a single tractable range.
+
+**Decision (placeholder)**: extend the pitch range in a future
+`extractor_version` (e.g. `"v2"`). Open questions: does the UI use a wider
+piano-key band (e.g. MIDI 12–127) or switch to a log-frequency continuum,
+how to keep `tokenColor(event_token)` legible across denser pitches, and
+whether to expose per-job overrides of the quantizer's
+`[min_pitch, max_pitch]` parameters.
+
+**Consequences (anticipated)**: the existing v1 sidecar stays readable;
+extending the range bumps `extractor_version` and triggers a re-run on
+demand without invalidating older runs.
+

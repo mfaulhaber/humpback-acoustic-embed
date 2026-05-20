@@ -9,6 +9,8 @@ sidecar parquet contains the expected MIDI notes.
 
 from __future__ import annotations
 
+import json
+import wave
 from pathlib import Path
 from typing import Iterable
 
@@ -415,3 +417,128 @@ async def test_worker_deterministic_output(
     second_bytes = Path(refreshed2.notes_path).read_bytes()
 
     assert first_bytes == second_bytes
+
+
+# ---------- Fixture-backed end-to-end coverage ----------
+
+_FIXTURE_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "piano_roll"
+
+
+def _load_fixture_audio() -> tuple[np.ndarray, dict]:
+    wav_path = _FIXTURE_DIR / "synthetic_three_events.wav"
+    meta_path = _FIXTURE_DIR / "synthetic_three_events.json"
+    with wave.open(str(wav_path), "rb") as wf:
+        assert wf.getnchannels() == 1
+        assert wf.getsampwidth() == 2
+        frames = wf.readframes(wf.getnframes())
+        pcm = np.frombuffer(frames, dtype=np.int16)
+        audio = (pcm.astype(np.float32) / 32767.0).astype(np.float32)
+    metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+    return audio, metadata
+
+
+@pytest.mark.asyncio
+async def test_worker_recovers_fixture_three_events(
+    session, settings, tmp_path, monkeypatch
+) -> None:
+    """Backend integration check against the committed three-event fixture."""
+    buffer, metadata = _load_fixture_audio()
+    events = [
+        Event(
+            event_id=ev["event_id"],
+            region_id="rg-fixture",
+            start_sec=float(ev["start_s"]),
+            end_sec=float(ev["end_s"]),
+            center_sec=(float(ev["start_s"]) + float(ev["end_s"])) / 2,
+            segmentation_confidence=0.9,
+        )
+        for ev in metadata["events"]
+    ]
+
+    audio = AudioFile(
+        filename="synthetic_three_events.wav",
+        folder_path=str(tmp_path),
+        checksum_sha256="fixture-three-events",
+        duration_seconds=float(metadata["duration_s"]),
+        sample_rate_original=int(metadata["sample_rate"]),
+    )
+    session.add(audio)
+    await session.commit()
+    await session.refresh(audio)
+
+    region_job = RegionDetectionJob(
+        status=JobStatus.complete.value,
+        audio_file_id=audio.id,
+        start_timestamp=5000.0,
+        end_timestamp=5000.0 + float(metadata["duration_s"]),
+    )
+    session.add(region_job)
+    await session.commit()
+    await session.refresh(region_job)
+
+    seg_job = EventSegmentationJob(
+        status=JobStatus.complete.value,
+        region_detection_job_id=region_job.id,
+    )
+    session.add(seg_job)
+    await session.commit()
+    await session.refresh(seg_job)
+
+    encoder = EventEncoderJob(
+        status=JobStatus.complete.value,
+        event_segmentation_job_id=seg_job.id,
+        event_source_mode="raw",
+        continuous_embedding_job_id="cej-stub",
+        continuous_embedding_signature="cej-sig",
+        tokenizer_version="crnn-event-encoder-v3",
+        pooling_config_json="{}",
+        descriptor_config_json="{}",
+        preprocessing_config_json="{}",
+        k_values_json="[50]",
+        random_seed=0,
+        tokenization_signature="tok-sig-fixture",
+    )
+    session.add(encoder)
+    await session.commit()
+    await session.refresh(encoder)
+
+    from humpback.call_parsing.storage import segmentation_job_dir as seg_dir
+
+    write_events(seg_dir(settings.storage_root, seg_job.id) / "events.parquet", events)
+    _write_event_tokens_parquet(
+        event_encoder_tokens_path(settings.storage_root, encoder.id),
+        event_ids=[e.event_id for e in events],
+        token_id=11,
+        k=50,
+    )
+
+    async def _fake_build_audio_provider(*_args, **_kwargs):
+        def _provider(_event):
+            return buffer, 0.0
+
+        return _provider
+
+    monkeypatch.setattr(
+        piano_roll_notes_worker, "_build_audio_provider", _fake_build_audio_provider
+    )
+
+    job, _ = await enqueue_piano_roll_notes_job(
+        session, event_encoder_job_id=encoder.id
+    )
+    job.status = JobStatus.running.value
+    await session.commit()
+    await run_piano_roll_notes_job(session, job, settings)
+
+    refreshed = await session.get(PianoRollNotesJob, job.id)
+    assert refreshed is not None
+    assert refreshed.status == JobStatus.complete.value, refreshed.error_message
+    notes = pq.read_table(refreshed.notes_path).to_pylist()
+    by_event: dict[str, set[int]] = {}
+    for row in notes:
+        by_event.setdefault(row["event_id"], set()).add(int(row["midi_pitch"]))
+    for expected in metadata["expected_notes"]:
+        pitches = by_event.get(expected["event_id"], set())
+        assert int(expected["midi_pitch"]) in pitches, (
+            f"missing MIDI {expected['midi_pitch']} for {expected['event_id']}: "
+            f"got {sorted(pitches)}"
+        )

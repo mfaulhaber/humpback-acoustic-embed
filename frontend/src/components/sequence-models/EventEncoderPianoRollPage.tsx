@@ -12,14 +12,17 @@ import { Link, useParams } from "react-router-dom";
 import {
   type EventEncoderTimelineEvent,
   type EventEncoderTimelineResponse,
+  type PianoRollNote,
   useCreatePianoRollNotesJob,
   useEventEncoderJob,
   useEventEncoderTimeline,
+  usePianoRollNotes,
   usePianoRollNotesStatus,
 } from "@/api/sequenceModels";
 import { regionAudioSliceUrl } from "@/api/client";
 import { usePlayback } from "@/components/timeline/provider/usePlayback";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 
 import { labelColor } from "./constants";
@@ -30,10 +33,21 @@ import {
   type EventEncoderYMode,
 } from "./eventEncoderDisplayBand";
 import { EventEncoderSpectrogramStrip } from "./EventEncoderSpectrogramStrip";
+import {
+  MIDI_MAX_PITCH,
+  MIDI_MIN_PITCH,
+  MIDI_PITCH_COUNT,
+  isBlackKey,
+  midiNoteName,
+  midiPitchAtY,
+  midiPitchToY,
+  partialIndexLabel,
+} from "./pianoRollAxis";
 import { PianoRollNotesStatusPill } from "./PianoRollNotesStatusPill";
 
 type YMode = EventEncoderYMode;
 type UnvoicedMode = "peak" | "bottom" | "hide";
+type ViewMode = "notes" | YMode;
 
 interface Size {
   width: number;
@@ -244,6 +258,10 @@ function EventEncoderPianoRollViewer({
   const dragRef = useRef<DragState | null>(null);
   const playbackModeRef = useRef<PianoRollPlaybackMode | null>(null);
 
+  const defaultRectangleMode: YMode = hasRidgeFrequencyDescriptors(timeline.events)
+    ? "ridge"
+    : "f0";
+
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const [timeRange, setTimeRange] = useState<TimeRange>(() =>
     buildEventBufferedTimeRange(timeline),
@@ -251,12 +269,15 @@ function EventEncoderPianoRollViewer({
   const [frequencyRange, setFrequencyRange] = useState<FrequencyRange>(() =>
     defaultFrequencyRange(timeline),
   );
-  const [yMode, setYMode] = useState<YMode>(() =>
-    hasRidgeFrequencyDescriptors(timeline.events) ? "ridge" : "f0",
-  );
+  const [viewMode, setViewMode] = useState<ViewMode>(defaultRectangleMode);
+  const [lastRectangleMode, setLastRectangleMode] =
+    useState<YMode>(defaultRectangleMode);
+  const userViewModeOverrideRef = useRef(false);
+  const notesFallbackToastedRef = useRef(false);
   const [unvoicedMode, setUnvoicedMode] = useState<UnvoicedMode>("peak");
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
+  const [hoveredNoteIndex, setHoveredNoteIndex] = useState<number | null>(null);
   const [tokenFilter, setTokenFilter] = useState<number | null>(null);
   const [legendCollapsed, setLegendCollapsed] = useState(false);
   const [cursor, setCursor] = useState<CursorInfo | null>(null);
@@ -265,6 +286,49 @@ function EventEncoderPianoRollViewer({
     useState<PianoRollPlaybackMode | null>(null);
   const [playheadTime, setPlayheadTime] = useState<number | null>(null);
   const [spectrogramCollapsed, setSpectrogramCollapsed] = useState(false);
+
+  const { data: notesStatus } = usePianoRollNotesStatus(timeline.job_id);
+  const notesAvailable = notesStatus?.status === "complete";
+  const yMode: YMode = viewMode === "notes" ? lastRectangleMode : viewMode;
+  const isNotesMode = viewMode === "notes";
+
+  const {
+    data: notesData,
+    isError: notesQueryError,
+    isFetched: notesQueryFetched,
+  } = usePianoRollNotes(timeline.job_id, {}, isNotesMode && notesAvailable);
+
+  useEffect(() => {
+    if (userViewModeOverrideRef.current) return;
+    if (notesAvailable && viewMode !== "notes") {
+      setViewMode("notes");
+    }
+  }, [notesAvailable, viewMode]);
+
+  useEffect(() => {
+    if (!isNotesMode) {
+      notesFallbackToastedRef.current = false;
+      return;
+    }
+    if (notesQueryError && !notesFallbackToastedRef.current) {
+      notesFallbackToastedRef.current = true;
+      userViewModeOverrideRef.current = true;
+      toast({
+        title: "Notes unavailable",
+        description: "Falling back to rectangle view.",
+        variant: "destructive",
+      });
+      setViewMode(lastRectangleMode);
+    }
+  }, [isNotesMode, lastRectangleMode, notesQueryError]);
+
+  const setViewModeFromUser = useCallback((next: ViewMode) => {
+    userViewModeOverrideRef.current = true;
+    if (next !== "notes") {
+      setLastRectangleMode(next);
+    }
+    setViewMode(next);
+  }, []);
 
   const recordingTimeRange = useMemo(
     () => ({
@@ -641,7 +705,61 @@ function EventEncoderPianoRollViewer({
     zoomTime,
   ]);
 
+  const visibleNotes = useMemo(() => {
+    if (!notesData) return [] as PianoRollNote[];
+    return notesData.notes.filter(
+      (note) =>
+        note.start_utc + note.duration_s >= timeRange.start &&
+        note.start_utc <= timeRange.end,
+    );
+  }, [notesData, timeRange.end, timeRange.start]);
+
+  const hoveredNote =
+    hoveredNoteIndex == null ? null : visibleNotes[hoveredNoteIndex] ?? null;
+
+  const findNoteAtPoint = useCallback(
+    (x: number, y: number) => {
+      const transform = makeTransform();
+      const rowHeight =
+        (transform.plotBottom - transform.plotTop) / MIDI_PITCH_COUNT;
+      for (let i = visibleNotes.length - 1; i >= 0; i -= 1) {
+        const note = visibleNotes[i];
+        const left = transform.timeToX(note.start_utc);
+        const right = transform.timeToX(note.start_utc + note.duration_s);
+        const yCenter = midiPitchToY(
+          note.midi_pitch,
+          transform.plotTop,
+          transform.plotBottom,
+        );
+        if (
+          x >= left &&
+          x <= right &&
+          y >= yCenter - rowHeight / 2 &&
+          y <= yCenter + rowHeight / 2
+        ) {
+          return { note, index: i };
+        }
+      }
+      return null;
+    },
+    [makeTransform, visibleNotes],
+  );
+
   useEffect(() => {
+    if (isNotesMode) {
+      drawNotesCanvas({
+        canvas: canvasRef.current,
+        size,
+        notes: visibleNotes,
+        timeRange,
+        selectedK: timeline.selected_k,
+        playheadTime: visiblePlayheadTime,
+        jobStart: timeline.job_start_timestamp,
+        hoveredNoteIndex,
+        tokenFilter,
+      });
+      return;
+    }
     drawMainCanvas({
       canvas: canvasRef.current,
       size,
@@ -658,12 +776,15 @@ function EventEncoderPianoRollViewer({
   }, [
     frequencyRange,
     hoveredEventId,
+    hoveredNoteIndex,
+    isNotesMode,
     selectedEventId,
     size,
     timeRange,
     timeline,
     tokenFilter,
     unvoicedMode,
+    visibleNotes,
     visiblePlayheadTime,
     yMode,
   ]);
@@ -701,8 +822,16 @@ function EventEncoderPianoRollViewer({
       return;
     }
 
+    if (isNotesMode) {
+      const hit = findNoteAtPoint(point.x, point.y);
+      setHoveredNoteIndex(hit?.index ?? null);
+      setHoveredEventId(null);
+      return;
+    }
+
     const hovered = findEventAtPoint(point.x, point.y);
     setHoveredEventId(hovered?.event_id ?? null);
+    setHoveredNoteIndex(null);
   };
 
   const handleMouseDown = (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -723,6 +852,11 @@ function EventEncoderPianoRollViewer({
     setIsDraggingTimeline(false);
     const point = canvasPoint(event);
     if (drag?.moved) return;
+    if (isNotesMode) {
+      const hit = findNoteAtPoint(point.x, point.y);
+      setSelectedEventId(hit?.note.event_id ?? null);
+      return;
+    }
     const clicked = findEventAtPoint(point.x, point.y);
     setSelectedEventId(clicked?.event_id ?? null);
   };
@@ -732,10 +866,29 @@ function EventEncoderPianoRollViewer({
     setIsDraggingTimeline(false);
     setCursor(null);
     setHoveredEventId(null);
+    setHoveredNoteIndex(null);
   };
 
   const handleDoubleClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const point = canvasPoint(event);
+    if (isNotesMode) {
+      const hit = findNoteAtPoint(point.x, point.y);
+      if (!hit) return;
+      const note = hit.note;
+      setSelectedEventId(note.event_id);
+      const duration = Math.max(MIN_TIME_SPAN_SECONDS, note.duration_s);
+      const padding = Math.max(1, duration * 2);
+      setTimeRange(
+        clampTimeRange(
+          {
+            start: note.start_utc - padding,
+            end: note.start_utc + note.duration_s + padding,
+          },
+          fullTimeRange,
+        ),
+      );
+      return;
+    }
     const clicked = findEventAtPoint(point.x, point.y);
     if (!clicked) return;
     setSelectedEventId(clicked.event_id);
@@ -819,10 +972,21 @@ function EventEncoderPianoRollViewer({
           <NotesStatusControls jobId={timeline.job_id} />
           <ToolbarSelect
             label="Y"
-            value={yMode}
+            value={viewMode}
             testId="eej-piano-roll-y-mode"
-            onChange={(value) => setYMode(value as YMode)}
+            onChange={(value) => setViewModeFromUser(value as ViewMode)}
           >
+            <option
+              value="notes"
+              disabled={!notesAvailable}
+              title={
+                notesAvailable
+                  ? "MIDI notes from the piano roll notes sidecar"
+                  : "Notes mode requires a completed piano roll notes job"
+              }
+            >
+              Notes{notesAvailable ? "" : " (unavailable)"}
+            </option>
             <option value="ridge">Ridge</option>
             <option value="f0">Median F0</option>
             <option value="peak">Peak Frequency</option>
@@ -926,8 +1090,19 @@ function EventEncoderPianoRollViewer({
           className={cn("block h-full w-full", canvasCursorClass)}
           data-testid="eej-piano-roll-canvas"
           data-cursor-state={
-            isDraggingTimeline ? "dragging" : hoveredEventId ? "hover-token" : "idle"
+            isDraggingTimeline
+              ? "dragging"
+              : isNotesMode
+                ? hoveredNoteIndex != null
+                  ? "hover-note"
+                  : "idle"
+                : hoveredEventId
+                  ? "hover-token"
+                  : "idle"
           }
+          data-view-mode={viewMode}
+          data-notes-mode={isNotesMode ? "true" : "false"}
+          data-notes-count={isNotesMode ? String(visibleNotes.length) : ""}
           data-playback-mode={playbackMode ?? ""}
           data-selected-event={selectedEventId ?? ""}
           data-playhead-time={visiblePlayheadTime.toFixed(3)}
@@ -951,7 +1126,16 @@ function EventEncoderPianoRollViewer({
             setTokenFilter((current) => (current === tokenId ? null : tokenId))
           }
         />
-        {tooltipEvent && cursor ? (
+        {isNotesMode ? (
+          hoveredNote && cursor ? (
+            <NoteTooltip
+              canvasSize={size}
+              cursor={cursor}
+              note={hoveredNote}
+              selectedK={selectedK}
+            />
+          ) : null
+        ) : tooltipEvent && cursor ? (
           <EventTooltip
             canvasSize={size}
             cursor={cursor}
@@ -962,6 +1146,17 @@ function EventEncoderPianoRollViewer({
             selectedK={selectedK}
             yMode={yMode}
           />
+        ) : null}
+        {isNotesMode &&
+        notesQueryFetched &&
+        notesData &&
+        visibleNotes.length === 0 ? (
+          <div
+            className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded border border-zinc-700 bg-zinc-900/80 px-3 py-1 text-xs text-zinc-300"
+            data-testid="eej-piano-roll-notes-empty"
+          >
+            No notes in this viewport
+          </div>
         ) : null}
       </div>
 
@@ -987,7 +1182,11 @@ function EventEncoderPianoRollViewer({
           {cursor ? formatRelativeTime(cursor.time, timeline.job_start_timestamp) : "time -"}
         </span>
         <span data-testid="eej-piano-roll-cursor-frequency">
-          {cursor ? `${Math.round(cursor.frequency)} Hz` : "freq -"}
+          {cursor
+            ? isNotesMode
+              ? formatCursorMidi(cursor.y, size.height)
+              : `${Math.round(cursor.frequency)} Hz`
+            : "freq -"}
         </span>
         <span data-testid="eej-piano-roll-zoom">
           span {formatDuration(viewportSpan)}
@@ -1298,6 +1497,222 @@ function placeTooltip(cursor: CursorInfo, canvasSize: Size) {
     maxHeight: Math.max(120, canvasSize.height - TOOLTIP_MARGIN * 2),
     top: clamp(top, TOOLTIP_MARGIN, maxTop),
   };
+}
+
+function drawNotesCanvas({
+  canvas,
+  size,
+  notes,
+  timeRange,
+  selectedK,
+  playheadTime,
+  jobStart,
+  hoveredNoteIndex,
+  tokenFilter,
+}: {
+  canvas: HTMLCanvasElement | null;
+  size: Size;
+  notes: PianoRollNote[];
+  timeRange: TimeRange;
+  selectedK: number;
+  playheadTime: number | null;
+  jobStart: number;
+  hoveredNoteIndex: number | null;
+  tokenFilter: number | null;
+}) {
+  if (!canvas || size.width <= 0 || size.height <= 0) return;
+  const ctx = prepareCanvas(canvas, size);
+  const transform = createTransform({
+    size,
+    timeRange,
+    frequencyRange: { min: 0, max: 1 },
+    unvoicedMode: "peak",
+  });
+
+  ctx.clearRect(0, 0, size.width, size.height);
+  ctx.fillStyle = "#09090b";
+  ctx.fillRect(0, 0, size.width, size.height);
+
+  drawNotesGrid(ctx, transform, jobStart);
+
+  const rowHeight =
+    (transform.plotBottom - transform.plotTop) / MIDI_PITCH_COUNT;
+  for (let i = 0; i < notes.length; i += 1) {
+    const note = notes[i];
+    if (tokenFilter != null && note.event_token !== tokenFilter) continue;
+    const x1 = transform.timeToX(note.start_utc);
+    const x2 = transform.timeToX(note.start_utc + note.duration_s);
+    if (x2 < transform.plotLeft || x1 > transform.plotRight) continue;
+    const width = Math.max(2, x2 - x1);
+    const yCenter = midiPitchToY(
+      note.midi_pitch,
+      transform.plotTop,
+      transform.plotBottom,
+    );
+    const height = Math.max(2, rowHeight - 1);
+    const color = labelColor(
+      Math.max(0, note.event_token),
+      Math.max(1, selectedK),
+    );
+
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.85;
+    ctx.fillRect(x1, yCenter - height / 2, width, height);
+    ctx.globalAlpha = Math.max(0.2, Math.min(1, note.velocity / 127));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x1, yCenter - height / 2, width, height);
+    ctx.restore();
+
+    if (i === hoveredNoteIndex) {
+      ctx.save();
+      ctx.strokeStyle = "#fafafa";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(
+        x1 - 1,
+        yCenter - height / 2 - 1,
+        width + 2,
+        height + 2,
+      );
+      ctx.restore();
+    }
+  }
+
+  if (playheadTime != null) {
+    drawPlayhead(ctx, transform, playheadTime, jobStart);
+  }
+}
+
+function drawNotesGrid(
+  ctx: CanvasRenderingContext2D,
+  transform: ReturnType<typeof createTransform>,
+  jobStart: number,
+) {
+  ctx.save();
+  ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, monospace";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "right";
+
+  const rowHeight =
+    (transform.plotBottom - transform.plotTop) / MIDI_PITCH_COUNT;
+
+  for (let midi = MIDI_MIN_PITCH; midi <= MIDI_MAX_PITCH; midi += 1) {
+    const yCenter = midiPitchToY(midi, transform.plotTop, transform.plotBottom);
+    const yTop = yCenter - rowHeight / 2;
+    if (isBlackKey(midi)) {
+      ctx.fillStyle = "#18181b";
+      ctx.fillRect(transform.plotLeft, yTop, transform.plotRight - transform.plotLeft, rowHeight);
+    }
+  }
+
+  ctx.strokeStyle = "#27272a";
+  ctx.lineWidth = 1;
+  for (let midi = MIDI_MIN_PITCH; midi <= MIDI_MAX_PITCH; midi += 1) {
+    const yCenter = midiPitchToY(midi, transform.plotTop, transform.plotBottom);
+    const yTop = yCenter - rowHeight / 2;
+    ctx.globalAlpha = midi % 12 === 0 ? 0.85 : 0.35;
+    ctx.beginPath();
+    ctx.moveTo(transform.plotLeft, yTop);
+    ctx.lineTo(transform.plotRight, yTop);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = "#a1a1aa";
+  for (let midi = 24; midi <= MIDI_MAX_PITCH; midi += 12) {
+    const yCenter = midiPitchToY(midi, transform.plotTop, transform.plotBottom);
+    ctx.fillText(midiNoteName(midi), transform.plotLeft - 8, yCenter);
+  }
+
+  const timeStep = chooseTimeStep(transform.timeRange.end - transform.timeRange.start);
+  const startOffset =
+    Math.max(
+      0,
+      Math.ceil((transform.timeRange.start - jobStart) / timeStep) * timeStep,
+    );
+  for (
+    let offset = startOffset;
+    jobStart + offset <= transform.timeRange.end;
+    offset += timeStep
+  ) {
+    const time = jobStart + offset;
+    const x = transform.timeToX(time);
+    if (x < transform.plotLeft || x > transform.plotRight) continue;
+    ctx.globalAlpha = 0.4;
+    ctx.beginPath();
+    ctx.moveTo(x, transform.plotTop);
+    ctx.lineTo(x, transform.plotBottom);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+}
+
+function formatCursorMidi(y: number, canvasHeight: number) {
+  const plotTop = TOP_MARGIN;
+  const plotBottom = Math.max(plotTop + 1, canvasHeight - BOTTOM_MARGIN);
+  const midi = midiPitchAtY(y, plotTop, plotBottom);
+  if (!Number.isFinite(midi)) return "midi -";
+  const rounded = Math.round(midi);
+  if (rounded < MIDI_MIN_PITCH || rounded > MIDI_MAX_PITCH) return "midi -";
+  return `MIDI ${rounded} (${midiNoteName(rounded)})`;
+}
+
+function NoteTooltip({
+  canvasSize,
+  cursor,
+  note,
+  selectedK,
+}: {
+  canvasSize: Size;
+  cursor: CursorInfo;
+  note: PianoRollNote;
+  selectedK: number;
+}) {
+  const color = labelColor(
+    Math.max(0, note.event_token),
+    Math.max(1, selectedK),
+  );
+  const position = placeTooltip(cursor, canvasSize);
+  return (
+    <div
+      className="pointer-events-none absolute z-20 w-64 rounded border border-zinc-700 bg-zinc-950/95 p-2 text-[11px] leading-5 text-zinc-300 shadow-xl"
+      style={{
+        left: position.left,
+        maxHeight: position.maxHeight,
+        overflowY: "auto",
+        top: position.top,
+      }}
+      data-testid="eej-piano-roll-note-tooltip"
+    >
+      <div className="mb-1 flex items-center gap-2">
+        <span
+          className="rounded px-1.5 py-0.5 font-mono font-bold text-white"
+          style={{ backgroundColor: color }}
+          data-testid="eej-piano-roll-note-tooltip-color"
+        >
+          MIDI {note.midi_pitch}
+        </span>
+        <span className="font-mono text-zinc-500">
+          {midiNoteName(note.midi_pitch)}
+        </span>
+      </div>
+      <TooltipRow
+        label="pitch"
+        value={`MIDI ${note.midi_pitch} (${midiNoteName(note.midi_pitch)})`}
+      />
+      <TooltipRow label="velocity" value={String(note.velocity)} />
+      <TooltipRow
+        label="duration"
+        value={`${note.duration_s.toFixed(2)} s`}
+      />
+      <TooltipRow label="event_id" value={note.event_id} />
+      <TooltipRow label="token" value={String(note.event_token)} />
+      <TooltipRow label="partial" value={partialIndexLabel(note.partial_index)} />
+    </div>
+  );
 }
 
 function drawMainCanvas({

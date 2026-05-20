@@ -50,6 +50,12 @@ helpers, or the retained Sequence Models UI.
   Encoder artifacts it defaults to Ridge mode, using trimmed ridge low/high
   frequency descriptors to set one token rectangle's vertical band, with
   conservative spectral-envelope top expansion for broad harmonic events.
+- When a Piano Roll Notes sidecar exists for the Event Encoder job, the page
+  defaults to a new Notes view mode that draws one bar per MIDI note from the
+  sidecar on an 88-key log-frequency Y axis (MIDI 21–108) with semitone
+  gridlines, octave labels (C0…C8), and black-key shading. If the
+  `.../notes` fetch fails, the page reverts to the previous rectangle mode
+  with a non-blocking toast and leaves the Notes selector greyed out.
 - Event Encoder timeline previous/next navigation can be token-scoped by
   toggling the selected event's token badge. This is a frontend-only affordance
   derived from the currently loaded selected-k timeline rows; it does not hide
@@ -98,6 +104,8 @@ concatenation.
 - ADR-056: Sequence Models track parallel to Call Parsing pipeline.
 - ADR-057: CRNN region-based chunk embeddings as second Sequence Models source.
 - ADR-063: Event Encoder v3 ridge frequency descriptors for piano-roll display.
+- ADR-064: Piano Roll Notes sidecar worker.
+- ADR-065: Extended Piano Roll Notes pitch range (deferred placeholder).
 
 ## Likely Neighbors
 
