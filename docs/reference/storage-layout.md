@@ -59,6 +59,9 @@
   {job_id}/report.json              (summary, token distributions, exemplar event ids, descriptor_feature_names, descriptor summaries, sequence preview)
   {job_id}/preprocess.joblib        (PCA model when used plus descriptor robust-scaling state)
   {job_id}/kmeans_k{k}.joblib       (one k-means model per valid k)
+  {job_id}/event_notes_{extractor_version}.parquet  (Piano Roll Notes sidecar; first version is v1)
+/exports/
+  event_encoders/{job_id}/notes_{extractor_version}.mid  (Piano Roll Notes MIDI export artifact produced by the user-initiated async export worker)
 /timeline_cache/
   spans/{span_key}/.source.json            (hydrophone id, source identity, start/end timestamps, deterministic span key)
   spans/{span_key}/.audio_manifest.json    (optional persisted HLS segment manifest shared by compatible timeline consumers)

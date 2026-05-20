@@ -191,6 +191,28 @@ and fits one k-means tokenizer per feasible k.
   omitting it serves the latest completed run. Returns `404` when no
   completed notes job exists or the parquet sidecar is missing on disk.
 
+- `GET /sequence-models/event-encoders/{id}/midi-export-status` returns the
+  latest `piano_roll_midi_exports` row for the encoder job as
+  `PianoRollMidiExportRead`, or `{"status": "absent"}` when no row exists.
+  Optional `extractor_version` pins the version.
+
+- `POST /sequence-models/event-encoders/{id}/midi-exports` enqueues an
+  asynchronous MIDI export of the completed Piano Roll Notes parquet. Body
+  accepts optional `extractor_version` (defaults to the latest completed
+  notes job's version), optional `params`, and `force` (default `false`).
+  Returns `201` on insert, `200` on reset of a terminal-state row, `409`
+  when a `queued` or `running` row already exists, and `422` when no
+  completed notes job exists for the resolved version. With `force=true`,
+  a `complete` row is reset to `queued` to support re-export.
+
+- `GET /sequence-models/event-encoders/{id}/midi-export` streams the
+  produced `.mid` artifact with `Content-Type: audio/midi` and
+  `Content-Disposition: attachment` using the filename
+  `event_encoder_{id}_notes_{extractor_version}.mid`. Optional
+  `extractor_version` pins the version; omitting it serves the latest
+  `complete` export. Returns `404` when no complete row exists or the file
+  is missing on disk.
+
 ### Schemas And Artifacts
 
 `EventEncoderJob` exposes source provenance, tokenizer version, serialized

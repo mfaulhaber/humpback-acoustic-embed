@@ -232,6 +232,50 @@ export interface CreatePianoRollNotesJobRequest {
   params?: Record<string, unknown>;
 }
 
+export type PianoRollMidiExportJobStatus =
+  | "queued"
+  | "running"
+  | "complete"
+  | "failed"
+  | "canceled";
+
+export interface PianoRollMidiExportRead {
+  id: string;
+  event_encoder_job_id: string;
+  extractor_version: string;
+  status: PianoRollMidiExportJobStatus;
+  started_at: string | null;
+  finished_at: string | null;
+  error_message: string | null;
+  midi_path: string | null;
+  n_notes: number | null;
+  n_bytes: number | null;
+  compute_seconds: number | null;
+  params_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PianoRollMidiExportStatusAbsent {
+  status: "absent";
+}
+
+export type PianoRollMidiExportStatus =
+  | PianoRollMidiExportRead
+  | PianoRollMidiExportStatusAbsent;
+
+export function isPianoRollMidiExportStatusAbsent(
+  status: PianoRollMidiExportStatus,
+): status is PianoRollMidiExportStatusAbsent {
+  return status.status === "absent";
+}
+
+export interface CreatePianoRollMidiExportRequest {
+  extractor_version?: string;
+  params?: Record<string, unknown>;
+  force?: boolean;
+}
+
 export interface EventEncoderTimelineResponse {
   job_id: string;
   event_segmentation_job_id: string;
@@ -469,6 +513,32 @@ export function createPianoRollNotesJob(
   );
 }
 
+export function fetchPianoRollMidiExportStatus(
+  jobId: string,
+): Promise<PianoRollMidiExportStatus> {
+  return request<PianoRollMidiExportStatus>(
+    `${EVENT_ENCODER_ROOT}/${jobId}/midi-export-status`,
+  );
+}
+
+export function createPianoRollMidiExport(
+  jobId: string,
+  body: CreatePianoRollMidiExportRequest = {},
+): Promise<PianoRollMidiExportRead> {
+  return request<PianoRollMidiExportRead>(
+    `${EVENT_ENCODER_ROOT}/${jobId}/midi-exports`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export function pianoRollMidiExportDownloadUrl(jobId: string): string {
+  return `${EVENT_ENCODER_ROOT}/${jobId}/midi-export`;
+}
+
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
 
 export function isContinuousEmbeddingJobActive(
@@ -663,6 +733,43 @@ export function useCreatePianoRollNotesJob(jobId: string | null) {
       if (jobId == null) return;
       qc.invalidateQueries({ queryKey: ["piano-roll-notes-status", jobId] });
       qc.invalidateQueries({ queryKey: ["event-encoder-timeline", jobId] });
+    },
+  });
+}
+
+const ACTIVE_MIDI_EXPORT_STATUSES = new Set<PianoRollMidiExportJobStatus>([
+  "queued",
+  "running",
+]);
+
+function isActiveMidiExportStatus(status: PianoRollMidiExportStatus): boolean {
+  return (
+    status.status !== "absent" &&
+    ACTIVE_MIDI_EXPORT_STATUSES.has(status.status)
+  );
+}
+
+export function usePianoRollMidiExportStatus(jobId: string | null) {
+  return useQuery({
+    queryKey: ["piano-roll-midi-export-status", jobId],
+    queryFn: () => fetchPianoRollMidiExportStatus(jobId as string),
+    enabled: jobId != null,
+    refetchInterval: (query) => {
+      const data = query.state.data as PianoRollMidiExportStatus | undefined;
+      if (!data) return 3000;
+      return isActiveMidiExportStatus(data) ? 3000 : false;
+    },
+  });
+}
+
+export function useCreatePianoRollMidiExport(jobId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreatePianoRollMidiExportRequest = {}) =>
+      createPianoRollMidiExport(jobId as string, body),
+    onSuccess: () => {
+      if (jobId == null) return;
+      qc.invalidateQueries({ queryKey: ["piano-roll-midi-export-status", jobId] });
     },
   });
 }

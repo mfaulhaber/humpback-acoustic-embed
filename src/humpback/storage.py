@@ -140,6 +140,23 @@ def event_encoder_notes_path(
     )
 
 
+def exports_root(storage_root: Path) -> Path:
+    """Root directory for export artifacts (e.g. MIDI files)."""
+    return storage_root / "exports"
+
+
+def event_encoder_midi_export_path(
+    storage_root: Path, job_id: str, extractor_version: str
+) -> Path:
+    """Path to the Piano Roll Notes MIDI export for an Event Encoder job."""
+    return (
+        exports_root(storage_root)
+        / "event_encoders"
+        / job_id
+        / f"notes_{extractor_version}.mid"
+    )
+
+
 def hyperparameter_manifest_dir(storage_root: Path, manifest_id: str) -> Path:
     return storage_root / "hyperparameter" / "manifests" / manifest_id
 

@@ -315,6 +315,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     if count_eej:
         logger.warning(f"Recovered {count_eej} stale event encoder job(s)")
 
+    from humpback.models.piano_roll_midi_export import PianoRollMidiExport
     from humpback.models.piano_roll_notes import PianoRollNotesJob
 
     result_prn = await session.execute(
@@ -331,6 +332,21 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
     count_prn = _rowcount(result_prn)
     if count_prn:
         logger.warning(f"Recovered {count_prn} stale piano roll notes job(s)")
+
+    result_prme = await session.execute(
+        update(PianoRollMidiExport)
+        .where(
+            PianoRollMidiExport.status == JobStatus.running.value,
+            PianoRollMidiExport.updated_at < cutoff,
+        )
+        .values(
+            status=JobStatus.queued.value,
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    count_prme = _rowcount(result_prme)
+    if count_prme:
+        logger.warning(f"Recovered {count_prme} stale piano roll midi export(s)")
 
     total = (
         count2
@@ -349,6 +365,7 @@ async def recover_stale_jobs(session: AsyncSession) -> int:
         + count_cej
         + count_eej
         + count_prn
+        + count_prme
     )
     if total:
         await session.commit()
@@ -764,6 +781,23 @@ async def claim_piano_roll_notes_job(session: AsyncSession):
             queued_value=JobStatus.queued.value,
             running_value=JobStatus.running.value,
             order_attr=PianoRollNotesJob.created_at,
+        )
+        if job is not None:
+            return job
+    return None
+
+
+async def claim_piano_roll_midi_export(session: AsyncSession):
+    from humpback.models.piano_roll_midi_export import PianoRollMidiExport
+
+    for _ in range(3):
+        job = await _claim_next_job(
+            session,
+            PianoRollMidiExport,
+            status_attr=PianoRollMidiExport.status,
+            queued_value=JobStatus.queued.value,
+            running_value=JobStatus.running.value,
+            order_attr=PianoRollMidiExport.created_at,
         )
         if job is not None:
             return job

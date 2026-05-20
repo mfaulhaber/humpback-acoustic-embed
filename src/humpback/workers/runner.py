@@ -420,6 +420,25 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then piano roll MIDI export jobs
+        prmejob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_piano_roll_midi_export
+
+            prmejob = await claim_piano_roll_midi_export(session)
+        if prmejob:
+            logger.info(f"Piano roll MIDI export job {prmejob.id}")
+            from humpback.workers.piano_roll_midi_export_worker import (
+                run_piano_roll_midi_export,
+            )
+
+            async with session_factory() as session:
+                await run_piano_roll_midi_export(session, prmejob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # No jobs found, wait before polling again
         try:
             await asyncio.wait_for(

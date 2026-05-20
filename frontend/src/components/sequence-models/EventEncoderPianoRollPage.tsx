@@ -43,6 +43,7 @@ import {
   midiPitchToY,
   partialIndexLabel,
 } from "./pianoRollAxis";
+import { MidiExportButton } from "./MidiExportButton";
 import { PianoRollNotesStatusPill } from "./PianoRollNotesStatusPill";
 
 type YMode = EventEncoderYMode;
@@ -982,6 +983,7 @@ function EventEncoderPianoRollViewer({
           testId="eej-piano-roll-token-count"
         />
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <PianoRollMidiExportControls jobId={timeline.job_id} />
           <NotesStatusControls jobId={timeline.job_id} />
           <ToolbarSelect
             label="Y"
@@ -1262,6 +1264,11 @@ function ToolbarSelect({
       </select>
     </label>
   );
+}
+
+function PianoRollMidiExportControls({ jobId }: { jobId: string }) {
+  const { data: notesStatus } = usePianoRollNotesStatus(jobId);
+  return <MidiExportButton jobId={jobId} notesStatus={notesStatus} />;
 }
 
 function NotesStatusControls({ jobId }: { jobId: string }) {
