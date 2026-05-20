@@ -388,6 +388,7 @@ interface MockState {
 interface CreatePayload {
   preprocessing?: {
     l2_normalize_pools?: boolean;
+    descriptor_weight?: number;
   };
 }
 
@@ -576,6 +577,7 @@ test.describe("Sequence Models - Event Encoder", () => {
     expect(
       state.lastCreateBody?.preprocessing?.l2_normalize_pools,
     ).toBe(false);
+    expect(state.lastCreateBody?.preprocessing?.descriptor_weight).toBe(0.364);
 
     const queuedRow = page.locator("tr", {
       hasText: SEG_JOB.id.slice(0, 8),

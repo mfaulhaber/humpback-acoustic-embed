@@ -51,6 +51,85 @@ describe("resolveEventDisplayBand", () => {
     expect(band.highFrequency).toBe(2800);
   });
 
+  it("trusts calibrated low-energy ridge bands from real whistle artifacts", () => {
+    const band = resolveEventDisplayBand(
+      event({
+        ridge_median_frequency: 2898.4375,
+        ridge_low_frequency: 2392.1875,
+        ridge_high_frequency: 3260.9375,
+        ridge_coverage: 1,
+        ridge_energy_ratio: 0.010797901079058647,
+        voicing_fraction: 1,
+        median_f0: 71.22357940673828,
+        f0_range: 3.7352724075317383,
+        peak_frequency: 62.5,
+        band_limited_peak_frequency: 3125,
+      }),
+      "ridge",
+    );
+
+    expect(band.source).toBe("ridge");
+    expect(band.ridgeTrusted).toBe(true);
+    expect(band.centerFrequency).toBe(2898.4375);
+    expect(band.lowFrequency).toBe(2392.1875);
+    expect(band.highFrequency).toBe(3260.9375);
+  });
+
+  it("expands trusted ridge bands for broad harmonic moan envelopes", () => {
+    const band = resolveEventDisplayBand(
+      event({
+        ridge_median_frequency: 1015.625,
+        ridge_low_frequency: 843.75,
+        ridge_high_frequency: 1359.375,
+        ridge_coverage: 1,
+        ridge_energy_ratio: 0.0319729745388031,
+        spectral_centroid: 3080.42138671875,
+        bandwidth: 2224.228271484375,
+        high_band_energy_ratio: 0.7930237054824829,
+        voicing_fraction: 0.15555556118488312,
+        median_f0: 70.81336212158203,
+        f0_range: 3.3297667503356934,
+        peak_frequency: 62.5,
+        band_limited_peak_frequency: 1281.25,
+      }),
+      "ridge",
+    );
+
+    expect(band.source).toBe("ridge");
+    expect(band.ridgeTrusted).toBe(true);
+    expect(band.centerFrequency).toBe(1015.625);
+    expect(band.lowFrequency).toBe(843.75);
+    expect(band.highFrequency).toBe(3080.42138671875);
+  });
+
+  it("expands tonal low-moan bands with moderate high-band energy", () => {
+    const band = resolveEventDisplayBand(
+      event({
+        ridge_median_frequency: 312.5,
+        ridge_low_frequency: 296.875,
+        ridge_high_frequency: 329.6875,
+        ridge_coverage: 1,
+        ridge_energy_ratio: 0.09594432264566422,
+        spectral_centroid: 2101.532958984375,
+        bandwidth: 2097.9912109375,
+        spectral_entropy: 0.8581035733222961,
+        high_band_energy_ratio: 0.5040363669395447,
+        voicing_fraction: 1,
+        median_f0: 315.19970703125,
+        f0_range: 43.60465621948242,
+        peak_frequency: 312.5,
+        band_limited_peak_frequency: 312.5,
+      }),
+      "ridge",
+    );
+
+    expect(band.source).toBe("ridge");
+    expect(band.ridgeTrusted).toBe(true);
+    expect(band.centerFrequency).toBe(312.5);
+    expect(band.lowFrequency).toBe(296.875);
+    expect(band.highFrequency).toBe(2101.532958984375);
+  });
+
   it("falls back to voiced F0 when ridge coverage is weak", () => {
     const band = resolveEventDisplayBand(
       event({

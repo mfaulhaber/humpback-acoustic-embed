@@ -294,7 +294,7 @@ async def run_event_encoder_job(
             pca_dim=int(preprocessing_config.get("pca_dim", 128)),
             embedding_weight=float(preprocessing_config.get("embedding_weight", 1.0)),
             descriptor_weight=float(
-                preprocessing_config.get("descriptor_weight", 0.571)
+                preprocessing_config.get("descriptor_weight", 0.364)
             ),
             descriptor_clip_value=preprocessing_config.get(
                 "descriptor_clip_value", 3.0
@@ -572,7 +572,7 @@ async def _build_encoded_events(
                 descriptor_config.get("ridge_min_frequency_hz", 100.0)
             ),
             ridge_max_frequency_hz=float(
-                descriptor_config.get("ridge_max_frequency_hz", 3000.0)
+                descriptor_config.get("ridge_max_frequency_hz", 6000.0)
             ),
             ridge_candidate_count=int(
                 descriptor_config.get("ridge_candidate_count", 5)

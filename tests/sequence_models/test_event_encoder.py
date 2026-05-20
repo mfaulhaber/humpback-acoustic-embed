@@ -329,7 +329,6 @@ def test_ridge_summary_tracks_high_frequency_chirp():
         sample_rate=sample_rate,
         n_fft=1024,
         hop_length=256,
-        ridge_max_frequency_hz=6000.0,
         band_peak_min_frequency_hz=1000.0,
         high_band_min_frequency_hz=1000.0,
     )

@@ -28,8 +28,13 @@ export interface EventDisplayBandOptions {
 
 export const DEFAULT_VOICED_THRESHOLD = 0.3;
 const DEFAULT_RIDGE_COVERAGE_THRESHOLD = 0.35;
-const DEFAULT_RIDGE_ENERGY_RATIO_THRESHOLD = 0.08;
+const DEFAULT_RIDGE_ENERGY_RATIO_THRESHOLD = 0.01;
 const DEFAULT_FALLBACK_BAND_SPAN_HZ = 20;
+const SPECTRAL_ENVELOPE_HIGH_BAND_THRESHOLD = 0.6;
+const SPECTRAL_ENVELOPE_TONAL_HIGH_BAND_THRESHOLD = 0.45;
+const SPECTRAL_ENVELOPE_TONAL_ENTROPY_THRESHOLD = 0.92;
+const SPECTRAL_ENVELOPE_CENTROID_MARGIN_HZ = 500;
+const SPECTRAL_ENVELOPE_MIN_BANDWIDTH_HZ = 1000;
 
 export function hasRidgeFrequencyDescriptors(
   events: EventEncoderTimelineEvent[],
@@ -113,15 +118,46 @@ function trustedRidgeBand(
   ) {
     return null;
   }
+  const lowFrequency = Math.min(low, median);
+  const ridgeHighFrequency = Math.max(high, median);
 
   return {
     centerFrequency: median,
-    lowFrequency: Math.min(low, median),
-    highFrequency: Math.max(high, median),
+    lowFrequency,
+    highFrequency: expandedSpectralEnvelopeHighFrequency(
+      values,
+      ridgeHighFrequency,
+    ),
     source: "ridge",
     voiced,
     ridgeTrusted: true,
   };
+}
+
+function expandedSpectralEnvelopeHighFrequency(
+  values: Record<string, number>,
+  ridgeHighFrequency: number,
+): number {
+  const spectralCentroid = positive(values.spectral_centroid);
+  const bandwidth = positive(values.bandwidth);
+  const highBandEnergy = numeric(values.high_band_energy_ratio) ?? 0;
+  const spectralEntropy = numeric(values.spectral_entropy);
+  const hasStrongHighBandEnergy =
+    highBandEnergy >= SPECTRAL_ENVELOPE_HIGH_BAND_THRESHOLD;
+  const hasTonalHighBandEnergy =
+    highBandEnergy >= SPECTRAL_ENVELOPE_TONAL_HIGH_BAND_THRESHOLD &&
+    spectralEntropy != null &&
+    spectralEntropy <= SPECTRAL_ENVELOPE_TONAL_ENTROPY_THRESHOLD;
+  if (
+    spectralCentroid == null ||
+    bandwidth == null ||
+    (!hasStrongHighBandEnergy && !hasTonalHighBandEnergy) ||
+    bandwidth < SPECTRAL_ENVELOPE_MIN_BANDWIDTH_HZ ||
+    spectralCentroid < ridgeHighFrequency + SPECTRAL_ENVELOPE_CENTROID_MARGIN_HZ
+  ) {
+    return ridgeHighFrequency;
+  }
+  return spectralCentroid;
 }
 
 function fallbackBand(

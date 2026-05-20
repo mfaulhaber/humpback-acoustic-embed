@@ -84,11 +84,11 @@
 **Acceptance criteria:**
 - [x] Piano roll Y-mode selector includes `Ridge`
 - [x] Jobs with ridge descriptor fields default to Ridge mode; older artifacts keep the existing default behavior
-- [x] Event rectangles in Ridge mode use ridge low/high bounds for vertical extent when ridge trust gates pass
+- [x] Event rectangles in Ridge mode use ridge low/high bounds for vertical extent when ridge trust gates pass, with conservative spectral-envelope top expansion for broad harmonic events
 - [x] Event rectangles still render as one token rectangle per event
 - [x] Slope line continues to use `ridge_log_frequency_slope`
 - [x] Tooltips show compact ridge summary rows when ridge descriptor fields are present
-- [x] Frequency max choices include 6000 Hz without automatically changing the user's current range
+- [x] Frequency max choices include 6000 Hz and v3 Ridge views default to the 6000 Hz vertical range
 - [x] Existing F0 and Peak Frequency modes remain available
 - [x] E2E mocks cover both legacy v2 data and v3 high-frequency ridge data
 
@@ -107,6 +107,7 @@
 - Modify: `docs/reference/sequence-models-api.md`
 - Modify: `docs/reference/storage-layout.md`
 - Modify: `docs/reference/frontend.md`
+- Modify: `DECISIONS.md`
 
 **Acceptance criteria:**
 - [x] Sequence Models context records the 22-entry v3 descriptor order
@@ -115,6 +116,7 @@
 - [x] Sequence Models API reference documents new descriptor config fields and v3 defaults
 - [x] Storage layout documents appended ridge descriptor columns in Event Encoder parquet artifacts
 - [x] Frontend reference documents Ridge mode as the preferred piano roll display for v3 artifacts
+- [x] ADR records the intentional Event Encoder v3 DSP descriptor/default contract
 
 **Tests needed:**
 - Documentation review plus the targeted backend/frontend tests from prior tasks

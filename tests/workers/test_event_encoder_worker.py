@@ -170,6 +170,65 @@ async def test_event_encoder_worker_writes_artifacts(session, settings):
     ).exists()
 
 
+async def test_event_encoder_worker_partial_configs_use_v3_fallbacks(
+    session, settings, monkeypatch
+):
+    import humpback.workers.event_encoder_worker as worker_module
+
+    seg, continuous = await _seed_source(session, settings)
+    job, _ = await create_event_encoder_job(
+        session,
+        EventEncoderJobCreate(
+            event_segmentation_job_id=seg.id,
+            continuous_embedding_job_id=continuous.id,
+            k_values=[1],
+            preprocessing=EventEncoderPreprocessingConfig(pca_dim=64),
+        ),
+    )
+    job.descriptor_config_json = "{}"
+    job.preprocessing_config_json = json.dumps(
+        {
+            "l2_normalize_pools": True,
+            "pca_dim": 64,
+            "embedding_weight": 1.0,
+        }
+    )
+    await session.commit()
+
+    descriptor_kwargs: list[dict[str, object]] = []
+    preprocess_kwargs: list[dict[str, object]] = []
+    original_compute = worker_module.compute_acoustic_descriptors
+    original_preprocess = worker_module.preprocess_event_features
+
+    def capture_compute_acoustic_descriptors(*args, **kwargs):
+        descriptor_kwargs.append(dict(kwargs))
+        return original_compute(*args, **kwargs)
+
+    def capture_preprocess_event_features(*args, **kwargs):
+        preprocess_kwargs.append(dict(kwargs))
+        return original_preprocess(*args, **kwargs)
+
+    monkeypatch.setattr(
+        worker_module,
+        "compute_acoustic_descriptors",
+        capture_compute_acoustic_descriptors,
+    )
+    monkeypatch.setattr(
+        worker_module,
+        "preprocess_event_features",
+        capture_preprocess_event_features,
+    )
+
+    await run_event_encoder_job(session, job, settings, audio_provider=_audio_provider)
+
+    assert descriptor_kwargs
+    assert preprocess_kwargs
+    assert {kwargs["ridge_max_frequency_hz"] for kwargs in descriptor_kwargs} == {
+        6000.0
+    }
+    assert preprocess_kwargs[0]["descriptor_weight"] == 0.364
+
+
 async def test_event_encoder_worker_fails_when_no_events_are_encodable(
     session, settings
 ):

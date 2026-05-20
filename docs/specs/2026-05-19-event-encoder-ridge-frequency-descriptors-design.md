@@ -108,6 +108,15 @@ The implementation must validate:
 This keeps token height robust while still expressing whistles, sweeps, and
 shrieks as visibly high-frequency events.
 
+For broad harmonic moans, the single tracked ridge can follow one dominant
+partial while other visible ridges extend much higher. In Ridge mode, the UI may
+conservatively expand the rendered upper bound to the spectral centroid when
+`high_band_energy_ratio`, `bandwidth`, and, for moderate high-band ratios, low
+`spectral_entropy` show a broad tonal high-band envelope and the centroid is
+well above `ridge_high_frequency`. This preserves the ridge-derived low/center
+placement while avoiding a misleading thin rectangle for multi-ridge moan
+events.
+
 ## 6. Ridge Trust and Fallbacks
 
 The UI should only use ridge bounds when the ridge summary is trustworthy.
@@ -115,7 +124,7 @@ The UI should only use ridge bounds when the ridge summary is trustworthy.
 Recommended defaults:
 
 - `ridge_coverage >= 0.35`
-- `ridge_energy_ratio >= 0.08`
+- `ridge_energy_ratio >= 0.01`
 - `ridge_median_frequency > 0`
 - `ridge_high_frequency >= ridge_low_frequency`
 
@@ -198,7 +207,8 @@ Rendering logic for `ridge` mode:
 2. If trusted ridge bounds exist:
    - `centerFrequency = ridge_median_frequency`
    - `lowFrequency = ridge_low_frequency`
-   - `highFrequency = ridge_high_frequency`
+   - `highFrequency = ridge_high_frequency`, optionally expanded to the
+     spectral centroid for broad high-band harmonic envelopes
 3. Else use the fallback center frequency and a compact minimum height.
 4. Convert low/high to y coordinates.
 5. Render one rectangle per event.
@@ -224,7 +234,8 @@ The piano roll already allows 1500, 2000, 3000, 4000, and 5000 Hz views.
 
 For v3 ridge descriptors, consider two small UI adjustments:
 
-- Increase the maximum frequency option to 6000 Hz.
+- Increase the maximum frequency option to 6000 Hz and use it as the default
+  vertical range for v3 artifacts with ridge-frequency descriptors.
 - When switching to Ridge mode, avoid silently changing the user's current
   frequency range, but allow the token rectangles to clamp visibly at the top
   if the selected range is too low.

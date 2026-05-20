@@ -46,3 +46,6 @@
   trimmed low/high ridge frequency bounds for piano roll display. Full STFT
   matrices and frame-level ridge contours are not stored in Continuous
   Embedding artifacts for this feature.
+- Event Encoder piano-roll Ridge mode may expand a trusted ridge band's display
+  top to the spectral centroid when scalar spectral-envelope descriptors show a
+  broad tonal high-band event; this remains display-only and artifact-backed.

@@ -42,7 +42,8 @@ helpers, or the retained Sequence Models UI.
   backed by Call Parsing region timeline tiles; the piano roll's smooth
   viewport state remains the source of truth for that strip. For v3 Event
   Encoder artifacts it defaults to Ridge mode, using trimmed ridge low/high
-  frequency descriptors to set one token rectangle's vertical band.
+  frequency descriptors to set one token rectangle's vertical band, with
+  conservative spectral-envelope top expansion for broad harmonic events.
 - Event Encoder timeline previous/next navigation can be token-scoped by
   toggling the selected event's token badge. This is a frontend-only affordance
   derived from the currently loaded selected-k timeline rows; it does not hide
@@ -84,6 +85,12 @@ traces, and F0 contours are not stored in Continuous Embedding artifacts.
 Descriptor vectors are robust-z normalized and clipped by the Event Encoder
 preprocessing config (`descriptor_clip_value`, default 3.0) before weighting and
 concatenation.
+
+## Relevant ADRs
+
+- ADR-056: Sequence Models track parallel to Call Parsing pipeline.
+- ADR-057: CRNN region-based chunk embeddings as second Sequence Models source.
+- ADR-063: Event Encoder v3 ridge frequency descriptors for piano-roll display.
 
 ## Likely Neighbors
 

@@ -86,7 +86,7 @@ const RIGHT_MARGIN = 10;
 const TOP_MARGIN = 8;
 const BOTTOM_MARGIN = 8;
 const TOOLTIP_WIDTH = 256;
-const TOOLTIP_ESTIMATED_HEIGHT = 222;
+const TOOLTIP_ESTIMATED_HEIGHT = 260;
 const TOOLTIP_OFFSET = 14;
 const TOOLTIP_MARGIN = 8;
 const UNVOICED_LANE_HEIGHT = 34;
@@ -96,6 +96,7 @@ const CONTINUOUS_PLAYBACK_WINDOW_SECONDS = 300;
 const MAX_FREQUENCY_HZ = 6000;
 const MIN_FREQUENCY_SPAN_HZ = 100;
 const DEFAULT_FREQUENCY_MAX = 2000;
+const DEFAULT_RIDGE_FREQUENCY_MAX = 6000;
 const FREQUENCY_OPTIONS = [1500, 2000, 3000, 4000, 5000, 6000];
 
 export function EventEncoderPianoRollPage() {
@@ -244,10 +245,9 @@ function EventEncoderPianoRollViewer({
   const [timeRange, setTimeRange] = useState<TimeRange>(() =>
     buildEventBufferedTimeRange(timeline),
   );
-  const [frequencyRange, setFrequencyRange] = useState<FrequencyRange>({
-    min: 0,
-    max: DEFAULT_FREQUENCY_MAX,
-  });
+  const [frequencyRange, setFrequencyRange] = useState<FrequencyRange>(() =>
+    defaultFrequencyRange(timeline),
+  );
   const [yMode, setYMode] = useState<YMode>(() =>
     hasRidgeFrequencyDescriptors(timeline.events) ? "ridge" : "f0",
   );
@@ -389,7 +389,7 @@ function EventEncoderPianoRollViewer({
 
   useEffect(() => {
     setTimeRange(buildEventBufferedTimeRange(timeline));
-    setFrequencyRange({ min: 0, max: DEFAULT_FREQUENCY_MAX });
+    setFrequencyRange(defaultFrequencyRange(timeline));
     setSelectedEventId(null);
     setHoveredEventId(null);
     setTokenFilter(null);
@@ -956,6 +956,7 @@ function EventEncoderPianoRollViewer({
               (event) => event.event_id === tooltipEvent.event_id,
             )}
             selectedK={selectedK}
+            yMode={yMode}
           />
         ) : null}
       </div>
@@ -1120,15 +1121,18 @@ function EventTooltip({
   event,
   position,
   selectedK,
+  yMode,
 }: {
   canvasSize: Size;
   cursor: CursorInfo;
   event: EventEncoderTimelineEvent;
   position: number;
   selectedK: number;
+  yMode: YMode;
 }) {
   const values = event.descriptor_values;
   const color = labelColor(event.token_id, Math.max(1, selectedK));
+  const displayBand = resolveEventDisplayBand(event, yMode);
   const slope = numeric(values.ridge_log_frequency_slope);
   const slopeLabel =
     slope == null || Math.abs(slope) < 0.05
@@ -1162,6 +1166,10 @@ function EventTooltip({
       <TooltipRow label="median_f0" value={formatHz(values.median_f0)} />
       <TooltipRow label="f0_range" value={formatHz(values.f0_range)} />
       <TooltipRow label="peak" value={formatHz(values.peak_frequency)} />
+      <TooltipRow
+        label="display_band"
+        value={`${formatHz(displayBand.lowFrequency)} - ${formatHz(displayBand.highFrequency)}`}
+      />
       {numeric(values.ridge_median_frequency) != null ? (
         <>
           <TooltipRow label="ridge_mid" value={formatHz(values.ridge_median_frequency)} />
@@ -1172,6 +1180,9 @@ function EventTooltip({
           <TooltipRow label="ridge_cov" value={formatRatio(values.ridge_coverage)} />
           <TooltipRow label="ridge_energy" value={formatRatio(values.ridge_energy_ratio)} />
           <TooltipRow label="band_peak" value={formatHz(values.band_limited_peak_frequency)} />
+          <TooltipRow label="centroid" value={formatHz(values.spectral_centroid)} />
+          <TooltipRow label="bandwidth" value={formatHz(values.bandwidth)} />
+          <TooltipRow label="high_band" value={formatRatio(values.high_band_energy_ratio)} />
         </>
       ) : null}
       <TooltipRow label="voicing" value={formatRatio(values.voicing_fraction)} />
@@ -1630,6 +1641,17 @@ function buildTokenSummaries(events: EventEncoderTimelineEvent[]): TokenSummary[
       meanF0: summary.f0Count ? summary.f0Sum / summary.f0Count : null,
     }))
     .sort((a, b) => a.tokenId - b.tokenId);
+}
+
+function defaultFrequencyRange(
+  timeline: EventEncoderTimelineResponse,
+): FrequencyRange {
+  return {
+    min: 0,
+    max: hasRidgeFrequencyDescriptors(timeline.events)
+      ? DEFAULT_RIDGE_FREQUENCY_MAX
+      : DEFAULT_FREQUENCY_MAX,
+  };
 }
 
 function buildEventBufferedTimeRange(
