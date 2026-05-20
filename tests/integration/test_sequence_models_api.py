@@ -1,12 +1,14 @@
 """Integration tests for retained Sequence Models / Continuous Embedding APIs."""
 
 import math
+from datetime import datetime, timezone
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 from humpback.database import create_engine, create_session_factory
 from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
+from humpback.models.piano_roll_notes import PianoRollNotesJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob, EventEncoderJob
 from humpback.sequence_models.event_encoder import DESCRIPTOR_ORDER
@@ -710,4 +712,277 @@ async def test_get_event_encoder_projection_missing_vector_artifact(
 
     response = await client.get(f"/sequence-models/event-encoders/{job_id}/projection")
 
+    assert response.status_code == 404
+
+
+# ---------- Piano Roll Notes endpoints ----------
+
+
+_NOTES_ROW_SCHEMA = pa.schema(
+    [
+        pa.field("event_id", pa.string()),
+        pa.field("event_token", pa.int32()),
+        pa.field("partial_index", pa.int32()),
+        pa.field("midi_pitch", pa.uint8()),
+        pa.field("start_utc", pa.float64()),
+        pa.field("start_offset_s", pa.float64()),
+        pa.field("duration_s", pa.float64()),
+        pa.field("velocity", pa.uint8()),
+        pa.field("peak_magnitude", pa.float32()),
+        pa.field("track_id", pa.uint32()),
+    ]
+)
+
+
+async def _write_notes_sidecar(app_settings, encoder_job_id: str, rows: list[dict]):
+    path = (
+        app_settings.storage_root
+        / "event_encoders"
+        / encoder_job_id
+        / "event_notes_v1.parquet"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pylist(rows, schema=_NOTES_ROW_SCHEMA), path)
+    return path
+
+
+async def _seed_notes_job(
+    app_settings,
+    encoder_job_id: str,
+    *,
+    status: str,
+    notes_path: str | None = None,
+    extractor_version: str = "v1",
+    n_notes: int | None = None,
+) -> str:
+    engine = create_engine(app_settings.database_url)
+    sf = create_session_factory(engine)
+    now = datetime.now(timezone.utc)
+    async with sf() as session:
+        row = PianoRollNotesJob(
+            event_encoder_job_id=encoder_job_id,
+            extractor_version=extractor_version,
+            status=status,
+            notes_path=notes_path,
+            n_events=2 if status == JobStatus.complete.value else None,
+            n_notes=n_notes
+            if n_notes is not None
+            else (3 if status == JobStatus.complete.value else None),
+            compute_seconds=1.5 if status == JobStatus.complete.value else None,
+            finished_at=now if status == JobStatus.complete.value else None,
+            params_json="{}",
+        )
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+        return row.id
+
+
+async def test_timeline_payload_includes_absent_notes_status(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+
+    response = await client.get(f"/sequence-models/event-encoders/{job_id}/timeline")
+    assert response.status_code == 200, response.text
+    assert response.json()["notes_status"] == {"status": "absent"}
+
+
+async def test_timeline_payload_includes_completed_notes_status(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+    notes_path = await _write_notes_sidecar(app_settings, job_id, rows=[])
+    await _seed_notes_job(
+        app_settings,
+        job_id,
+        status=JobStatus.complete.value,
+        notes_path=str(notes_path),
+        n_notes=0,
+    )
+
+    response = await client.get(f"/sequence-models/event-encoders/{job_id}/timeline")
+    assert response.status_code == 200, response.text
+    notes_status = response.json()["notes_status"]
+    assert notes_status["status"] == "complete"
+    assert notes_status["extractor_version"] == "v1"
+    assert notes_status["n_notes"] == 0
+
+
+async def test_get_notes_status_absent(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+
+    response = await client.get(
+        f"/sequence-models/event-encoders/{job_id}/notes-status"
+    )
+    assert response.status_code == 200
+    assert response.json() == {"status": "absent"}
+
+
+async def test_get_notes_status_returns_existing_row(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+    await _seed_notes_job(app_settings, job_id, status=JobStatus.running.value)
+
+    response = await client.get(
+        f"/sequence-models/event-encoders/{job_id}/notes-status"
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "running"
+    assert body["event_encoder_job_id"] == job_id
+    assert body["extractor_version"] == "v1"
+
+
+async def test_get_notes_status_missing_encoder_returns_404(client):
+    response = await client.get(
+        "/sequence-models/event-encoders/missing-id/notes-status"
+    )
+    assert response.status_code == 404
+
+
+async def test_create_notes_job_enqueues_and_returns_201(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+
+    response = await client.post(
+        f"/sequence-models/event-encoders/{job_id}/notes-jobs",
+        json={},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["event_encoder_job_id"] == job_id
+    assert body["status"] == "queued"
+    assert body["extractor_version"] == "v1"
+
+
+async def test_create_notes_job_conflicts_with_running_row(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+    await _seed_notes_job(app_settings, job_id, status=JobStatus.running.value)
+
+    response = await client.post(
+        f"/sequence-models/event-encoders/{job_id}/notes-jobs",
+        json={},
+    )
+    assert response.status_code == 409
+
+
+async def test_create_notes_job_requires_complete_encoder(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(
+        app_settings, status=JobStatus.queued.value
+    )
+
+    response = await client.post(
+        f"/sequence-models/event-encoders/{job_id}/notes-jobs",
+        json={},
+    )
+    assert response.status_code == 409
+
+
+async def test_get_notes_returns_rows_filtered_by_viewport(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+    notes_rows = [
+        {
+            "event_id": "evt-a",
+            "event_token": 0,
+            "partial_index": 0,
+            "midi_pitch": 60,
+            "start_utc": 2100.0,
+            "start_offset_s": 0.0,
+            "duration_s": 0.5,
+            "velocity": 80,
+            "peak_magnitude": -2.5,
+            "track_id": 1,
+        },
+        {
+            "event_id": "evt-b",
+            "event_token": 1,
+            "partial_index": 1,
+            "midi_pitch": 72,
+            "start_utc": 2200.0,
+            "start_offset_s": 0.0,
+            "duration_s": 0.25,
+            "velocity": 60,
+            "peak_magnitude": -3.0,
+            "track_id": 2,
+        },
+        {
+            "event_id": "evt-c",
+            "event_token": -1,
+            "partial_index": -1,
+            "midi_pitch": 84,
+            "start_utc": 2400.0,
+            "start_offset_s": 0.0,
+            "duration_s": 0.5,
+            "velocity": 40,
+            "peak_magnitude": -3.5,
+            "track_id": 3,
+        },
+    ]
+    notes_path = await _write_notes_sidecar(app_settings, job_id, notes_rows)
+    await _seed_notes_job(
+        app_settings,
+        job_id,
+        status=JobStatus.complete.value,
+        notes_path=str(notes_path),
+        n_notes=len(notes_rows),
+    )
+
+    response = await client.get(
+        f"/sequence-models/event-encoders/{job_id}/notes",
+        params={"start_utc": 2150.0, "end_utc": 2300.0},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["extractor_version"] == "v1"
+    assert body["n_notes"] == 1
+    assert [row["event_id"] for row in body["notes"]] == ["evt-b"]
+    assert body["notes"][0]["midi_pitch"] == 72
+
+
+async def test_get_notes_filters_by_event_ids(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+    notes_rows = [
+        {
+            "event_id": "evt-a",
+            "event_token": 0,
+            "partial_index": 0,
+            "midi_pitch": 60,
+            "start_utc": 2100.0,
+            "start_offset_s": 0.0,
+            "duration_s": 0.5,
+            "velocity": 80,
+            "peak_magnitude": -2.5,
+            "track_id": 1,
+        },
+        {
+            "event_id": "evt-b",
+            "event_token": 1,
+            "partial_index": 0,
+            "midi_pitch": 72,
+            "start_utc": 2200.0,
+            "start_offset_s": 0.0,
+            "duration_s": 0.25,
+            "velocity": 60,
+            "peak_magnitude": -3.0,
+            "track_id": 2,
+        },
+    ]
+    notes_path = await _write_notes_sidecar(app_settings, job_id, notes_rows)
+    await _seed_notes_job(
+        app_settings,
+        job_id,
+        status=JobStatus.complete.value,
+        notes_path=str(notes_path),
+        n_notes=len(notes_rows),
+    )
+
+    response = await client.get(
+        f"/sequence-models/event-encoders/{job_id}/notes",
+        params={"event_ids": ["evt-a"]},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["n_notes"] == 1
+    assert body["notes"][0]["event_id"] == "evt-a"
+
+
+async def test_get_notes_returns_404_without_completed_row(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+
+    response = await client.get(f"/sequence-models/event-encoders/{job_id}/notes")
     assert response.status_code == 404

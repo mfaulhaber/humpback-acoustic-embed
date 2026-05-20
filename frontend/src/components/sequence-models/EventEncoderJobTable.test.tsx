@@ -18,6 +18,7 @@ vi.mock("@/api/sequenceModels", () => ({
     mutateAsync: mocks.deleteJob,
     isPending: false,
   }),
+  usePianoRollNotesStatus: () => ({ data: { status: "absent" } }),
 }));
 
 const job = {

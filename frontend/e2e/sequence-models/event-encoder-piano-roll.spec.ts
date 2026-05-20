@@ -280,10 +280,56 @@ const TIMELINE_RIDGE = {
   ],
 };
 
+type NotesStatusMock =
+  | { status: "absent" }
+  | {
+      id: string;
+      event_encoder_job_id: string;
+      extractor_version: string;
+      status: "queued" | "running" | "complete" | "failed" | "canceled";
+      started_at: string | null;
+      finished_at: string | null;
+      error_message: string | null;
+      notes_path: string | null;
+      n_events: number | null;
+      n_notes: number | null;
+      compute_seconds: number | null;
+      params_json: string;
+      created_at: string;
+      updated_at: string;
+    };
+
 interface MockState {
   timelineRequests: string[];
   audioRequests: string[];
   tileRequests: string[];
+  notesStatusRequests: string[];
+  notesJobsRequests: string[];
+  notesStatus: NotesStatusMock;
+}
+
+function buildNotesStatus(
+  status: Exclude<NotesStatusMock["status"], "absent">,
+  overrides: Partial<Exclude<NotesStatusMock, { status: "absent" }>> = {},
+): NotesStatusMock {
+  return {
+    id: "prn-1",
+    event_encoder_job_id: COMPLETE_JOB.id,
+    extractor_version: "v1",
+    status,
+    started_at: null,
+    finished_at: null,
+    error_message:
+      status === "failed" ? "audio missing for one event" : null,
+    notes_path: status === "complete" ? "/tmp/notes.parquet" : null,
+    n_events: status === "complete" ? 3 : null,
+    n_notes: status === "complete" ? 12 : null,
+    compute_seconds: status === "complete" ? 1.2 : null,
+    params_json: "{}",
+    created_at: "2026-05-20T01:00:00Z",
+    updated_at: "2026-05-20T01:05:00Z",
+    ...overrides,
+  };
 }
 
 function buildSilentWav(seconds: number) {
@@ -358,11 +404,17 @@ function timelineEvent(
   };
 }
 
-async function setupMocks(page: Page): Promise<MockState> {
+async function setupMocks(
+  page: Page,
+  options: { notesStatus?: NotesStatusMock } = {},
+): Promise<MockState> {
   const state: MockState = {
     timelineRequests: [],
     audioRequests: [],
     tileRequests: [],
+    notesStatusRequests: [],
+    notesJobsRequests: [],
+    notesStatus: options.notesStatus ?? { status: "absent" },
   };
 
   await page.addInitScript(() => {
@@ -414,6 +466,25 @@ async function setupMocks(page: Page): Promise<MockState> {
     }
 
     const id = idMatch[1];
+    if (url.includes("/notes-status")) {
+      state.notesStatusRequests.push(url);
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(state.notesStatus),
+      });
+    }
+
+    if (url.includes("/notes-jobs")) {
+      state.notesJobsRequests.push(url);
+      state.notesStatus = buildNotesStatus("queued");
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(state.notesStatus),
+      });
+    }
+
     if (url.includes("/timeline")) {
       state.timelineRequests.push(url);
       const selectedK = new URL(url).searchParams.get("k");
@@ -946,5 +1017,96 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
       .poll(async () => Number(await canvas.getAttribute("data-view-start")))
       .toBeGreaterThan(beforeStart);
     await expect(canvas).toHaveAttribute("data-playhead-time", /1751644863/);
+  });
+
+  test("notes status pill shows 'absent' and Generate notes triggers the mutation", async ({
+    page,
+  }) => {
+    const state = await setupMocks(page);
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const pill = page.getByTestId("piano-roll-notes-status-pill").first();
+    await expect(pill).toBeVisible();
+    await expect(pill).toHaveAttribute("data-notes-status", "absent");
+    await expect(pill).toHaveText("Notes: absent");
+
+    const generate = page.getByTestId("eej-piano-roll-notes-generate");
+    await expect(generate).toBeVisible();
+    await expect(generate).toHaveText("Generate notes");
+    await generate.click();
+    await expect
+      .poll(() => state.notesJobsRequests.length)
+      .toBeGreaterThanOrEqual(1);
+    await expect
+      .poll(async () =>
+        page.getByTestId("piano-roll-notes-status-pill").first()
+          .getAttribute("data-notes-status"),
+      )
+      .toBe("queued");
+  });
+
+  test("notes status pill shows 'queued' with disabled progress label", async ({
+    page,
+  }) => {
+    await setupMocks(page, { notesStatus: buildNotesStatus("queued") });
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const pill = page.getByTestId("piano-roll-notes-status-pill").first();
+    await expect(pill).toHaveAttribute("data-notes-status", "queued");
+    await expect(page.getByTestId("eej-piano-roll-notes-generate")).toHaveCount(0);
+    await expect(page.getByTestId("eej-piano-roll-notes-progress")).toBeVisible();
+  });
+
+  test("notes status pill shows 'running' with disabled progress label", async ({
+    page,
+  }) => {
+    await setupMocks(page, { notesStatus: buildNotesStatus("running") });
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const pill = page.getByTestId("piano-roll-notes-status-pill").first();
+    await expect(pill).toHaveAttribute("data-notes-status", "running");
+    await expect(page.getByTestId("eej-piano-roll-notes-progress")).toBeVisible();
+    await expect(page.getByTestId("eej-piano-roll-notes-generate")).toHaveCount(0);
+  });
+
+  test("notes status pill shows 'complete' with no generate action", async ({
+    page,
+  }) => {
+    await setupMocks(page, { notesStatus: buildNotesStatus("complete") });
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const pill = page.getByTestId("piano-roll-notes-status-pill").first();
+    await expect(pill).toHaveAttribute("data-notes-status", "complete");
+    await expect(page.getByTestId("eej-piano-roll-notes-generate")).toHaveCount(0);
+    await expect(page.getByTestId("eej-piano-roll-notes-progress")).toHaveCount(0);
+  });
+
+  test("notes status pill shows 'failed' with Re-run and reveals error on click", async ({
+    page,
+  }) => {
+    await setupMocks(page, { notesStatus: buildNotesStatus("failed") });
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const pill = page.getByTestId("piano-roll-notes-status-pill").first();
+    await expect(pill).toHaveAttribute("data-notes-status", "failed");
+    const generate = page.getByTestId("eej-piano-roll-notes-generate");
+    await expect(generate).toHaveText("Re-run");
+
+    await expect(page.getByTestId("eej-piano-roll-notes-error")).toHaveCount(0);
+    await page.getByTestId("eej-piano-roll-notes-pill-button").click();
+    await expect(page.getByTestId("eej-piano-roll-notes-error")).toBeVisible();
+    await expect(page.getByTestId("eej-piano-roll-notes-error")).toHaveText(
+      "audio missing for one event",
+    );
   });
 });

@@ -12,8 +12,10 @@ import { Link, useParams } from "react-router-dom";
 import {
   type EventEncoderTimelineEvent,
   type EventEncoderTimelineResponse,
+  useCreatePianoRollNotesJob,
   useEventEncoderJob,
   useEventEncoderTimeline,
+  usePianoRollNotesStatus,
 } from "@/api/sequenceModels";
 import { regionAudioSliceUrl } from "@/api/client";
 import { usePlayback } from "@/components/timeline/provider/usePlayback";
@@ -28,6 +30,7 @@ import {
   type EventEncoderYMode,
 } from "./eventEncoderDisplayBand";
 import { EventEncoderSpectrogramStrip } from "./EventEncoderSpectrogramStrip";
+import { PianoRollNotesStatusPill } from "./PianoRollNotesStatusPill";
 
 type YMode = EventEncoderYMode;
 type UnvoicedMode = "peak" | "bottom" | "hide";
@@ -813,6 +816,7 @@ function EventEncoderPianoRollViewer({
           testId="eej-piano-roll-token-count"
         />
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <NotesStatusControls jobId={timeline.job_id} />
           <ToolbarSelect
             label="Y"
             value={yMode}
@@ -1045,6 +1049,70 @@ function ToolbarSelect({
         {children}
       </select>
     </label>
+  );
+}
+
+function NotesStatusControls({ jobId }: { jobId: string }) {
+  const { data: status } = usePianoRollNotesStatus(jobId);
+  const mutation = useCreatePianoRollNotesJob(jobId);
+  const [errorOpen, setErrorOpen] = useState(false);
+  if (!status) return null;
+  const value = status.status;
+  const isActive = value === "queued" || value === "running";
+  const showGenerate = value === "absent" || value === "failed";
+  const buttonDisabled = isActive || mutation.isPending;
+  const buttonLabel =
+    value === "failed" ? "Re-run" : isActive ? "Generating…" : "Generate notes";
+  const errorMessage =
+    status.status === "failed" ? status.error_message : null;
+
+  return (
+    <div className="flex items-center gap-2" data-testid="eej-piano-roll-notes-controls">
+      <button
+        type="button"
+        className="cursor-pointer border-none bg-transparent p-0"
+        onClick={() => {
+          if (value === "failed") setErrorOpen((open) => !open);
+        }}
+        aria-label={
+          value === "failed"
+            ? "Show piano roll notes error details"
+            : "Piano roll notes status"
+        }
+        data-testid="eej-piano-roll-notes-pill-button"
+      >
+        <PianoRollNotesStatusPill status={status} />
+      </button>
+      {showGenerate ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 border-zinc-700 bg-zinc-900 px-2 text-zinc-100 hover:bg-zinc-800"
+          disabled={buttonDisabled}
+          onClick={() => mutation.mutate({})}
+          data-testid="eej-piano-roll-notes-generate"
+        >
+          {buttonLabel}
+        </Button>
+      ) : isActive ? (
+        <span
+          className="inline-flex h-8 items-center rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-300"
+          data-testid="eej-piano-roll-notes-progress"
+        >
+          {buttonLabel}
+        </span>
+      ) : null}
+      {errorMessage && errorOpen ? (
+        <span
+          className="max-w-xs truncate rounded border border-red-700 bg-red-950 px-2 py-1 text-[11px] text-red-200"
+          title={errorMessage}
+          data-testid="eej-piano-roll-notes-error"
+        >
+          {errorMessage}
+        </span>
+      ) : null}
+    </div>
   );
 }
 

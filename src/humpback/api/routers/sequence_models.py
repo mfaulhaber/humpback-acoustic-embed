@@ -16,6 +16,14 @@ from humpback.models.call_parsing import RegionDetectionJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.sequence_models.event_encoder import DESCRIPTOR_ORDER, descriptor_units
+from humpback.schemas.piano_roll_notes import (
+    PianoRollNote,
+    PianoRollNotesJobCreateRequest,
+    PianoRollNotesJobRead,
+    PianoRollNotesResponse,
+    PianoRollNotesStatusAbsent,
+    PianoRollNotesStatusResponse,
+)
 from humpback.schemas.sequence_models import (
     ContinuousEmbeddingJobCreate,
     ContinuousEmbeddingJobDetail,
@@ -47,6 +55,11 @@ from humpback.services.event_encoder_service import (
     delete_event_encoder_job,
     get_event_encoder_job,
     list_event_encoder_jobs,
+)
+from humpback.services.piano_roll_notes_service import (
+    PianoRollNotesJobConflict,
+    enqueue_piano_roll_notes_job,
+    latest_for_encoder_job,
 )
 
 router = APIRouter(prefix="/sequence-models", tags=["sequence-models"])
@@ -278,6 +291,8 @@ async def get_event_encoder_timeline(
         for row in selected_rows
     ]
 
+    notes_status = await _notes_status_for(session, job.id)
+
     return EventEncoderTimelineResponse(
         job_id=job.id,
         event_segmentation_job_id=job.event_segmentation_job_id,
@@ -293,6 +308,7 @@ async def get_event_encoder_timeline(
         job_start_timestamp=float(region_job.start_timestamp or 0.0),
         job_end_timestamp=float(region_job.end_timestamp or 0.0),
         events=events,
+        notes_status=notes_status,
     )
 
 
@@ -405,6 +421,125 @@ async def get_event_encoder_projection(
     )
 
 
+@router.get("/event-encoders/{job_id}/notes-status")
+async def get_piano_roll_notes_status(
+    job_id: str,
+    session: SessionDep,
+) -> PianoRollNotesStatusResponse:
+    job = await get_event_encoder_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="event encoder job not found")
+    return await _notes_status_for(session, job.id)
+
+
+@router.post("/event-encoders/{job_id}/notes-jobs")
+async def create_piano_roll_notes_job(
+    job_id: str,
+    body: PianoRollNotesJobCreateRequest,
+    session: SessionDep,
+    response: Response,
+) -> PianoRollNotesJobRead:
+    job = await get_event_encoder_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="event encoder job not found")
+    if job.status != JobStatus.complete.value:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"event encoder job status is {job.status!r}, not 'complete' — "
+                "piano roll notes require a completed encoder job"
+            ),
+        )
+
+    try:
+        row, created = await enqueue_piano_roll_notes_job(
+            session,
+            event_encoder_job_id=job.id,
+            extractor_version=body.extractor_version,
+            params=body.params,
+        )
+    except PianoRollNotesJobConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    response.status_code = 201 if created else 200
+    return PianoRollNotesJobRead.model_validate(row)
+
+
+@router.get("/event-encoders/{job_id}/notes")
+async def get_piano_roll_notes(
+    job_id: str,
+    session: SessionDep,
+    start_utc: Optional[float] = Query(default=None),
+    end_utc: Optional[float] = Query(default=None),
+    event_ids: Optional[list[str]] = Query(default=None),
+    extractor_version: Optional[str] = Query(default=None),
+) -> PianoRollNotesResponse:
+    job = await get_event_encoder_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="event encoder job not found")
+
+    latest = await latest_for_encoder_job(session, event_encoder_job_id=job.id)
+    if latest is None or latest.status != JobStatus.complete.value:
+        raise HTTPException(
+            status_code=404,
+            detail="no completed piano roll notes job for this event encoder",
+        )
+    if extractor_version is not None and latest.extractor_version != extractor_version:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"piano roll notes for extractor_version={extractor_version!r} "
+                "are not available"
+            ),
+        )
+    if not latest.notes_path:
+        raise HTTPException(status_code=404, detail="notes parquet not recorded")
+
+    notes_path = Path(latest.notes_path)
+    if not notes_path.exists():
+        raise HTTPException(status_code=404, detail="notes parquet not found on disk")
+
+    if start_utc is not None and end_utc is not None and end_utc < start_utc:
+        raise HTTPException(status_code=422, detail="end_utc must be >= start_utc")
+
+    rows = pq.read_table(notes_path).to_pylist()
+    event_filter = set(event_ids) if event_ids else None
+    filtered: list[PianoRollNote] = []
+    for row in rows:
+        note_start = float(row["start_utc"])
+        duration = float(row["duration_s"])
+        note_end = note_start + duration
+        if start_utc is not None and note_end < start_utc:
+            continue
+        if end_utc is not None and note_start > end_utc:
+            continue
+        if event_filter is not None and str(row["event_id"]) not in event_filter:
+            continue
+        filtered.append(
+            PianoRollNote(
+                event_id=str(row["event_id"]),
+                event_token=int(row["event_token"]),
+                partial_index=int(row["partial_index"]),
+                midi_pitch=int(row["midi_pitch"]),
+                start_utc=note_start,
+                start_offset_s=float(row["start_offset_s"]),
+                duration_s=duration,
+                velocity=int(row["velocity"]),
+                peak_magnitude=float(row["peak_magnitude"]),
+                track_id=int(row["track_id"]),
+            )
+        )
+
+    return PianoRollNotesResponse(
+        job_id=job.id,
+        extractor_version=latest.extractor_version,
+        n_notes=len(filtered),
+        notes=filtered,
+    )
+
+
 @router.post("/event-encoders/{job_id}/cancel")
 async def cancel_event_encoder(
     job_id: str,
@@ -425,6 +560,17 @@ async def delete_event_encoder(job_id: str, session: SessionDep, settings: Setti
     if not deleted:
         raise HTTPException(status_code=404, detail="event encoder job not found")
     return None
+
+
+async def _notes_status_for(
+    session: SessionDep, event_encoder_job_id: str
+) -> PianoRollNotesStatusResponse:
+    latest = await latest_for_encoder_job(
+        session, event_encoder_job_id=event_encoder_job_id
+    )
+    if latest is None:
+        return PianoRollNotesStatusAbsent()
+    return PianoRollNotesJobRead.model_validate(latest)
 
 
 def _load_json_sidecar(path_value: Optional[str]) -> Optional[dict]:

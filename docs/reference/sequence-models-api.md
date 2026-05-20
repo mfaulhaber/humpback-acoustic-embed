@@ -170,6 +170,27 @@ and fits one k-means tokenizer per feasible k.
 - `DELETE /sequence-models/event-encoders/{id}` deletes the job row and its
   `event_encoders/{id}/` disk artifacts.
 
+- `GET /sequence-models/event-encoders/{id}/notes-status` returns the latest
+  `piano_roll_notes_jobs` row for the encoder job as
+  `PianoRollNotesJobRead`, or `{"status": "absent"}` when no row exists.
+  The same shape is piggybacked on the `timeline` payload as `notes_status`.
+
+- `POST /sequence-models/event-encoders/{id}/notes-jobs` enqueues (or
+  re-enqueues) a Piano Roll Notes job. Body accepts optional
+  `extractor_version` (defaults to the worker's current default) and optional
+  `params`. The encoder job must be `complete` (`409` otherwise). Idempotent
+  on `(event_encoder_job_id, extractor_version)`: returns the existing row
+  with status `200` on a completed key, refuses with `409` when a `queued` or
+  `running` row already exists, and resets `failed`/`canceled` rows back to
+  `queued` (`200`).
+
+- `GET /sequence-models/event-encoders/{id}/notes` returns one row per MIDI
+  note from the latest completed Piano Roll Notes job's parquet sidecar.
+  Optional `start_utc`, `end_utc`, and repeated `event_ids` filter the
+  payload to the viewport. Optional `extractor_version` pins the version;
+  omitting it serves the latest completed run. Returns `404` when no
+  completed notes job exists or the parquet sidecar is missing on disk.
+
 ### Schemas And Artifacts
 
 `EventEncoderJob` exposes source provenance, tokenizer version, serialized

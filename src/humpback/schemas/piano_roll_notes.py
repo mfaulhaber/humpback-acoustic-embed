@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 PianoRollNotesJobStatus = Literal["queued", "running", "complete", "failed", "canceled"]
@@ -49,10 +49,36 @@ PianoRollNotesStatusResponse = Union[PianoRollNotesJobRead, PianoRollNotesStatus
 """Timeline-piggyback shape exposed at ``GET .../notes-status``."""
 
 
+class PianoRollNote(BaseModel):
+    """One MIDI note row decoded from ``event_notes_{version}.parquet``."""
+
+    event_id: str
+    event_token: int
+    partial_index: int
+    midi_pitch: int
+    start_utc: float
+    start_offset_s: float
+    duration_s: float
+    velocity: int
+    peak_magnitude: float
+    track_id: int
+
+
+class PianoRollNotesResponse(BaseModel):
+    """Filtered notes payload for the piano roll viewer."""
+
+    job_id: str
+    extractor_version: str
+    n_notes: int
+    notes: list[PianoRollNote] = Field(default_factory=list)
+
+
 __all__ = [
     "PianoRollNotesJobStatus",
     "PianoRollNotesJobRead",
     "PianoRollNotesJobCreateRequest",
     "PianoRollNotesStatusAbsent",
     "PianoRollNotesStatusResponse",
+    "PianoRollNote",
+    "PianoRollNotesResponse",
 ]

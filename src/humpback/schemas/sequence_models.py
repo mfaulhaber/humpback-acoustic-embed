@@ -5,6 +5,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from humpback.schemas.piano_roll_notes import PianoRollNotesStatusResponse
+
 
 class ContinuousEmbeddingJobCreate(BaseModel):
     """Request body for creating a ``ContinuousEmbeddingJob``.
@@ -526,6 +528,7 @@ class EventEncoderTimelineResponse(BaseModel):
     job_start_timestamp: float
     job_end_timestamp: float
     events: list[EventEncoderTimelineEvent]
+    notes_status: PianoRollNotesStatusResponse
 
 
 EventEncoderProjectionMethod = Literal["umap", "pca"]
