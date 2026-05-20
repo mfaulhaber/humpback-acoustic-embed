@@ -18,6 +18,10 @@ from humpback.models.hyperparameter import (
 )
 from humpback.models.labeling import VocalizationLabel
 from humpback.models.model_registry import ModelConfig, TFLiteModelConfig
+from humpback.models.piano_roll_notes import (
+    DEFAULT_EXTRACTOR_VERSION,
+    PianoRollNotesJob,
+)
 from humpback.models.retrain import RetrainWorkflow
 from humpback.models.sequence_models import ContinuousEmbeddingJob
 from humpback.models.segmentation_training import (
@@ -42,6 +46,8 @@ __all__ = [
     "HyperparameterManifest",
     "HyperparameterSearchJob",
     "ModelConfig",
+    "PianoRollNotesJob",
+    "DEFAULT_EXTRACTOR_VERSION",
     "RegionDetectionJob",
     "SegmentationModel",
     "TFLiteModelConfig",

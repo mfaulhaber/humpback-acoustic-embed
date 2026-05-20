@@ -401,6 +401,25 @@ async def run_worker(settings: Settings | None = None) -> None:
         if claimed:
             continue
 
+        # Then piano roll notes jobs
+        prnjob = None
+        async with session_factory() as session:
+            from humpback.workers.queue import claim_piano_roll_notes_job
+
+            prnjob = await claim_piano_roll_notes_job(session)
+        if prnjob:
+            logger.info(f"Piano roll notes job {prnjob.id}")
+            from humpback.workers.piano_roll_notes_worker import (
+                run_piano_roll_notes_job,
+            )
+
+            async with session_factory() as session:
+                await run_piano_roll_notes_job(session, prnjob, settings)
+            claimed = True
+
+        if claimed:
+            continue
+
         # No jobs found, wait before polling again
         try:
             await asyncio.wait_for(

@@ -10,10 +10,14 @@ helpers, or the retained Sequence Models UI.
 - `src/humpback/api/routers/sequence_models.py`
 - `src/humpback/services/continuous_embedding_service.py`
 - `src/humpback/services/event_encoder_service.py`
+- `src/humpback/services/piano_roll_notes_service.py`
 - `src/humpback/workers/continuous_embedding_worker.py`
 - `src/humpback/workers/event_encoder_worker.py`
+- `src/humpback/workers/piano_roll_notes_worker.py`
 - `src/humpback/models/sequence_models.py`
+- `src/humpback/models/piano_roll_notes.py`
 - `src/humpback/schemas/sequence_models.py`
+- `src/humpback/schemas/piano_roll_notes.py`
 - `frontend/src/components/sequence-models/`
 - `frontend/src/api/sequenceModels.ts`
 - `frontend/src/components/sequence-models/EventEncoderTimelinePanel.tsx`
@@ -70,6 +74,7 @@ helpers, or the retained Sequence Models UI.
 - `event_encoders/{job_id}/token_sequences.parquet`
 - `event_encoders/{job_id}/manifest.json`
 - `event_encoders/{job_id}/report.json`
+- `event_encoders/{job_id}/event_notes_{extractor_version}.parquet` (Piano Roll Notes sidecar; first version is `v1`)
 
 Event Encoder manifests record ordered `descriptor_feature_names`. The active
 v3 22-entry non-CRNN descriptor block includes duration, energy, spectral

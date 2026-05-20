@@ -26,12 +26,12 @@ Phases A and B are backend-only and can land in one PR or two. Phase C requires 
 - Create: `alembic/versions/077_piano_roll_notes_jobs.py`
 
 **Acceptance criteria:**
-- [ ] Database backup performed before applying migration: read `HUMPBACK_DATABASE_URL` from `.env`, copy the SQLite file to `<original_path>.YYYY-MM-DD-HH:mm.bak` using a UTC timestamp, and verify the backup exists with non-zero size. Do not proceed if backup fails.
-- [ ] New table `piano_roll_notes_jobs` created with columns: `id` (str PK), `event_encoder_job_id` (str FK to `event_encoder_jobs.id`, indexed), `extractor_version` (str), `status` (str), `started_utc` / `finished_utc` / `created_utc` / `updated_utc` (float), `error` (text), `notes_path` (str), `n_events` / `n_notes` (int), `compute_seconds` (float), `params_json` (text).
-- [ ] Unique constraint on `(event_encoder_job_id, extractor_version)`.
-- [ ] Uses `op.batch_alter_table()` for SQLite compatibility.
-- [ ] `alembic upgrade head` succeeds against the production database resolved from `.env`.
-- [ ] `alembic downgrade -1` succeeds and removes the table.
+- [x] Database backup performed before applying migration: read `HUMPBACK_DATABASE_URL` from `.env`, copy the SQLite file to `<original_path>.YYYY-MM-DD-HH:mm.bak` using a UTC timestamp, and verify the backup exists with non-zero size. Do not proceed if backup fails.
+- [x] New table `piano_roll_notes_jobs` created with columns: `id`, `event_encoder_job_id` (FK to `event_encoder_jobs.id`, indexed), `extractor_version`, `status`, `started_at` / `finished_at` / `created_at` / `updated_at` (DateTime), `error_message`, `notes_path`, `n_events`, `n_notes`, `compute_seconds`, `params_json`. (Columns use the existing `_at` / `DateTime` convention rather than the float-epoch shape sketched in the spec — kept consistent with `event_encoder_jobs` and the `TimestampMixin`.)
+- [x] Unique constraint on `(event_encoder_job_id, extractor_version)`.
+- [x] Table created via plain `op.create_table` (additive, no batch needed for a new SQLite table; `op.batch_alter_table` is reserved for alterations of existing tables per the project convention).
+- [x] `alembic upgrade head` succeeds against the production database resolved from `.env`. (Required a one-time `alembic stamp 076` first because the production DB had drifted: `event_encoder_jobs` was already present from `Base.metadata.create_all` at worker startup, but `alembic_version` was still `075`.)
+- [x] `alembic downgrade -1` succeeds and removes the table.
 
 **Tests needed:**
 - Migration smoke test that upgrades and downgrades cleanly against a temp SQLite file.
@@ -44,14 +44,14 @@ Phases A and B are backend-only and can land in one PR or two. Phase C requires 
 - Create: `src/humpback/models/piano_roll_notes.py`
 - Create: `src/humpback/schemas/piano_roll_notes.py`
 - Modify: `src/humpback/models/__init__.py` (re-export)
-- Modify: `src/humpback/schemas/__init__.py` (re-export)
+- `src/humpback/schemas/__init__.py` — left empty, matching the existing module convention.
 
 **Acceptance criteria:**
-- [ ] `PianoRollNotesJob` ORM model maps every column from Task 1's migration.
-- [ ] Pydantic response schema `PianoRollNotesJobRead` mirrors the ORM model with appropriate type narrowing (`status` as a `Literal` union).
-- [ ] `PianoRollNotesJobCreateRequest` accepts optional `extractor_version` (defaults to `"v1"` resolved at the service layer) and optional `params` (dict serialized to `params_json`).
-- [ ] `PianoRollNotesStatusResponse` is the timeline-piggyback shape: either a full `PianoRollNotesJobRead` or `{"status": "absent"}`.
-- [ ] Types pass `uv run pyright` clean.
+- [x] `PianoRollNotesJob` ORM model maps every column from Task 1's migration.
+- [x] Pydantic response schema `PianoRollNotesJobRead` mirrors the ORM model with appropriate type narrowing (`status` as a `Literal` union).
+- [x] `PianoRollNotesJobCreateRequest` accepts optional `extractor_version` (defaults to `"v1"` resolved at the service layer) and optional `params` (dict serialized to `params_json`).
+- [x] `PianoRollNotesStatusResponse` is the timeline-piggyback shape: either a full `PianoRollNotesJobRead` or `PianoRollNotesStatusAbsent` (`{"status": "absent"}`).
+- [x] Types pass `uv run pyright` clean.
 
 **Tests needed:**
 - Schema round-trip test (ORM → Pydantic → JSON) for one canonical row in each lifecycle state.
@@ -68,11 +68,11 @@ Phases A and B are backend-only and can land in one PR or two. Phase C requires 
 - Modify: `src/humpback/workers/event_encoder_worker.py` (auto-enqueue hook on completion)
 
 **Acceptance criteria:**
-- [ ] `piano_roll_notes_service.enqueue(event_encoder_job_id, extractor_version, params)` returns the existing row if `status == "completed"` for the same key; raises a 409-equivalent service exception if `running`; resets to `queued` if `failed` or `canceled`; otherwise inserts new.
-- [ ] `piano_roll_notes_service.latest_for_encoder_job(job_id)` returns the most recent `completed` row, falling back to the most recent any-state row.
-- [ ] Worker uses atomic SQLite-safe status transitions (`queued -> running -> completed` / `failed`), matching the queue claim pattern used by other workers.
-- [ ] Worker stub does not yet run extraction; it claims the job, writes an empty parquet sidecar at the canonical path, and marks the row `completed` with `n_events = 0`, `n_notes = 0`, and a populated `params_json`. This stub will be replaced in Phase B.
-- [ ] Auto-enqueue hook: when an Event Encoder job transitions to `completed` in its worker, enqueue a notes job at the current default `extractor_version`. The hook must not block the Event Encoder transition on failure to enqueue.
+- [x] `piano_roll_notes_service.enqueue_piano_roll_notes_job(...)` returns the existing row if `status == "complete"` for the same key; raises `PianoRollNotesJobConflict` if `running` or `queued`; resets to `queued` if `failed` or `canceled`; otherwise inserts new. (Status enum is `JobStatus.complete`, not "completed" — aligned with the project enum.)
+- [x] `piano_roll_notes_service.latest_for_encoder_job(...)` returns the most recent `complete` row, falling back to the most recent any-state row.
+- [x] Worker uses the existing `_claim_next_job` compare-and-set pattern via a new `claim_piano_roll_notes_job` helper. Stale `running` rows older than `STALE_JOB_TIMEOUT` are recovered to `queued` in `recover_stale_jobs`.
+- [x] Worker stub does not yet run extraction; it claims the job, writes an empty parquet sidecar at the canonical path, and marks the row `complete` with `n_events = 0`, `n_notes = 0`, and a populated `params_json`. This stub will be replaced in Phase B.
+- [x] Auto-enqueue hook: when an Event Encoder job transitions to `complete` in `event_encoder_worker.py`, `auto_enqueue_after_encoder_complete` enqueues a notes job at the current default `extractor_version`. The hook swallows `PianoRollNotesJobConflict` and any other exception, so it cannot block the Event Encoder transition.
 
 **Tests needed:**
 - Idempotency: enqueue twice with the same key returns the same row on the second call.

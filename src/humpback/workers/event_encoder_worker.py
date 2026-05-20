@@ -35,6 +35,9 @@ from humpback.sequence_models.event_encoder import (
     compute_gap_to_previous,
     descriptor_vector,
 )
+from humpback.services.piano_roll_notes_service import (
+    auto_enqueue_after_encoder_complete,
+)
 from humpback.sequence_models.event_tokenization import (
     fit_kmeans_tokenizers,
     preprocess_event_features,
@@ -403,6 +406,8 @@ async def run_event_encoder_job(
             len(encoded_events),
             int(preprocess.event_vectors.shape[1]),
         )
+
+        await auto_enqueue_after_encoder_complete(session, event_encoder_job_id=job_id)
     except Exception as exc:
         logger.exception("event_encoder job %s failed", job_id)
         _cleanup_partial_artifacts(job_dir)

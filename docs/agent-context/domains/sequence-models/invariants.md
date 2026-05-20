@@ -49,3 +49,11 @@
 - Event Encoder piano-roll Ridge mode may expand a trusted ridge band's display
   top to the spectral centroid when scalar spectral-envelope descriptors show a
   broad tonal high-band event; this remains display-only and artifact-backed.
+- Piano Roll Notes is a sidecar worker keyed on
+  `(event_encoder_job_id, extractor_version)`. It reads completed Event Encoder
+  outputs and the source audio, writes per-event MIDI notes to
+  `event_notes_{extractor_version}.parquet`, and never modifies Event Encoder
+  outputs. A complete Event Encoder job auto-enqueues a Piano Roll Notes job at
+  the current default `extractor_version`; the auto-enqueue hook swallows
+  conflicts so an in-flight or completed sidecar never blocks the encoder
+  completion.
