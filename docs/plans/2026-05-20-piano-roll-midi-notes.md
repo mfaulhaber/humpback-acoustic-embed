@@ -211,10 +211,10 @@ Phases A and B are backend-only and can land in one PR or two. Phase C requires 
 - Optionally factor a helper into `frontend/src/components/sequence-models/pianoRollAxis.ts` (new file).
 
 **Acceptance criteria:**
-- [ ] When the view mode is `Notes`, the Y-axis switches to a log-frequency / piano-key axis spanning MIDI 21–108 with semitone gridlines and labeled octaves (C0…C8).
-- [ ] Black-key shading drawn behind the gridlines.
-- [ ] Existing rectangle modes still use the current linear-Hz scale.
-- [ ] Switching modes does not reset playback or selection state.
+- [x] When the view mode is `Notes`, the Y-axis switches to a log-frequency / piano-key axis spanning MIDI 21–108 with semitone gridlines and labeled octaves (C0…C8). Implemented via [pianoRollAxis.ts](../../frontend/src/components/sequence-models/pianoRollAxis.ts) and the `drawNotesGrid` helper in `EventEncoderPianoRollPage.tsx`.
+- [x] Black-key shading drawn behind the gridlines.
+- [x] Existing rectangle modes still use the current linear-Hz scale (single `viewMode` state branches between notes vs. rectangle draw paths).
+- [x] Switching modes does not reset playback or selection state — selected event id, playhead time, and time range are independent of view mode.
 
 **Tests needed:**
 - Playwright snapshot or DOM assertion that `Notes` mode renders 88 rows and labeled octave markers; non-Notes modes do not.
@@ -228,15 +228,11 @@ Phases A and B are backend-only and can land in one PR or two. Phase C requires 
 - Modify: the existing tooltip/legend primitives used by the page (resolved during implementation).
 
 **Acceptance criteria:**
-- [ ] When `notes_status === "completed"`, the page defaults to `Notes` mode and renders one bar per note row from `/notes`:
-  - Y position from `midi_pitch`.
-  - X from `start_offset_s` (or `start_utc` minus viewport origin) and `duration_s`.
-  - Fill from existing `tokenColor(event_token)`.
-  - Stroke opacity proportional to `velocity / 127`.
-- [ ] Hover tooltip shows: pitch with note name (e.g., `MIDI 60 (C4)`), `velocity`, `duration_s`, `event_id`, `token`, `partial_index` rendered as `F0` / `2x F0` / `3x F0` / `–`.
-- [ ] View toolbar adds `Notes` to the existing modes and makes it the default when available. `Notes` is disabled with an explanatory tooltip when `notes_status !== "completed"`.
-- [ ] Fallback: if the `/notes` fetch fails, the canvas reverts to the previous rectangle mode with a non-blocking toast; the `Notes` selection remains visible but greys out.
-- [ ] The spectrogram strip is unchanged.
+- [x] When `notes_status === "complete"`, the page defaults to `Notes` mode and renders one bar per note row from `/notes` with Y from `midi_pitch`, X from `start_utc`/`duration_s`, fill from `labelColor(event_token, selectedK)`, and stroke opacity proportional to `velocity / 127`. (Spec text said `"completed"`; the project enum value is `"complete"`.)
+- [x] Hover tooltip shows: `MIDI <n> (<note name>)`, `velocity`, `duration`, `event_id`, `token`, `partial_index` rendered as `F0` / `2x F0` / `3x F0` / `–`.
+- [x] View toolbar adds `Notes` to the existing modes and defaults to it when available. The option is disabled and labelled `Notes (unavailable)` with an explanatory `title` when `notes_status !== "complete"`.
+- [x] Fallback: if `/notes` errors, the page reverts to the previous rectangle mode and fires a non-blocking toast. The Notes option remains visible (and greys out via the same disabled state once the notes-status query reflects the failure).
+- [x] The spectrogram strip is unchanged.
 
 **Tests needed:**
 - Playwright extension to `event-encoder-piano-roll.spec.ts`: `notes_status=completed` job renders ≥1 note bar with the expected token color (pixel sample) and tooltip content.
@@ -255,9 +251,9 @@ Phases A and B are backend-only and can land in one PR or two. Phase C requires 
 - Modify: `docs/agent-context/current-state.md` to add the Piano Roll Notes capability.
 
 **Acceptance criteria:**
-- [ ] Synthetic fixture committed; backend integration test uses it for end-to-end note extraction; frontend Playwright case uses it via mocked backend.
-- [ ] Manual acceptance: run the worker against a real Event Encoder job; open the piano roll page; verify Notes mode renders, mode toggle works, tooltip data matches parquet contents, and the failure-and-rerun path works after deleting the parquet.
-- [ ] ADRs and capsule updates merged in this phase's commit set.
+- [x] Synthetic fixture committed under [tests/fixtures/piano_roll/](../../tests/fixtures/piano_roll/) (deterministic `generate.py`, `synthetic_three_events.wav`, `synthetic_three_events.json`). `test_worker_recovers_fixture_three_events` exercises it end-to-end; the Playwright spec consumes the JSON to construct a notes payload and asserts the expected pitches render.
+- [ ] Manual acceptance: run the worker against a real Event Encoder job; open the piano roll page; verify Notes mode renders, mode toggle works, tooltip data matches parquet contents, and the failure-and-rerun path works after deleting the parquet. _(Deferred to session-review / manual QA — preview verification confirmed the page loads without runtime errors but does not exercise a real backend.)_
+- [x] ADRs and capsule updates merged in this phase's commit set (ADR-064 + ADR-065 placeholder, sequence-models domain README updated).
 
 **Tests needed:**
 - One Playwright end-to-end test using the fixture, mocked at the API layer.
