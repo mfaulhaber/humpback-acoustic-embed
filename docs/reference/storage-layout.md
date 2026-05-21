@@ -61,7 +61,8 @@
   {job_id}/kmeans_k{k}.joblib       (one k-means model per valid k)
   {job_id}/event_notes_{extractor_version}.parquet  (Piano Roll Notes sidecar; current default is v2 — per-frame harmonic labeling from ADR-067; legacy v1 may coexist until manually deleted)
 /exports/
-  event_encoders/{job_id}/notes_{extractor_version}.mid  (Piano Roll Notes MIDI export artifact produced by the user-initiated async export worker)
+  event_encoders/{job_id}/notes_{extractor_version}.mid    (Piano Roll Notes MIDI for the last-exported window — produced atomically with audio_{extractor_version}.flac; ADR-068)
+  event_encoders/{job_id}/audio_{extractor_version}.flac   (Co-exported 32 kHz mono 16-bit PCM FLAC clip for the same window — not loudness-normalized; ADR-068)
 /timeline_cache/
   spans/{span_key}/.source.json            (hydrophone id, source identity, start/end timestamps, deterministic span key)
   spans/{span_key}/.audio_manifest.json    (optional persisted HLS segment manifest shared by compatible timeline consumers)

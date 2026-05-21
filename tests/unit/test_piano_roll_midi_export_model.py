@@ -36,7 +36,15 @@ async def _make_encoder_job(session) -> str:
 @pytest.mark.asyncio
 async def test_persist_and_read_back_defaults(session) -> None:
     encoder_id = await _make_encoder_job(session)
-    row = PianoRollMidiExport(event_encoder_job_id=encoder_id)
+    row = PianoRollMidiExport(
+        event_encoder_job_id=encoder_id,
+        window_start_utc=1_000.0,
+        window_end_utc=1_060.0,
+        audio_path="",
+        audio_size_bytes=0,
+        audio_sample_rate=0,
+        audio_duration_s=0.0,
+    )
     session.add(row)
     await session.commit()
     await session.refresh(row)
@@ -53,18 +61,34 @@ async def test_persist_and_read_back_defaults(session) -> None:
     assert row.n_bytes is None
     assert row.compute_seconds is None
     assert row.params_json == "{}"
+    assert row.window_start_utc == 1_000.0
+    assert row.window_end_utc == 1_060.0
+    assert row.audio_path == ""
+    assert row.audio_size_bytes == 0
+    assert row.audio_sample_rate == 0
+    assert row.audio_duration_s == 0.0
 
 
 @pytest.mark.asyncio
 async def test_unique_constraint_on_encoder_and_version(session) -> None:
     encoder_id = await _make_encoder_job(session)
     session.add(
-        PianoRollMidiExport(event_encoder_job_id=encoder_id, extractor_version="v2")
+        PianoRollMidiExport(
+            event_encoder_job_id=encoder_id,
+            extractor_version="v2",
+            window_start_utc=1_000.0,
+            window_end_utc=1_060.0,
+        )
     )
     await session.commit()
 
     session.add(
-        PianoRollMidiExport(event_encoder_job_id=encoder_id, extractor_version="v2")
+        PianoRollMidiExport(
+            event_encoder_job_id=encoder_id,
+            extractor_version="v2",
+            window_start_utc=1_000.0,
+            window_end_utc=1_060.0,
+        )
     )
     with pytest.raises(IntegrityError):
         await session.commit()

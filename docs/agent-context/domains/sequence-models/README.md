@@ -61,27 +61,37 @@ helpers, or the retained Sequence Models UI.
   gridlines, octave labels (C0…C8), and black-key shading. If the
   `.../notes` fetch fails, the page reverts to the previous rectangle mode
   with a non-blocking toast and leaves the Notes selector greyed out.
-- The Piano Roll page exposes an "Export MIDI" button to the left of the
-  Notes status badge. Clicking it enqueues an asynchronous MIDI export job
-  (`piano_roll_midi_exports` table) whose worker reads the notes parquet,
-  synthesizes a Standard MIDI File via `humpback.processing.midi_synthesis`,
-  and persists it under
-  `<storage_root>/exports/event_encoders/{job_id}/notes_{version}.mid`.
-  The button is disabled until notes status is `complete`. Status pill
-  states (`absent → queued → running → complete`) drive the button label;
-  on `complete` the button becomes "Download MIDI" and an overflow menu
-  exposes a "Re-export" affordance that POSTs with `force=true`. MIDI
-  conventions: SMF Type 1, 480 PPQ, constant 120 BPM. The file uses a
-  slim seven-channel layout — F0, 2nd, 3rd, 4th, 5th harmonics each on
-  their own channel, a combined "higher harmonics" channel for
-  `partial_index ≥ 5`, and an "unmatched" channel for tracks the
-  harmonic prior could not label. The GM drum channel (channel 10,
-  1-indexed) is intentionally empty. Each channel is rendered as its own
-  SMF track with a `track_name` meta-event and a distinct GM
-  `program_change` so DAWs present each partial as a named, distinctly
-  voiced lane. Time origin is shifted to the earliest note's
-  `start_utc`. Pitch-bend is deferred; the underlying `mido` library
-  already supports the MPE primitives needed for the future extension.
+- The Piano Roll page exposes a windowed bundled "Export view" action
+  to the left of the Notes status badge. Clicking it enqueues an
+  asynchronous Piano Roll export job (`piano_roll_midi_exports` table)
+  whose worker (a) filters the notes parquet to the viewer's current
+  `timeRange` (`window_start_utc`, `window_end_utc`), synthesizes a
+  Standard MIDI File whose tick-0 origin is the window start via
+  `humpback.processing.midi_synthesis.notes_table_to_midi_bytes(
+  notes, time_origin_utc=window_start_utc)`, and (b) resolves the source
+  audio for the same window through `resolve_timeline_audio()` and
+  writes a 16-bit PCM FLAC clip (no loudness normalization) alongside
+  the MIDI. Artifacts live at
+  `<storage_root>/exports/event_encoders/{job_id}/notes_{version}.mid`
+  and `audio_{version}.flac` and are written atomically as a pair.
+  The export button is disabled until notes status is `complete` and
+  when the requested window duration exceeds 30 minutes (1800 s; see
+  ADR-068 for the cap and rationale). On `complete` the UI renders a
+  compact panel with the exported window text, a "Download MIDI" link,
+  a "Download audio (FLAC)" link, and a "Re-export view" affordance
+  whose emphasis tracks whether the current viewport matches the
+  persisted window within ~50 ms. Re-export sends `force=true`.
+  MIDI conventions are unchanged: SMF Type 1, 480 PPQ, constant
+  120 BPM, slim seven-channel layout — F0, 2nd, 3rd, 4th, 5th
+  harmonics each on their own channel, a combined "higher harmonics"
+  channel for `partial_index ≥ 5`, and an "unmatched" channel for
+  tracks the harmonic prior could not label. The GM drum channel
+  (channel 10, 1-indexed) is intentionally empty. Each channel is
+  rendered as its own SMF track with a `track_name` meta-event and a
+  distinct GM `program_change` so DAWs present each partial as a named,
+  distinctly voiced lane. Pitch-bend is deferred; the underlying `mido`
+  library already supports the MPE primitives needed for the future
+  extension.
 - Event Encoder timeline previous/next navigation can be token-scoped by
   toggling the selected event's token badge. This is a frontend-only affordance
   derived from the currently loaded selected-k timeline rows; it does not hide
@@ -109,7 +119,8 @@ helpers, or the retained Sequence Models UI.
 - `event_encoders/{job_id}/manifest.json`
 - `event_encoders/{job_id}/report.json`
 - `event_encoders/{job_id}/event_notes_{extractor_version}.parquet` (Piano Roll Notes sidecar; current default is `v2` — the per-frame harmonic labeler from ADR-067; legacy `v1` artifacts may coexist until manually deleted)
-- `exports/event_encoders/{job_id}/notes_{extractor_version}.mid` (Piano Roll Notes MIDI export artifact produced on demand by the export worker)
+- `exports/event_encoders/{job_id}/notes_{extractor_version}.mid` (Piano Roll Notes MIDI export artifact for the last-exported window, produced on demand by the export worker)
+- `exports/event_encoders/{job_id}/audio_{extractor_version}.flac` (co-exported 32 kHz mono FLAC clip for the same exported window)
 
 Event Encoder manifests record ordered `descriptor_feature_names`. The active
 v3 22-entry non-CRNN descriptor block includes duration, energy, spectral
@@ -135,6 +146,7 @@ concatenation.
 - ADR-065: Extended Piano Roll Notes pitch range (deferred placeholder).
 - ADR-066: User-initiated async MIDI export for Piano Roll Notes.
 - ADR-067: Per-frame harmonic labeling and channelized MIDI export.
+- ADR-068: Piano Roll windowed bundled export (MIDI + FLAC).
 
 ## Likely Neighbors
 

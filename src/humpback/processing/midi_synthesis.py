@@ -94,15 +94,31 @@ _REQUIRED_COLUMNS = (
 )
 
 
-def notes_table_to_midi_bytes(notes_table: pa.Table) -> bytes:
+def notes_table_to_midi_bytes(
+    notes_table: pa.Table,
+    *,
+    time_origin_utc: float | None = None,
+) -> bytes:
     """Synthesize a Standard MIDI File from a Piano Roll Notes pyarrow Table.
 
     The Table is expected to follow the columns of
     ``humpback.workers.piano_roll_notes_worker.NOTES_SCHEMA``. Only the columns
     listed in ``_REQUIRED_COLUMNS`` are read; extras are ignored.
 
-    Returns the bytes of an SMF Type 1 file. Empty input yields a valid SMF
-    with header + tempo track only (no channel tracks).
+    Returns the bytes of an SMF Type 1 file.
+
+    Args:
+        notes_table: Per-note rows.
+        time_origin_utc: Optional UTC epoch seconds anchored to tick 0.
+            When ``None`` (default), the earliest valid note's ``start_utc``
+            is used as the origin (legacy behavior). When provided, notes
+            before the origin are shifted to negative deltas which are
+            clamped to ``0`` ticks, so the caller is responsible for
+            filtering notes outside the desired window first.
+
+    Empty input still yields a valid SMF with header + tempo track. When
+    ``time_origin_utc`` is provided AND ``notes_table`` is empty, the
+    output is also header + tempo track only.
     """
 
     for column in _REQUIRED_COLUMNS:
@@ -113,8 +129,13 @@ def notes_table_to_midi_bytes(notes_table: pa.Table) -> bytes:
     midi_file.tracks.append(_build_tempo_track())
 
     valid_rows = list(_iter_valid_rows(notes_table))
-    if valid_rows:
-        for track in _build_channel_tracks(valid_rows):
+    if valid_rows or time_origin_utc is not None:
+        origin = (
+            float(time_origin_utc)
+            if time_origin_utc is not None
+            else valid_rows[0]["start_utc"]
+        )
+        for track in _build_channel_tracks(valid_rows, time_origin=origin):
             midi_file.tracks.append(track)
 
     buf = io.BytesIO()
@@ -130,7 +151,9 @@ def _build_tempo_track() -> mido.MidiTrack:
     return track
 
 
-def _build_channel_tracks(valid_rows: list[dict]) -> list[mido.MidiTrack]:
+def _build_channel_tracks(
+    valid_rows: list[dict], *, time_origin: float
+) -> list[mido.MidiTrack]:
     """Build one ``MidiTrack`` per ``CHANNEL_LAYOUT`` entry.
 
     Each track starts at tick 0 with a ``track_name`` meta-event followed
@@ -141,7 +164,6 @@ def _build_channel_tracks(valid_rows: list[dict]) -> list[mido.MidiTrack]:
     DAW project templates and routing configs port between exports.
     """
     valid_rows.sort(key=lambda r: (r["start_utc"], r["event_id"], r["partial_index"]))
-    time_origin = valid_rows[0]["start_utc"]
 
     # Bucket rows by channel via the partial-index mapping.
     rows_by_channel: dict[int, list[tuple[int, dict]]] = {

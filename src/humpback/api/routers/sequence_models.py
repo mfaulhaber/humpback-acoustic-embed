@@ -74,7 +74,10 @@ from humpback.services.piano_roll_notes_service import (
     enqueue_piano_roll_notes_job,
     latest_for_encoder_job,
 )
-from humpback.storage import event_encoder_midi_export_path
+from humpback.storage import (
+    event_encoder_audio_export_path,
+    event_encoder_midi_export_path,
+)
 
 router = APIRouter(prefix="/sequence-models", tags=["sequence-models"])
 
@@ -601,9 +604,21 @@ async def create_piano_roll_midi_export(
         raise HTTPException(status_code=404, detail="event encoder job not found")
 
     try:
+        await _validate_export_window_overlap(
+            session,
+            job,
+            body.window_start_utc,
+            body.window_end_utc,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    try:
         row, created = await enqueue_piano_roll_midi_export(
             session,
             event_encoder_job_id=job.id,
+            window_start_utc=body.window_start_utc,
+            window_end_utc=body.window_end_utc,
             extractor_version=body.extractor_version,
             params=body.params,
             force=body.force,
@@ -615,6 +630,44 @@ async def create_piano_roll_midi_export(
 
     response.status_code = 201 if created else 200
     return PianoRollMidiExportRead.model_validate(row)
+
+
+async def _validate_export_window_overlap(
+    session: SessionDep,
+    encoder_job,
+    window_start_utc: float,
+    window_end_utc: float,
+) -> None:
+    """Ensure the requested window overlaps the encoder's source data range.
+
+    Resolves the chain ``EventEncoderJob → EventSegmentationJob →
+    RegionDetectionJob`` and uses the region's ``start_timestamp`` /
+    ``end_timestamp`` as the authoritative bounds. Raises ``ValueError``
+    when the window misses that range entirely.
+    """
+    from humpback.models.call_parsing import (
+        EventSegmentationJob,
+        RegionDetectionJob,
+    )
+
+    seg_job = await session.get(
+        EventSegmentationJob, encoder_job.event_segmentation_job_id
+    )
+    if seg_job is None:
+        raise ValueError("event_segmentation_job not found for this encoder")
+    region_job = await session.get(RegionDetectionJob, seg_job.region_detection_job_id)
+    if region_job is None:
+        raise ValueError("region_detection_job not found for this encoder")
+    job_start = region_job.start_timestamp
+    job_end = region_job.end_timestamp
+    if job_start is None or job_end is None:
+        # No range to compare against; defer to the worker.
+        return
+    if window_end_utc <= float(job_start) or window_start_utc >= float(job_end):
+        raise ValueError(
+            "export window does not overlap the job's data range "
+            f"[{float(job_start):.6f}, {float(job_end):.6f}]"
+        )
 
 
 @router.get("/event-encoders/{job_id}/midi-export")
@@ -658,6 +711,56 @@ async def download_piano_roll_midi_export(
     return Response(
         content=midi_file.read_bytes(),
         media_type="audio/midi",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/event-encoders/{job_id}/audio-export")
+async def download_piano_roll_audio_export(
+    job_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    extractor_version: Optional[str] = Query(default=None),
+) -> Response:
+    """Stream the FLAC clip co-exported with the windowed MIDI artifact."""
+    job = await get_event_encoder_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="event encoder job not found")
+
+    if extractor_version is not None:
+        row = await midi_export_complete_for_encoder_job_version(
+            session,
+            event_encoder_job_id=job.id,
+            extractor_version=extractor_version,
+        )
+    else:
+        row = await midi_export_latest_for_encoder_job(
+            session, event_encoder_job_id=job.id
+        )
+        if row is not None and row.status != JobStatus.complete.value:
+            row = None
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No completed audio export for this job.",
+        )
+
+    audio_file = event_encoder_audio_export_path(
+        settings.storage_root, job.id, row.extractor_version
+    )
+    if not audio_file.exists():
+        raise HTTPException(
+            status_code=404, detail="audio export file not found on disk"
+        )
+
+    start = float(row.window_start_utc)
+    end = float(row.window_end_utc)
+    filename = (
+        f"event_encoder_{job.id}_{row.extractor_version}_{start:.3f}_{end:.3f}.flac"
+    )
+    return Response(
+        content=audio_file.read_bytes(),
+        media_type="audio/flac",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

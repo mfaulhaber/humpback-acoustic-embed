@@ -157,6 +157,22 @@ def event_encoder_midi_export_path(
     )
 
 
+def event_encoder_audio_export_path(
+    storage_root: Path, job_id: str, extractor_version: str
+) -> Path:
+    """Path to the FLAC clip co-exported with the Piano Roll MIDI file.
+
+    The FLAC covers the same UTC window as the sibling ``.mid`` artifact
+    produced by ``event_encoder_midi_export_path``.
+    """
+    return (
+        exports_root(storage_root)
+        / "event_encoders"
+        / job_id
+        / f"audio_{extractor_version}.flac"
+    )
+
+
 def hyperparameter_manifest_dir(storage_root: Path, manifest_id: str) -> Path:
     return storage_root / "hyperparameter" / "manifests" / manifest_id
 

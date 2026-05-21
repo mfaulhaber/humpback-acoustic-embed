@@ -197,13 +197,22 @@ and fits one k-means tokenizer per feasible k.
   Optional `extractor_version` pins the version.
 
 - `POST /sequence-models/event-encoders/{id}/midi-exports` enqueues an
-  asynchronous MIDI export of the completed Piano Roll Notes parquet. Body
-  accepts optional `extractor_version` (defaults to the latest completed
-  notes job's version), optional `params`, and `force` (default `false`).
-  Returns `201` on insert, `200` on reset of a terminal-state row, `409`
-  when a `queued` or `running` row already exists, and `422` when no
-  completed notes job exists for the resolved version. With `force=true`,
-  a `complete` row is reset to `queued` to support re-export.
+  asynchronous windowed bundled export (MIDI + co-exported FLAC, ADR-068).
+  Body requires `window_start_utc` and `window_end_utc` (UTC epoch
+  seconds), and accepts optional `extractor_version` (defaults to the
+  latest completed notes job's version), optional `params`, and `force`
+  (default `false`). The window must be strictly positive and its
+  duration must not exceed 1800 s; both are validated by the Pydantic
+  model (`422`) and the API also rejects windows that do not overlap the
+  encoder's resolved data range (`400`, via the
+  `EventEncoderJob → EventSegmentationJob → RegionDetectionJob` chain).
+  Returns `201` on insert, `200` on reset of a terminal-state row OR on a
+  cache hit (existing `complete` row whose persisted window matches the
+  request within 1 ms tolerance), `409` when a `queued` or `running` row
+  already exists, and `422` when no completed notes job exists for the
+  resolved version. With `force=true`, a `complete` row is reset to
+  `queued`. A new request with a different window also resets to
+  `queued` without needing `force`.
 
 - `GET /sequence-models/event-encoders/{id}/midi-export` streams the
   produced `.mid` artifact with `Content-Type: audio/midi` and
@@ -212,6 +221,13 @@ and fits one k-means tokenizer per feasible k.
   `extractor_version` pins the version; omitting it serves the latest
   `complete` export. Returns `404` when no complete row exists or the file
   is missing on disk.
+
+- `GET /sequence-models/event-encoders/{id}/audio-export` streams the
+  FLAC clip co-exported with the windowed MIDI. Content type is
+  `audio/flac`; `Content-Disposition: attachment` filename is
+  `event_encoder_{id}_{extractor_version}_{window_start}_{window_end}.flac`.
+  Optional `extractor_version` pins the version. Returns `404` when no
+  complete row exists or the FLAC file is missing on disk.
 
 ### Schemas And Artifacts
 
