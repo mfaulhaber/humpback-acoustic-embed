@@ -71,10 +71,17 @@ helpers, or the retained Sequence Models UI.
   states (`absent → queued → running → complete`) drive the button label;
   on `complete` the button becomes "Download MIDI" and an overflow menu
   exposes a "Re-export" affordance that POSTs with `force=true`. MIDI
-  conventions: SMF Type 1, 480 PPQ, constant 120 BPM, all partials stacked
-  on MIDI channel 1, time origin shifted to the earliest note's `start_utc`.
-  Pitch-bend is deferred; the underlying `mido` library already supports
-  the MPE primitives needed for the future extension.
+  conventions: SMF Type 1, 480 PPQ, constant 120 BPM. The file uses a
+  slim seven-channel layout — F0, 2nd, 3rd, 4th, 5th harmonics each on
+  their own channel, a combined "higher harmonics" channel for
+  `partial_index ≥ 5`, and an "unmatched" channel for tracks the
+  harmonic prior could not label. The GM drum channel (channel 10,
+  1-indexed) is intentionally empty. Each channel is rendered as its own
+  SMF track with a `track_name` meta-event and a distinct GM
+  `program_change` so DAWs present each partial as a named, distinctly
+  voiced lane. Time origin is shifted to the earliest note's
+  `start_utc`. Pitch-bend is deferred; the underlying `mido` library
+  already supports the MPE primitives needed for the future extension.
 - Event Encoder timeline previous/next navigation can be token-scoped by
   toggling the selected event's token badge. This is a frontend-only affordance
   derived from the currently loaded selected-k timeline rows; it does not hide
@@ -101,7 +108,7 @@ helpers, or the retained Sequence Models UI.
 - `event_encoders/{job_id}/token_sequences.parquet`
 - `event_encoders/{job_id}/manifest.json`
 - `event_encoders/{job_id}/report.json`
-- `event_encoders/{job_id}/event_notes_{extractor_version}.parquet` (Piano Roll Notes sidecar; first version is `v1`)
+- `event_encoders/{job_id}/event_notes_{extractor_version}.parquet` (Piano Roll Notes sidecar; current default is `v2` — the per-frame harmonic labeler from ADR-067; legacy `v1` artifacts may coexist until manually deleted)
 - `exports/event_encoders/{job_id}/notes_{extractor_version}.mid` (Piano Roll Notes MIDI export artifact produced on demand by the export worker)
 
 Event Encoder manifests record ordered `descriptor_feature_names`. The active
@@ -127,6 +134,7 @@ concatenation.
 - ADR-064: Piano Roll Notes sidecar worker.
 - ADR-065: Extended Piano Roll Notes pitch range (deferred placeholder).
 - ADR-066: User-initiated async MIDI export for Piano Roll Notes.
+- ADR-067: Per-frame harmonic labeling and channelized MIDI export.
 
 ## Likely Neighbors
 

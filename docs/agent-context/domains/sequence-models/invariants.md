@@ -57,3 +57,19 @@
   the current default `extractor_version`; the auto-enqueue hook swallows
   conflicts so an in-flight or completed sidecar never blocks the encoder
   completion.
+- The Piano Roll Notes harmonic prior (`label_harmonics` in
+  `src/humpback/processing/piano_roll_tracker.py`) selects the lowest-bin
+  track in each cluster as the F0 anchor and labels other tracks by per-frame
+  frequency ratios: each shared frame contributes a `round(ratio)` value, and
+  the candidate is labeled the Nth harmonic when the median nearest-integer
+  lies in `[2, max_harmonic]` and the median absolute cents deviation
+  against that integer multiple is ≤ `cents_tolerance`. Tracks that fail
+  the harmonic check are left unprocessed so they remain eligible to anchor
+  their own clusters on later iterations; tracks that match are consumed.
+  `max_harmonic = 16`, `cents_tolerance = 75`, `min_overlap_frames = 3` are
+  the v2 defaults.
+- The Piano Roll MIDI export uses a fixed slim seven-channel layout
+  (F0 → channel 1, 2nd–5th harmonics → channels 2–5, higher harmonics
+  collapsed onto channel 6, unmatched onto channel 7, GM drum channel 10
+  intentionally empty). Each channel is its own SMF track with a
+  `program_change` and `track_name` header.

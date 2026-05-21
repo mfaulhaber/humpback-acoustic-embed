@@ -734,12 +734,18 @@ _NOTES_ROW_SCHEMA = pa.schema(
 )
 
 
-async def _write_notes_sidecar(app_settings, encoder_job_id: str, rows: list[dict]):
+async def _write_notes_sidecar(
+    app_settings,
+    encoder_job_id: str,
+    rows: list[dict],
+    *,
+    extractor_version: str = "v2",
+):
     path = (
         app_settings.storage_root
         / "event_encoders"
         / encoder_job_id
-        / "event_notes_v1.parquet"
+        / f"event_notes_{extractor_version}.parquet"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(pa.Table.from_pylist(rows, schema=_NOTES_ROW_SCHEMA), path)
@@ -752,7 +758,7 @@ async def _seed_notes_job(
     *,
     status: str,
     notes_path: str | None = None,
-    extractor_version: str = "v1",
+    extractor_version: str = "v2",
     n_notes: int | None = None,
 ) -> str:
     engine = create_engine(app_settings.database_url)
@@ -801,7 +807,7 @@ async def test_timeline_payload_includes_completed_notes_status(client, app_sett
     assert response.status_code == 200, response.text
     notes_status = response.json()["notes_status"]
     assert notes_status["status"] == "complete"
-    assert notes_status["extractor_version"] == "v1"
+    assert notes_status["extractor_version"] == "v2"
     assert notes_status["n_notes"] == 0
 
 
@@ -826,7 +832,7 @@ async def test_get_notes_status_returns_existing_row(client, app_settings):
     body = response.json()
     assert body["status"] == "running"
     assert body["event_encoder_job_id"] == job_id
-    assert body["extractor_version"] == "v1"
+    assert body["extractor_version"] == "v2"
 
 
 async def test_get_notes_status_missing_encoder_returns_404(client):
@@ -847,7 +853,7 @@ async def test_create_notes_job_enqueues_and_returns_201(client, app_settings):
     body = response.json()
     assert body["event_encoder_job_id"] == job_id
     assert body["status"] == "queued"
-    assert body["extractor_version"] == "v1"
+    assert body["extractor_version"] == "v2"
 
 
 async def test_create_notes_job_conflicts_with_running_row(client, app_settings):
@@ -928,7 +934,7 @@ async def test_get_notes_returns_rows_filtered_by_viewport(client, app_settings)
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["extractor_version"] == "v1"
+    assert body["extractor_version"] == "v2"
     assert body["n_notes"] == 1
     assert [row["event_id"] for row in body["notes"]] == ["evt-b"]
     assert body["notes"][0]["midi_pitch"] == 72
@@ -1006,7 +1012,9 @@ async def test_get_notes_pins_to_explicit_extractor_version(client, app_settings
             "track_id": 1,
         }
     ]
-    v1_path = await _write_notes_sidecar(app_settings, job_id, base_rows)
+    v1_path = await _write_notes_sidecar(
+        app_settings, job_id, base_rows, extractor_version="v1"
+    )
     await _seed_notes_job(
         app_settings,
         job_id,
@@ -1016,7 +1024,7 @@ async def test_get_notes_pins_to_explicit_extractor_version(client, app_settings
         extractor_version="v1",
     )
 
-    v2_path = v1_path.with_name("event_notes_v2.parquet")
+    v2_path = v1_path.with_name("event_notes_v2-experimental.parquet")
     pq.write_table(
         pa.Table.from_pylist(
             [{**base_rows[0], "event_id": "evt-b", "midi_pitch": 72}],

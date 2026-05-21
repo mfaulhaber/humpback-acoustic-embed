@@ -1,8 +1,15 @@
 # Piano Roll MIDI Export — Design Spec
 
 **Date:** 2026-05-20
-**Status:** Draft
+**Status:** Approved (superseded in part)
 **Owner:** Sequence Models / Event Encoder
+
+> §10 (single-channel MIDI synthesis) is superseded by
+> [2026-05-20-event-encoder-midi-channelized-design.md](2026-05-20-event-encoder-midi-channelized-design.md)
+> §6. All partials no longer stack on MIDI channel 1; the export now uses
+> a slim seven-channel layout (F0 + 2nd–5th + higher + unmatched) with
+> one SMF track per channel and a distinct GM `program_change` and
+> `track_name` per channel.
 
 ## 1. Summary
 

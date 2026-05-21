@@ -69,7 +69,7 @@ def test_velocity_mapper_respects_custom_floor(floor):
 
 
 def test_cleanup_partial_parquet_removes_canonical_and_tmp(tmp_path: Path) -> None:
-    canonical = tmp_path / "event_notes_v1.parquet"
+    canonical = tmp_path / "event_notes_v2.parquet"
     tmp = canonical.with_suffix(canonical.suffix + ".tmp")
     canonical.write_bytes(b"\x00")
     tmp.write_bytes(b"\x00")
@@ -81,7 +81,7 @@ def test_cleanup_partial_parquet_removes_canonical_and_tmp(tmp_path: Path) -> No
 
 
 def test_cleanup_partial_parquet_is_no_op_when_missing(tmp_path: Path) -> None:
-    canonical = tmp_path / "event_notes_v1.parquet"
+    canonical = tmp_path / "event_notes_v2.parquet"
     # Should not raise even if neither path exists.
     _cleanup_partial_parquet(canonical)
     assert not canonical.exists()

@@ -20,7 +20,7 @@ from humpback.models.processing import JobStatus
 __all__ = ["PianoRollNotesJob", "DEFAULT_EXTRACTOR_VERSION"]
 
 
-DEFAULT_EXTRACTOR_VERSION = "v1"
+DEFAULT_EXTRACTOR_VERSION = "v2"
 
 
 class PianoRollNotesJob(UUIDMixin, TimestampMixin, Base):

@@ -25,7 +25,7 @@ async def _set_midi_export_row(
     event_encoder_job_id: str,
     status: str,
     midi_path: str | None = None,
-    extractor_version: str = "v1",
+    extractor_version: str = "v2",
     n_bytes: int | None = None,
 ) -> str:
     engine = create_engine(app_settings.database_url)
@@ -110,7 +110,7 @@ async def test_post_midi_export_creates_201(client, app_settings) -> None:
     body = response.json()
     assert body["event_encoder_job_id"] == job_id
     assert body["status"] == "queued"
-    assert body["extractor_version"] == "v1"
+    assert body["extractor_version"] == "v2"
 
 
 async def test_post_midi_export_conflicts_with_running(client, app_settings) -> None:
@@ -158,7 +158,7 @@ async def test_post_midi_export_force_resets_complete_200(client, app_settings) 
         app_settings,
         event_encoder_job_id=job_id,
         status=JobStatus.complete.value,
-        midi_path="exports/event_encoders/foo/notes_v1.mid",
+        midi_path="exports/event_encoders/foo/notes_v2.mid",
     )
 
     response = await client.post(
@@ -195,7 +195,7 @@ async def test_download_midi_export_returns_file(client, app_settings) -> None:
         app_settings, job_id, status=JobStatus.complete.value, n_notes=0
     )
     # Write a valid MIDI file to the expected export path.
-    midi_path = event_encoder_midi_export_path(app_settings.storage_root, job_id, "v1")
+    midi_path = event_encoder_midi_export_path(app_settings.storage_root, job_id, "v2")
     midi_path.parent.mkdir(parents=True, exist_ok=True)
     mf = mido.MidiFile(type=1, ticks_per_beat=480)
     mf.tracks.append(mido.MidiTrack([mido.MetaMessage("end_of_track", time=0)]))
@@ -215,7 +215,7 @@ async def test_download_midi_export_returns_file(client, app_settings) -> None:
     assert response.headers["content-type"].startswith("audio/midi")
     assert "attachment" in response.headers["content-disposition"]
     assert (
-        f"event_encoder_{job_id}_notes_v1.mid"
+        f"event_encoder_{job_id}_notes_v2.mid"
         in response.headers["content-disposition"]
     )
     # Body is a parseable MIDI file.
@@ -250,7 +250,7 @@ async def test_download_midi_export_404_when_file_missing(client, app_settings) 
         app_settings,
         event_encoder_job_id=job_id,
         status=JobStatus.complete.value,
-        midi_path="exports/event_encoders/missing/notes_v1.mid",
+        midi_path="exports/event_encoders/missing/notes_v2.mid",
     )
 
     response = await client.get(f"/sequence-models/event-encoders/{job_id}/midi-export")
