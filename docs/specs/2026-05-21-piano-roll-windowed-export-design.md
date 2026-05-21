@@ -187,17 +187,28 @@ The existing `event_encoder_midi_export_path()` helper is unchanged.
      Gap regions are silence-filled by the helper.
 6. Write artifacts atomically:
    - Write the MIDI bytes to `notes_{version}.mid.tmp`.
-   - Write the FLAC via the new `write_flac_clip()` helper (see DSP section)
-     to `audio_{version}.flac.tmp`.
-   - On success of both writes, rename both temp files to their final paths,
-     then update the DB row in a single transaction with status `complete`,
-     populated `midi_path`, `audio_path`, `n_notes`, `n_bytes`,
+   - Write the FLAC samples to `audio_{version}.flac.tmp` via the new
+     `write_flac_samples()` helper (see DSP section), which writes directly
+     to the given path without any internal temp/rename so the worker
+     controls the staging order.
+   - Both temp files must exist on disk BEFORE either is promoted. Only
+     after both temp writes succeed does the worker run `os.replace()` on
+     each in turn. This is the load-bearing guarantee: if the FLAC write
+     fails, the prior successful MIDI on disk has not yet been overwritten
+     by `os.replace()`, so a previously-complete export remains downloadable.
+   - On success, update the DB row in a single transaction with status
+     `complete`, populated `midi_path`, `audio_path`, `n_notes`, `n_bytes`,
      `audio_size_bytes`, `audio_sample_rate=32000`, and `audio_duration_s =
      samples.size / 32000`.
    - On any write failure, delete the temp files, leave the previous final
-     artifacts and the DB row untouched (status transitions to `failed` with
-     a captured error_message). The previous successful export remains
-     downloadable.
+     artifacts intact, and update the DB row to status `failed` with the
+     captured error_message. Because the new artifact pair was never
+     promoted, the failure path also clears `midi_path` / `audio_path` /
+     `n_notes` / `n_bytes` / `audio_size_bytes` / `audio_sample_rate` /
+     `audio_duration_s` to sentinel values so the row never references a
+     half-built export; the prior successful artifacts remain readable on
+     disk and the row gets refreshed with their metadata on the next
+     successful re-export.
 
 ### Service
 
@@ -215,12 +226,18 @@ the create/upsert path:
 In `src/humpback/processing/audio_encoding.py` (the module already housing
 `encode_wav`/`encode_mp3` from the timeline-export work):
 
-- Add `write_flac_clip(samples: np.ndarray, sr: int, path: Path) -> None`:
-  - Writes float32 mono samples as 16-bit PCM FLAC via `soundfile`.
+- Add `write_flac_samples(samples: np.ndarray, sr: int, path: Path) -> None`:
+  - Writes float32 mono samples to the given path as 16-bit PCM FLAC via
+    `soundfile`.
   - No normalization. (Loudness must match what the player rendered.)
-  - Creates the parent directory; uses an atomic write via temp suffix +
-    rename (mirror the MIDI write pattern).
-  - Asserts the input is 1-D and finite.
+  - Creates the parent directory but does NOT perform a temp/rename. The
+    piano-roll export worker uses this to stage both the MIDI and the
+    FLAC as `*.tmp` files BEFORE promoting either, so a FLAC failure
+    cannot leave a stale MIDI behind.
+  - Asserts the input is 1-D and finite and that `sr > 0`.
+- Add `write_flac_clip(samples: np.ndarray, sr: int, path: Path) -> None`:
+  - Thin atomic wrapper around `write_flac_samples()` for stand-alone
+    writes. Writes to `<path>.tmp` then renames.
 
 `src/humpback/processing/midi_synthesis.py`:
 

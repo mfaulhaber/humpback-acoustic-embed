@@ -33,7 +33,7 @@ from humpback.models.call_parsing import RegionDetectionJob
 from humpback.models.piano_roll_midi_export import PianoRollMidiExport
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import EventEncoderJob
-from humpback.processing.audio_encoding import write_flac_clip
+from humpback.processing.audio_encoding import write_flac_samples
 from humpback.processing.midi_synthesis import notes_table_to_midi_bytes
 from humpback.processing.timeline_audio import resolve_timeline_audio
 from humpback.storage import (
@@ -49,25 +49,25 @@ _MIN_NOTE_DURATION_S = 1e-3
 EXPORT_SAMPLE_RATE = 32000
 
 
-def _atomic_write_bytes(data: bytes, dst: Path) -> None:
+def _tmp_path(dst: Path) -> Path:
+    return dst.with_suffix(dst.suffix + ".tmp")
+
+
+def _write_bytes_to_tmp(data: bytes, dst: Path) -> Path:
+    """Write ``data`` to ``dst.tmp`` (no rename). Returns the temp path."""
     dst.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst.with_suffix(dst.suffix + ".tmp")
+    tmp = _tmp_path(dst)
     if tmp.exists():
         tmp.unlink()
-    try:
-        with open(tmp, "wb") as fh:
-            fh.write(data)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, dst)
-    except BaseException:
-        if tmp.exists():
-            tmp.unlink()
-        raise
+    with open(tmp, "wb") as fh:
+        fh.write(data)
+        fh.flush()
+        os.fsync(fh.fileno())
+    return tmp
 
 
 def _cleanup_temp(path: Path) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = _tmp_path(path)
     try:
         tmp.unlink(missing_ok=True)
     except OSError:
@@ -238,21 +238,22 @@ async def run_piano_roll_midi_export(
             settings.storage_root, job.event_encoder_job_id, job.extractor_version
         )
 
-        _atomic_write_bytes(midi_bytes, midi_path)
-        try:
-            write_flac_clip(audio_samples, EXPORT_SAMPLE_RATE, audio_path)
-        except BaseException:
-            # If the FLAC write fails after the MIDI rename succeeded, roll
-            # the MIDI back so the on-disk pair stays consistent.
-            try:
-                midi_path.unlink(missing_ok=True)
-            except OSError:
-                logger.warning(
-                    "piano_roll_midi_export | could not roll back partial MIDI %s",
-                    midi_path,
-                    exc_info=True,
-                )
-            raise
+        # Stage BOTH artifacts as `*.tmp` files BEFORE renaming either. This
+        # is the load-bearing atomicity guarantee: if the FLAC write fails,
+        # we have not yet overwritten the prior successful MIDI on disk, so
+        # a previously-complete export remains downloadable until both new
+        # temp files exist together.
+        midi_tmp = _write_bytes_to_tmp(midi_bytes, midi_path)
+        audio_tmp = _tmp_path(audio_path)
+        if audio_tmp.exists():
+            audio_tmp.unlink()
+        write_flac_samples(audio_samples, EXPORT_SAMPLE_RATE, audio_tmp)
+
+        # Both temps are on disk — commit by renaming both. os.replace is
+        # atomic per file on a single filesystem; the worst-case window
+        # between the two renames is microseconds.
+        os.replace(midi_tmp, midi_path)
+        os.replace(audio_tmp, audio_path)
 
         audio_size_bytes = audio_path.stat().st_size
         audio_duration_s = float(audio_samples.size) / float(EXPORT_SAMPLE_RATE)
@@ -296,4 +297,15 @@ async def run_piano_roll_midi_export(
         target.finished_at = datetime.now(timezone.utc)
         target.error_message = _truncate(str(exc), limit=_ERROR_MESSAGE_LIMIT)
         target.compute_seconds = time.monotonic() - started_wall
+        # The new artifact pair was never promoted; clear pointers so the
+        # row never references a half-built export. Prior successful
+        # artifacts (if any) remain on disk and are picked up on the next
+        # successful run; the row's metadata gets refreshed at that point.
+        target.midi_path = None
+        target.audio_path = ""
+        target.n_notes = None
+        target.n_bytes = None
+        target.audio_size_bytes = 0
+        target.audio_sample_rate = 0
+        target.audio_duration_s = 0.0
         await session.commit()

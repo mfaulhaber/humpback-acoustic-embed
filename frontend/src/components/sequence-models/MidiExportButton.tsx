@@ -186,7 +186,12 @@ export function MidiExportButton({
           }
           disabled={windowDisabledReason !== null || mutation.isPending}
           title={reExportTitle}
-          onClick={() => submit(true)}
+          // force=true is only needed to override the service's cache hit
+          // on a matching-window complete row. When the window has drifted
+          // from the persisted one the service re-queues automatically,
+          // so a plain submit is enough — and lets the user click
+          // "Re-export view" on a matching window to deliberately rerun.
+          onClick={() => submit(matchesPersistedWindow)}
           data-testid="eej-piano-roll-midi-export-button"
           data-status="complete"
           data-window-match={matchesPersistedWindow ? "true" : "false"}

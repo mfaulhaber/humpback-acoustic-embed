@@ -208,7 +208,7 @@ describe("MidiExportButton", () => {
     expect(button.getAttribute("title") || "").toMatch(/cap/i);
   });
 
-  it("re-export sends force=true", () => {
+  it("re-export sends force=true only when the window matches the persisted one", () => {
     setExportStatus(completeExportRow());
     const mutate = setMutation();
     render(
@@ -222,6 +222,24 @@ describe("MidiExportButton", () => {
       window_start_utc: baseProps.windowStartUtc,
       window_end_utc: baseProps.windowEndUtc,
       force: true,
+    });
+  });
+
+  it("re-export omits force when the window has drifted from the persisted one", () => {
+    setExportStatus(completeExportRow());
+    const mutate = setMutation();
+    render(
+      <MidiExportButton
+        {...baseProps}
+        windowStartUtc={baseProps.windowStartUtc + 30}
+        windowEndUtc={baseProps.windowEndUtc + 30}
+        notesStatus={completeNotesStatus()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("eej-piano-roll-midi-export-button"));
+    expect(mutate).toHaveBeenCalledWith({
+      window_start_utc: baseProps.windowStartUtc + 30,
+      window_end_utc: baseProps.windowEndUtc + 30,
     });
   });
 });

@@ -517,6 +517,93 @@ async def test_worker_cleans_up_partial_on_synthesis_exception(
 
 
 @pytest.mark.asyncio
+async def test_prior_successful_export_survives_failed_re_export(
+    session, settings, monkeypatch
+) -> None:
+    """A failed re-export must NOT delete the previous successful pair on disk.
+
+    Regression guard: a buggy version of the worker renamed the MIDI to its
+    final path BEFORE writing the FLAC, so a FLAC write failure left the
+    prior successful MIDI permanently overwritten. With the staged
+    "write both temps first, then rename both" sequence the previous
+    artifacts must remain on disk and downloadable.
+    """
+    encoder_id = await _make_encoder_and_notes(session)
+    notes_path = event_encoder_notes_path(
+        settings.storage_root, encoder_id, DEFAULT_EXTRACTOR_VERSION
+    )
+    _write_notes_parquet(
+        notes_path,
+        [
+            {
+                "event_id": "e0",
+                "partial_index": 0,
+                "midi_pitch": 60,
+                "start_utc": _WINDOW_START + 0.1,
+                "duration_s": 0.5,
+                "velocity": 80,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        piano_roll_midi_export_worker,
+        "_resolve_window_audio",
+        _stub_resolve_window_audio(value=0.4),
+    )
+
+    # First export — runs to completion and produces both artifacts.
+    job, _ = await enqueue_piano_roll_midi_export(
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WINDOW_START,
+        window_end_utc=_WINDOW_END,
+    )
+    await run_piano_roll_midi_export(session, job, settings)
+    await session.refresh(job)
+    assert job.status == JobStatus.complete.value
+
+    midi_path = event_encoder_midi_export_path(
+        settings.storage_root, encoder_id, DEFAULT_EXTRACTOR_VERSION
+    )
+    audio_path = event_encoder_audio_export_path(
+        settings.storage_root, encoder_id, DEFAULT_EXTRACTOR_VERSION
+    )
+    prior_midi_bytes = midi_path.read_bytes()
+    prior_audio_bytes = audio_path.read_bytes()
+    assert len(prior_midi_bytes) > 0
+    assert len(prior_audio_bytes) > 0
+
+    # Second export — same row, force a re-run, but mock the FLAC writer
+    # to blow up. The worker MUST leave the prior MIDI + FLAC on disk.
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("flac write failed on re-export")
+
+    monkeypatch.setattr(piano_roll_midi_export_worker, "write_flac_samples", explode)
+
+    job2, _ = await enqueue_piano_roll_midi_export(
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WINDOW_START,
+        window_end_utc=_WINDOW_END,
+        force=True,
+    )
+    await run_piano_roll_midi_export(session, job2, settings)
+    await session.refresh(job2)
+
+    assert job2.status == JobStatus.failed.value
+    assert "flac write failed on re-export" in (job2.error_message or "")
+
+    # The previous successful pair must still be readable byte-for-byte.
+    assert midi_path.exists()
+    assert audio_path.exists()
+    assert midi_path.read_bytes() == prior_midi_bytes
+    assert audio_path.read_bytes() == prior_audio_bytes
+    # No leftover tmp files.
+    assert not midi_path.with_suffix(midi_path.suffix + ".tmp").exists()
+    assert not audio_path.with_suffix(audio_path.suffix + ".tmp").exists()
+
+
+@pytest.mark.asyncio
 async def test_worker_rolls_back_midi_when_flac_write_fails(
     session, settings, monkeypatch
 ) -> None:
@@ -547,7 +634,7 @@ async def test_worker_rolls_back_midi_when_flac_write_fails(
     def explode(*_args, **_kwargs):
         raise RuntimeError("flac write failed")
 
-    monkeypatch.setattr(piano_roll_midi_export_worker, "write_flac_clip", explode)
+    monkeypatch.setattr(piano_roll_midi_export_worker, "write_flac_samples", explode)
 
     job, _ = await enqueue_piano_roll_midi_export(
         session,
@@ -567,8 +654,11 @@ async def test_worker_rolls_back_midi_when_flac_write_fails(
     audio_path = event_encoder_audio_export_path(
         settings.storage_root, encoder_id, DEFAULT_EXTRACTOR_VERSION
     )
+    # No prior export → no final artifacts on disk, only temp leftovers cleaned.
     assert not midi_path.exists()
     assert not audio_path.exists()
+    assert not midi_path.with_suffix(midi_path.suffix + ".tmp").exists()
+    assert not audio_path.with_suffix(audio_path.suffix + ".tmp").exists()
 
 
 @pytest.mark.asyncio

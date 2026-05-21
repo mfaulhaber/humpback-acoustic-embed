@@ -43,7 +43,12 @@ def _exports_dir_under_storage_root() -> Path | None:
 
         settings = Settings.from_repo_env()
         return Path(settings.storage_root) / "exports" / "event_encoders"
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "could not resolve storage root for legacy MIDI cleanup; "
+            "skipping file-deletion step (%s)",
+            exc,
+        )
         return None
 
 

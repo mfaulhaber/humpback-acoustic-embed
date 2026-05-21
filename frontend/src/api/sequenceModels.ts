@@ -263,6 +263,9 @@ export interface PianoRollMidiExportRead {
 }
 
 export const MAX_EXPORT_WINDOW_SECONDS = 1800;
+// Server-side cache-hit tolerance is 1 ms (see services/piano_roll_midi_export_service.py);
+// the frontend uses a looser ~50 ms tolerance only to decide whether to emphasize
+// the "Re-export view" button.
 
 export interface PianoRollMidiExportStatusAbsent {
   status: "absent";

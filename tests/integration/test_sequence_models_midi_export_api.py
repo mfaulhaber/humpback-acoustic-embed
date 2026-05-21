@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import wave
 from datetime import datetime, timezone
 
 import mido
@@ -476,7 +475,3 @@ async def test_download_audio_export_404_when_file_missing(
         f"/sequence-models/event-encoders/{job_id}/audio-export"
     )
     assert response.status_code == 404
-
-
-# Reference the wave import so static analyzers don't complain when it's unused.
-assert wave is not None

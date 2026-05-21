@@ -65,7 +65,7 @@ so the MIDI and audio align when imported into a DAW.
 **Acceptance criteria:**
 
 - [ ] `storage.py` exports a new helper `event_encoder_audio_export_path(storage_root, job_id, extractor_version) -> Path` that returns `<storage_root>/exports/event_encoders/{job_id}/audio_{extractor_version}.flac`. The existing `event_encoder_midi_export_path()` is untouched.
-- [ ] `audio_encoding.py` exports `write_flac_clip(samples, sr, path)`: writes 1-D float32 mono samples as 16-bit PCM FLAC via `soundfile`; no normalization; creates parent dir; writes through a `*.tmp` suffix and renames on success; raises on non-finite samples or non-1-D input.
+- [ ] `audio_encoding.py` exports `write_flac_samples(samples, sr, path)`: writes 1-D float32 mono samples as 16-bit PCM FLAC via `soundfile`; no normalization; creates parent dir; writes DIRECTLY to the given path (no internal temp/rename) so callers can stage cross-artifact atomicity. Raises on non-finite samples, non-1-D input, or `sr <= 0`. Also exports `write_flac_clip(samples, sr, path)` as a thin atomic wrapper that writes to `<path>.tmp` then renames.
 - [ ] `midi_synthesis.py`'s `notes_table_to_midi_bytes()` gains a `time_origin_utc: float | None = None` parameter. When `None`, the function preserves the existing behavior (anchor to earliest note's `start_utc`). When provided, the function uses `time_origin_utc` as the tick-0 anchor and any note whose effective start equals `time_origin_utc` lands at tick 0.
 - [ ] No other behavior change in `notes_table_to_midi_bytes()`: tempo (120 BPM), PPQ (480), and the 7-channel layout from ADR-067 remain identical.
 

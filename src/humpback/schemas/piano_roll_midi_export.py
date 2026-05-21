@@ -34,10 +34,10 @@ class PianoRollMidiExportRead(BaseModel):
     params_json: str = "{}"
     window_start_utc: float
     window_end_utc: float
-    audio_path: str = ""
-    audio_size_bytes: int = 0
-    audio_sample_rate: int = 0
-    audio_duration_s: float = 0.0
+    audio_path: str
+    audio_size_bytes: int
+    audio_sample_rate: int
+    audio_duration_s: float
     created_at: datetime
     updated_at: datetime
 

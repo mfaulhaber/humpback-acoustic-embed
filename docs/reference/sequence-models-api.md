@@ -201,11 +201,15 @@ and fits one k-means tokenizer per feasible k.
   Body requires `window_start_utc` and `window_end_utc` (UTC epoch
   seconds), and accepts optional `extractor_version` (defaults to the
   latest completed notes job's version), optional `params`, and `force`
-  (default `false`). The window must be strictly positive and its
-  duration must not exceed 1800 s; both are validated by the Pydantic
-  model (`422`) and the API also rejects windows that do not overlap the
-  encoder's resolved data range (`400`, via the
-  `EventEncoderJob → EventSegmentationJob → RegionDetectionJob` chain).
+  (default `false`). Validation errors:
+  - **`422`** when the request fails the Pydantic schema: missing
+    `window_*` fields, non-positive duration, or duration > 1800 s.
+  - **`400`** when the request parses but cannot be acted on: the
+    window does not overlap the encoder's resolved data range, or the
+    encoder's source region detection job is missing
+    `start_timestamp` / `end_timestamp` so the range can't be resolved.
+    The encoder chain is `EventEncoderJob → EventSegmentationJob →
+    RegionDetectionJob`.
   Returns `201` on insert, `200` on reset of a terminal-state row OR on a
   cache hit (existing `complete` row whose persisted window matches the
   request within 1 ms tolerance), `409` when a `queued` or `running` row

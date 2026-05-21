@@ -661,8 +661,10 @@ async def _validate_export_window_overlap(
     job_start = region_job.start_timestamp
     job_end = region_job.end_timestamp
     if job_start is None or job_end is None:
-        # No range to compare against; defer to the worker.
-        return
+        raise ValueError(
+            "export window cannot be validated: the encoder's source region "
+            "detection job is missing start_timestamp / end_timestamp"
+        )
     if window_end_utc <= float(job_start) or window_start_utc >= float(job_end):
         raise ValueError(
             "export window does not overlap the job's data range "
