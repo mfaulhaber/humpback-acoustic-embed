@@ -1,14 +1,16 @@
-"""Audio encoding utilities for WAV and MP3 output."""
+"""Audio encoding utilities for WAV, MP3, and FLAC output."""
 
 from __future__ import annotations
 
 import io
+import os
 import subprocess
 import tempfile
 import wave
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
 
 _SILENCE_RMS_FLOOR = 1e-8
 
@@ -97,3 +99,69 @@ def encode_mp3(audio: np.ndarray, sample_rate: int) -> bytes:
     finally:
         Path(wav_path).unlink(missing_ok=True)
         Path(mp3_path).unlink(missing_ok=True)
+
+
+def write_flac_samples(samples: np.ndarray, sr: int, path: Path) -> None:
+    """Write float32 mono samples to ``path`` as 16-bit PCM FLAC.
+
+    Unlike :func:`normalize_for_playback` and the classifier's training-set
+    FLAC writer, this helper does NOT scale or normalize the input. The
+    resulting clip preserves the loudness the piano-roll player rendered so
+    DAW alignment carries through to absolute sample levels.
+
+    The write is direct (no temp/rename): callers that need atomicity must
+    pass a temp path and rename it themselves. The piano-roll export worker
+    uses this to stage both the MIDI and the FLAC as ``*.tmp`` files BEFORE
+    promoting either, so a FLAC failure cannot leave a stale MIDI behind.
+
+    Args:
+        samples: 1-D float32 audio buffer. Must be finite.
+        sr: Sample rate in Hz (must be positive).
+        path: Destination ``.flac`` path (final or temp, caller's choice).
+
+    Raises:
+        ValueError: ``samples`` is not 1-D, is not finite, or ``sr <= 0``.
+    """
+    if samples.ndim != 1:
+        raise ValueError(
+            f"write_flac_samples requires 1-D samples, got ndim={samples.ndim}"
+        )
+    if sr <= 0:
+        raise ValueError(
+            f"write_flac_samples requires positive sample rate, got sr={sr}"
+        )
+    if samples.size > 0 and not np.all(np.isfinite(samples)):
+        raise ValueError("write_flac_samples received non-finite samples")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(
+        str(path),
+        samples.astype(np.float32, copy=False),
+        sr,
+        format="FLAC",
+        subtype="PCM_16",
+    )
+
+
+def write_flac_clip(samples: np.ndarray, sr: int, path: Path) -> None:
+    """Atomically write float32 mono samples to a 16-bit PCM FLAC file.
+
+    Convenience wrapper around :func:`write_flac_samples` that writes to
+    ``<path>.tmp`` first and renames on success. Use this for stand-alone
+    FLAC writes that don't need to be coordinated with another artifact.
+
+    Args:
+        samples: See :func:`write_flac_samples`.
+        sr: See :func:`write_flac_samples`.
+        path: Destination ``.flac`` path.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    if tmp.exists():
+        tmp.unlink()
+    try:
+        write_flac_samples(samples, sr, tmp)
+        os.replace(tmp, path)
+    except BaseException:
+        if tmp.exists():
+            tmp.unlink()
+        raise

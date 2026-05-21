@@ -746,3 +746,83 @@ Alternatives considered:
 - `partial_index ≥ 5` collapses onto a single channel in the export but
   remains distinguishable in the parquet, so future export-side reshuffles
   do not require a notes re-run.
+
+## ADR-068: Piano Roll windowed bundled export (MIDI + FLAC)
+
+**Date**: 2026-05-21
+
+**Status**: Accepted
+
+**Context**: ADR-066 introduced a user-initiated MIDI export that wrote the
+entire Event Encoder job's Piano Roll Notes parquet as one canonical SMF
+under `<storage_root>/exports/event_encoders/{job_id}/notes_{version}.mid`.
+ADR-067 reshaped the SMF as a slim seven-channel layout. In practice users
+work in DAWs (Logic Pro) and want to drop both the notes and the source
+audio for a *specific* zoomed/panned region of a job onto the same project
+position. Two gaps drove this change:
+
+1. The export shipped the full job, not the viewer's current `timeRange`.
+2. There was no co-exported audio clip aligned to the same window.
+
+**Decision**:
+
+1. **Windowed bundled export.** The `POST` create endpoint now requires
+   `window_start_utc` and `window_end_utc`; the worker filters Piano Roll
+   Notes by `[window_start_utc, window_end_utc)`, clips partially-overlapping
+   notes, drops sub-millisecond residuals, and synthesizes the MIDI with a
+   new `time_origin_utc=window_start_utc` argument on
+   `notes_table_to_midi_bytes()` so that a note at `window_start_utc` lands
+   at tick 0.
+2. **Co-exported `.flac`.** The same worker resolves the source audio for
+   the same window via `resolve_timeline_audio()` (32 kHz mono, gap-filled
+   with silence) and writes a 16-bit PCM FLAC alongside the MIDI at
+   `<storage_root>/exports/event_encoders/{job_id}/audio_{version}.flac`.
+   FLAC samples are NOT loudness-normalized so the clip matches what the
+   piano-roll player rendered.
+3. **One rolling artifact per `(job, version)`.** The existing
+   uniqueness key is preserved; re-exporting overwrites both the MIDI and
+   the FLAC and updates the persisted window bounds. The new columns
+   (`window_start_utc`, `window_end_utc`, `audio_path`, `audio_size_bytes`,
+   `audio_sample_rate`, `audio_duration_s`) are all NOT NULL, established
+   by Alembic revision `079`. The migration drops legacy non-windowed rows
+   and their `.mid` files because they no longer represent something the
+   UI would surface.
+4. **30-minute soft cap.** The schema validator and the API layer reject
+   windows whose duration exceeds 1800 s. The UI disables the export
+   button with a tooltip when the current viewport exceeds the cap.
+5. **Atomic dual-write.** The worker writes both files to `*.tmp` paths;
+   on success it renames both. If the FLAC write fails after the MIDI
+   rename, the MIDI is rolled back so the on-disk pair stays consistent.
+6. **DAW workflow.** No in-UI hint. Standard PPQN (480) + 120 BPM is
+   preserved; users who want the MIDI and audio to line up in Logic Pro
+   import the MIDI with "use MIDI file tempo" accepted, drop the FLAC at
+   the same project position, and alignment holds.
+
+Alternatives considered:
+
+- *Two independent exports (separate MIDI and FLAC rows, services, and
+  endpoints).* Rejected — two state machines and two failure paths for
+  one user action.
+- *SMPTE-timecode MIDI for tempo-independent alignment.* Rejected — DAW
+  behavior with SMPTE-format SMF is less predictable than the tempo-event
+  path, and the current approach already works as long as project tempo
+  matches the MIDI's 120 BPM.
+- *Window-keyed multiple cached exports.* Rejected — the user request
+  was an "export current view / re-export current view" affordance, not
+  a history of windowed exports. A single rolling artifact matches the
+  intent and avoids cleanup complexity.
+
+**Consequences**:
+
+- Legacy `piano_roll_midi_exports` rows from the ADR-066 era are removed
+  by migration `079`; users must re-export the windows they care about.
+- The audio resolution chain at export time is `EventEncoderJob →
+  EventSegmentationJob → RegionDetectionJob → (hydrophone_id,
+  start_timestamp, end_timestamp)`, identical to the chain used by the
+  Piano Roll Notes worker. Tests rely on monkey-patching
+  `_resolve_window_audio` so they don't need a real hydrophone provider.
+- The frontend `MidiExportButton` now requires `windowStartUtc` /
+  `windowEndUtc` props. The Piano Roll page threads them from its
+  existing `timeRange` state. The button's "Re-export view" affordance
+  is emphasized when the current viewport differs from the persisted
+  window by more than 50 ms.

@@ -1,10 +1,10 @@
 """Service layer for Piano Roll MIDI export jobs.
 
-These rows track user-initiated MIDI export runs that derive a ``.mid`` file
+These rows track user-initiated bundled exports (MIDI + FLAC clip) that derive
 from a completed Piano Roll Notes parquet sidecar. Idempotent on
-``(event_encoder_job_id, extractor_version)``: the same key resets a terminal
-row to ``queued``, refuses to disturb an in-flight one, and may optionally
-force a re-export of an already-complete row.
+``(event_encoder_job_id, extractor_version)`` with a single rolling window
+per pair: matching the persisted window + ``complete`` is a cache hit;
+window-mismatch or non-terminal status resets the row to ``queued``.
 """
 
 from __future__ import annotations
@@ -32,35 +32,54 @@ _RESETTABLE_STATUSES = {JobStatus.failed.value, JobStatus.canceled.value}
 _TERMINAL_COMPLETE = JobStatus.complete.value
 _IN_FLIGHT_STATUSES = {JobStatus.queued.value, JobStatus.running.value}
 
+# Floating-point tolerance for considering two requested windows identical.
+_WINDOW_MATCH_TOLERANCE_S = 1e-3
+
 
 class PianoRollMidiExportConflict(Exception):
     """Raised when an enqueue is attempted against an in-flight row."""
+
+
+def _windows_match(a_start: float, a_end: float, b_start: float, b_end: float) -> bool:
+    return (
+        abs(a_start - b_start) <= _WINDOW_MATCH_TOLERANCE_S
+        and abs(a_end - b_end) <= _WINDOW_MATCH_TOLERANCE_S
+    )
 
 
 async def enqueue_piano_roll_midi_export(
     session: AsyncSession,
     *,
     event_encoder_job_id: str,
+    window_start_utc: float,
+    window_end_utc: float,
     extractor_version: Optional[str] = None,
     params: Optional[dict[str, Any]] = None,
     force: bool = False,
 ) -> tuple[PianoRollMidiExport, bool]:
-    """Create or reset a Piano Roll MIDI export row.
+    """Create or reset a Piano Roll MIDI export row for ``window``.
 
     Returns ``(row, created)``. Behavior on existing rows for the same
     ``(event_encoder_job_id, extractor_version)``:
 
-    - ``complete`` and ``force=False`` — returned as-is, ``created=False``.
-    - ``complete`` and ``force=True`` — reset to ``queued``, transient
-      fields cleared, ``created=False``.
+    - ``complete`` with a matching window and ``force=False`` — returned
+      as-is (cache hit), ``created=False``.
+    - ``complete`` with a mismatching window OR ``force=True`` — reset to
+      ``queued`` with the new window, ``created=False``.
     - ``queued`` or ``running`` — raises ``PianoRollMidiExportConflict``.
-    - ``failed`` or ``canceled`` — reset to ``queued``, transient fields
-      cleared, ``created=False``.
+    - ``failed`` or ``canceled`` — reset to ``queued`` with the new window,
+      ``created=False``.
 
-    Resolves ``extractor_version=None`` to the latest ``complete`` notes job's
-    version. Raises ``ValueError`` if the event encoder does not exist or the
-    referenced notes job is not yet ``complete``.
+    Resolves ``extractor_version=None`` to the latest ``complete`` notes
+    job's version. Raises ``ValueError`` if the event encoder does not
+    exist, the referenced notes job is not yet ``complete``, or the
+    window is non-positive.
     """
+    if window_end_utc - window_start_utc <= 0.0:
+        raise ValueError(
+            "window_end_utc must be strictly greater than window_start_utc"
+        )
+
     encoder = await session.get(EventEncoderJob, event_encoder_job_id)
     if encoder is None:
         raise ValueError(f"event_encoder_job not found: {event_encoder_job_id}")
@@ -95,9 +114,24 @@ async def enqueue_piano_roll_midi_export(
 
     if existing is not None:
         if existing.status == _TERMINAL_COMPLETE:
-            if not force:
+            window_matches = _windows_match(
+                existing.window_start_utc,
+                existing.window_end_utc,
+                window_start_utc,
+                window_end_utc,
+            )
+            if window_matches and not force:
                 return existing, False
-            return await _reset_row(session, existing, params_json), False
+            return (
+                await _reset_row(
+                    session,
+                    existing,
+                    params_json=params_json,
+                    window_start_utc=window_start_utc,
+                    window_end_utc=window_end_utc,
+                ),
+                False,
+            )
         if existing.status in _IN_FLIGHT_STATUSES:
             raise PianoRollMidiExportConflict(
                 f"piano_roll_midi_export already {existing.status} for "
@@ -105,7 +139,16 @@ async def enqueue_piano_roll_midi_export(
                 f"extractor_version={version}"
             )
         if existing.status in _RESETTABLE_STATUSES:
-            return await _reset_row(session, existing, params_json), False
+            return (
+                await _reset_row(
+                    session,
+                    existing,
+                    params_json=params_json,
+                    window_start_utc=window_start_utc,
+                    window_end_utc=window_end_utc,
+                ),
+                False,
+            )
         raise PianoRollMidiExportConflict(
             f"piano_roll_midi_export has unexpected status={existing.status!r}"
         )
@@ -115,6 +158,12 @@ async def enqueue_piano_roll_midi_export(
         extractor_version=version,
         status=JobStatus.queued.value,
         params_json=params_json,
+        window_start_utc=window_start_utc,
+        window_end_utc=window_end_utc,
+        audio_path="",
+        audio_size_bytes=0,
+        audio_sample_rate=0,
+        audio_duration_s=0.0,
     )
     session.add(row)
     await session.commit()
@@ -175,7 +224,12 @@ async def complete_for_encoder_job_version(
 
 
 async def _reset_row(
-    session: AsyncSession, row: PianoRollMidiExport, params_json: str
+    session: AsyncSession,
+    row: PianoRollMidiExport,
+    *,
+    params_json: str,
+    window_start_utc: float,
+    window_end_utc: float,
 ) -> PianoRollMidiExport:
     now = datetime.now(timezone.utc)
     row.status = JobStatus.queued.value
@@ -187,6 +241,12 @@ async def _reset_row(
     row.n_bytes = None
     row.compute_seconds = None
     row.params_json = params_json
+    row.window_start_utc = window_start_utc
+    row.window_end_utc = window_end_utc
+    row.audio_path = ""
+    row.audio_size_bytes = 0
+    row.audio_sample_rate = 0
+    row.audio_duration_s = 0.0
     row.updated_at = now
     await session.commit()
     await session.refresh(row)

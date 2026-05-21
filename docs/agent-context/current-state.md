@@ -68,15 +68,22 @@ full. Read the relevant domain section when planning or implementing.
   completion, and persists `event_notes_{version}.parquet` next to the encoder
   artifacts. The UI surfaces a `Notes` pill on the Event Encoder job table and
   in the piano roll toolbar, plus a `Generate notes` / `Re-run` action.
-- Piano Roll Notes can also be exported to a Standard MIDI File via a
-  user-initiated async export worker (`piano_roll_midi_exports` table). The
-  artifact lives under `<storage_root>/exports/event_encoders/{job_id}/`.
-  An "Export MIDI" button in the piano roll toolbar drives the lifecycle and
-  becomes "Download MIDI" once the file is on disk. As of v2 (ADR-067),
-  the labeler uses per-frame harmonic ratio matching and the export
-  emits a slim seven-channel SMF (F0, 2nd–5th harmonics, higher
-  harmonics, unmatched) with one SMF track and a distinct GM
-  `program_change` per channel.
+- Piano Roll exports are windowed and bundled (ADR-068). The same
+  user-initiated async export worker (`piano_roll_midi_exports` table)
+  now writes a pair of artifacts under
+  `<storage_root>/exports/event_encoders/{job_id}/`:
+  `notes_{version}.mid` (MIDI whose tick-0 origin equals the requested
+  `window_start_utc`) and `audio_{version}.flac` (32 kHz mono 16-bit
+  PCM clip of the same `[window_start_utc, window_end_utc)`, NOT
+  loudness-normalized so the clip matches what the player rendered).
+  The piano roll toolbar exposes an "Export view" button that captures
+  the viewer's current `timeRange`. On `complete`, the UI surfaces
+  exported-window text plus "Download MIDI" and "Download audio (FLAC)"
+  download links and a "Re-export view" affordance that is emphasized
+  when the current viewport differs from the persisted window by more
+  than ~50 ms. Window duration is capped at 1800 s (30 min) at the
+  schema, service, API, and button layers. The MIDI's SMF Type 1 /
+  480 PPQ / 120 BPM / 7-channel layout from ADR-067 is unchanged.
 
 ## Frontend Shell
 

@@ -983,7 +983,11 @@ function EventEncoderPianoRollViewer({
           testId="eej-piano-roll-token-count"
         />
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <PianoRollMidiExportControls jobId={timeline.job_id} />
+          <PianoRollMidiExportControls
+            jobId={timeline.job_id}
+            windowStartUtc={timeRange.start}
+            windowEndUtc={timeRange.end}
+          />
           <NotesStatusControls jobId={timeline.job_id} />
           <ToolbarSelect
             label="Y"
@@ -1266,9 +1270,24 @@ function ToolbarSelect({
   );
 }
 
-function PianoRollMidiExportControls({ jobId }: { jobId: string }) {
+function PianoRollMidiExportControls({
+  jobId,
+  windowStartUtc,
+  windowEndUtc,
+}: {
+  jobId: string;
+  windowStartUtc: number;
+  windowEndUtc: number;
+}) {
   const { data: notesStatus } = usePianoRollNotesStatus(jobId);
-  return <MidiExportButton jobId={jobId} notesStatus={notesStatus} />;
+  return (
+    <MidiExportButton
+      jobId={jobId}
+      notesStatus={notesStatus}
+      windowStartUtc={windowStartUtc}
+      windowEndUtc={windowEndUtc}
+    />
+  );
 }
 
 function NotesStatusControls({ jobId }: { jobId: string }) {

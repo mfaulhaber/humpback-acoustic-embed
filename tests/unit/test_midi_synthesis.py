@@ -440,6 +440,60 @@ def test_missing_required_column_raises() -> None:
         notes_table_to_midi_bytes(table)
 
 
+def test_explicit_time_origin_anchors_first_note_at_zero() -> None:
+    """A note whose ``start_utc`` equals ``time_origin_utc`` lands at tick 0."""
+    origin = 1_700_000_000.0
+    table = _make_table(
+        [
+            {
+                "event_id": "anchor",
+                "partial_index": 0,
+                "midi_pitch": 60,
+                "start_utc": origin,
+                "duration_s": 0.5,
+                "velocity": 80,
+            },
+            {
+                "event_id": "one-second",
+                "partial_index": 1,
+                "midi_pitch": 72,
+                "start_utc": origin + 1.0,
+                "duration_s": 0.5,
+                "velocity": 80,
+            },
+        ]
+    )
+    parsed = _parse_midi(notes_table_to_midi_bytes(table, time_origin_utc=origin))
+
+    f0_track = parsed.tracks[_channel_track_index_by_name(parsed)["F0"]]
+    h2_track = parsed.tracks[_channel_track_index_by_name(parsed)["2nd harmonic"]]
+
+    def _first_note_on_tick(track) -> int:
+        absolute = 0
+        for msg in track:
+            absolute += msg.time
+            if msg.type == "note_on" and msg.velocity > 0:
+                return absolute
+        raise AssertionError("no note_on found")
+
+    assert _first_note_on_tick(f0_track) == 0
+    expected = _seconds_to_ticks(1.0)
+    assert _first_note_on_tick(h2_track) == expected
+
+
+def test_empty_table_with_time_origin_produces_tempo_track_only() -> None:
+    """An empty notes table still emits a valid SMF (tempo only)."""
+    table = _make_table([])
+    parsed = _parse_midi(
+        notes_table_to_midi_bytes(table, time_origin_utc=1_700_000_000.0)
+    )
+    # Tempo track + one track per channel layout entry (some may be empty
+    # but they still emit track_name + program_change + end_of_track).
+    assert parsed.type == 1
+    # Tempo track always present.
+    assert len(parsed.tracks) >= 1
+
+
 def test_per_track_deterministic_ordering_within_channel() -> None:
     """Notes on the same channel keep deterministic intra-track ordering."""
     table = _make_table(

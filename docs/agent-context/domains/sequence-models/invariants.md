@@ -73,3 +73,20 @@
   collapsed onto channel 6, unmatched onto channel 7, GM drum channel 10
   intentionally empty). Each channel is its own SMF track with a
   `program_change` and `track_name` header.
+- Piano Roll exports are windowed and bundled (ADR-068). One canonical
+  pair of artifacts exists per `(event_encoder_job_id, extractor_version)`:
+  a `.mid` whose tick-0 origin equals the row's `window_start_utc`, and a
+  co-exported `.flac` (32 kHz mono 16-bit PCM, NOT loudness-normalized)
+  covering the same `[window_start_utc, window_end_utc)`. Re-export
+  overwrites both files; the row's `window_*` columns are NOT NULL.
+- The export window's duration must be strictly positive and ≤ 1800 s
+  (30 min). The schema validator, the service layer, the API layer, and
+  the frontend button all enforce this cap; the API also rejects windows
+  that do not overlap the encoder's resolved data range (the
+  `EventEncoderJob → EventSegmentationJob → RegionDetectionJob` chain).
+- The MIDI synth's `time_origin_utc` argument defaults to the
+  earliest-note shift (legacy behavior). When supplied, it anchors tick 0
+  to that absolute UTC second so the windowed `.mid` lines up sample-wise
+  with the co-exported `.flac` when both are imported into a DAW at the
+  same project position with project tempo matching the file's tempo
+  event.

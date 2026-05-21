@@ -21,6 +21,10 @@ from humpback.services.piano_roll_midi_export_service import (
 )
 
 
+_WIN_START: float = 1_000.0
+_WIN_END: float = 1_060.0
+
+
 async def _make_encoder_job(session) -> str:
     job = EventEncoderJob(
         status=JobStatus.complete.value,
@@ -72,7 +76,10 @@ async def test_enqueue_creates_new_row(session) -> None:
     await _make_complete_notes_job(session, event_encoder_job_id=encoder_id)
 
     row, created = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
 
     assert created is True
@@ -80,27 +87,81 @@ async def test_enqueue_creates_new_row(session) -> None:
     assert row.extractor_version == DEFAULT_EXTRACTOR_VERSION
     assert row.status == JobStatus.queued.value
     assert row.params_json == "{}"
+    assert row.window_start_utc == _WIN_START
+    assert row.window_end_utc == _WIN_END
 
 
 @pytest.mark.asyncio
-async def test_enqueue_complete_without_force_returns_existing(session) -> None:
+async def test_enqueue_complete_with_matching_window_returns_existing(session) -> None:
     encoder_id = await _make_encoder_job(session)
     await _make_complete_notes_job(session, event_encoder_job_id=encoder_id)
     first, _ = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
     first.status = JobStatus.complete.value
     first.midi_path = "exports/event_encoders/x/notes_v2.mid"
+    first.audio_path = "exports/event_encoders/x/audio_v2.flac"
+    first.audio_size_bytes = 4096
+    first.audio_sample_rate = 32_000
+    first.audio_duration_s = 60.0
     first.finished_at = datetime.now(timezone.utc)
     await session.commit()
 
     second, created = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
     assert created is False
     assert second.id == first.id
     assert second.status == JobStatus.complete.value
     assert second.midi_path == "exports/event_encoders/x/notes_v2.mid"
+    assert second.audio_path == "exports/event_encoders/x/audio_v2.flac"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_complete_with_different_window_resets(session) -> None:
+    encoder_id = await _make_encoder_job(session)
+    await _make_complete_notes_job(session, event_encoder_job_id=encoder_id)
+    first, _ = await enqueue_piano_roll_midi_export(
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
+    )
+    first.status = JobStatus.complete.value
+    first.midi_path = "exports/event_encoders/x/notes_v2.mid"
+    first.audio_path = "exports/event_encoders/x/audio_v2.flac"
+    first.audio_size_bytes = 4096
+    first.audio_sample_rate = 32_000
+    first.audio_duration_s = 60.0
+    first.finished_at = datetime.now(timezone.utc)
+    first.n_notes = 5
+    first.n_bytes = 2048
+    await session.commit()
+
+    reset, created = await enqueue_piano_roll_midi_export(
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=2_000.0,
+        window_end_utc=2_120.0,
+    )
+    assert created is False
+    assert reset.id == first.id
+    assert reset.status == JobStatus.queued.value
+    assert reset.midi_path is None
+    assert reset.audio_path == ""
+    assert reset.audio_size_bytes == 0
+    assert reset.audio_sample_rate == 0
+    assert reset.audio_duration_s == 0.0
+    assert reset.window_start_utc == 2_000.0
+    assert reset.window_end_utc == 2_120.0
+    assert reset.n_notes is None
+    assert reset.n_bytes is None
 
 
 @pytest.mark.asyncio
@@ -108,7 +169,10 @@ async def test_enqueue_complete_with_force_resets(session) -> None:
     encoder_id = await _make_encoder_job(session)
     await _make_complete_notes_job(session, event_encoder_job_id=encoder_id)
     row, _ = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
     row.status = JobStatus.complete.value
     row.midi_path = "exports/event_encoders/x/notes_v2.mid"
@@ -116,10 +180,18 @@ async def test_enqueue_complete_with_force_resets(session) -> None:
     row.n_notes = 42
     row.n_bytes = 1024
     row.compute_seconds = 1.5
+    row.audio_path = "exports/event_encoders/x/audio_v2.flac"
+    row.audio_size_bytes = 9999
+    row.audio_sample_rate = 32_000
+    row.audio_duration_s = 60.0
     await session.commit()
 
     reset, created = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id, force=True
+        session,
+        event_encoder_job_id=encoder_id,
+        force=True,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
     assert created is False
     assert reset.id == row.id
@@ -129,6 +201,10 @@ async def test_enqueue_complete_with_force_resets(session) -> None:
     assert reset.n_notes is None
     assert reset.n_bytes is None
     assert reset.compute_seconds is None
+    assert reset.audio_path == ""
+    assert reset.audio_size_bytes == 0
+    assert reset.audio_sample_rate == 0
+    assert reset.audio_duration_s == 0.0
 
 
 @pytest.mark.asyncio
@@ -136,23 +212,41 @@ async def test_enqueue_running_raises_conflict(session) -> None:
     encoder_id = await _make_encoder_job(session)
     await _make_complete_notes_job(session, event_encoder_job_id=encoder_id)
     row, _ = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
     row.status = JobStatus.running.value
     await session.commit()
 
     with pytest.raises(PianoRollMidiExportConflict):
-        await enqueue_piano_roll_midi_export(session, event_encoder_job_id=encoder_id)
+        await enqueue_piano_roll_midi_export(
+            session,
+            event_encoder_job_id=encoder_id,
+            window_start_utc=_WIN_START,
+            window_end_utc=_WIN_END,
+        )
 
 
 @pytest.mark.asyncio
 async def test_enqueue_queued_raises_conflict(session) -> None:
     encoder_id = await _make_encoder_job(session)
     await _make_complete_notes_job(session, event_encoder_job_id=encoder_id)
-    await enqueue_piano_roll_midi_export(session, event_encoder_job_id=encoder_id)
+    await enqueue_piano_roll_midi_export(
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
+    )
 
     with pytest.raises(PianoRollMidiExportConflict):
-        await enqueue_piano_roll_midi_export(session, event_encoder_job_id=encoder_id)
+        await enqueue_piano_roll_midi_export(
+            session,
+            event_encoder_job_id=encoder_id,
+            window_start_utc=_WIN_START,
+            window_end_utc=_WIN_END,
+        )
 
 
 @pytest.mark.asyncio
@@ -160,7 +254,10 @@ async def test_enqueue_failed_resets_row(session) -> None:
     encoder_id = await _make_encoder_job(session)
     await _make_complete_notes_job(session, event_encoder_job_id=encoder_id)
     row, _ = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
     row.status = JobStatus.failed.value
     row.error_message = "boom"
@@ -172,7 +269,11 @@ async def test_enqueue_failed_resets_row(session) -> None:
     await session.commit()
 
     reset, created = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id, params={"foo": 1}
+        session,
+        event_encoder_job_id=encoder_id,
+        params={"foo": 1},
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
     assert created is False
     assert reset.id == row.id
@@ -190,17 +291,36 @@ async def test_enqueue_canceled_resets_row(session) -> None:
     encoder_id = await _make_encoder_job(session)
     await _make_complete_notes_job(session, event_encoder_job_id=encoder_id)
     row, _ = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
     row.status = JobStatus.canceled.value
     await session.commit()
 
     reset, created = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
     assert created is False
     assert reset.id == row.id
     assert reset.status == JobStatus.queued.value
+
+
+@pytest.mark.asyncio
+async def test_enqueue_rejects_non_positive_window(session) -> None:
+    encoder_id = await _make_encoder_job(session)
+    await _make_complete_notes_job(session, event_encoder_job_id=encoder_id)
+    with pytest.raises(ValueError):
+        await enqueue_piano_roll_midi_export(
+            session,
+            event_encoder_job_id=encoder_id,
+            window_start_utc=2_000.0,
+            window_end_utc=2_000.0,
+        )
 
 
 # ---------- version resolution ----------
@@ -223,7 +343,10 @@ async def test_enqueue_resolves_version_when_none(session) -> None:
     )
 
     row, created = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
     assert created is True
     assert row.extractor_version == "v2-experimental"
@@ -232,7 +355,6 @@ async def test_enqueue_resolves_version_when_none(session) -> None:
 @pytest.mark.asyncio
 async def test_enqueue_no_complete_notes_raises(session) -> None:
     encoder_id = await _make_encoder_job(session)
-    # notes job exists but is queued, not complete
     notes = PianoRollNotesJob(
         event_encoder_job_id=encoder_id,
         status=JobStatus.queued.value,
@@ -241,7 +363,12 @@ async def test_enqueue_no_complete_notes_raises(session) -> None:
     await session.commit()
 
     with pytest.raises(ValueError):
-        await enqueue_piano_roll_midi_export(session, event_encoder_job_id=encoder_id)
+        await enqueue_piano_roll_midi_export(
+            session,
+            event_encoder_job_id=encoder_id,
+            window_start_utc=_WIN_START,
+            window_end_utc=_WIN_END,
+        )
 
 
 @pytest.mark.asyncio
@@ -257,7 +384,11 @@ async def test_enqueue_version_not_complete_raises(session) -> None:
 
     with pytest.raises(ValueError):
         await enqueue_piano_roll_midi_export(
-            session, event_encoder_job_id=encoder_id, extractor_version="v2"
+            session,
+            event_encoder_job_id=encoder_id,
+            extractor_version="v2",
+            window_start_utc=_WIN_START,
+            window_end_utc=_WIN_END,
         )
 
 
@@ -265,7 +396,10 @@ async def test_enqueue_version_not_complete_raises(session) -> None:
 async def test_enqueue_unknown_encoder_raises(session) -> None:
     with pytest.raises(ValueError):
         await enqueue_piano_roll_midi_export(
-            session, event_encoder_job_id="does-not-exist"
+            session,
+            event_encoder_job_id="does-not-exist",
+            window_start_utc=_WIN_START,
+            window_end_utc=_WIN_END,
         )
 
 
@@ -282,14 +416,21 @@ async def test_latest_for_encoder_job_prefers_complete(session) -> None:
         session, event_encoder_job_id=encoder_id, extractor_version="v2"
     )
     older, _ = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id, extractor_version="v1"
+        session,
+        event_encoder_job_id=encoder_id,
+        extractor_version="v1",
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
     older.status = JobStatus.complete.value
     older.finished_at = datetime(2026, 5, 1, tzinfo=timezone.utc)
     newer, _ = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id, extractor_version="v2"
+        session,
+        event_encoder_job_id=encoder_id,
+        extractor_version="v2",
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
-    # newer is queued
     await session.commit()
 
     latest = await latest_for_encoder_job(session, event_encoder_job_id=encoder_id)
@@ -302,7 +443,10 @@ async def test_latest_for_encoder_job_falls_back_to_any(session) -> None:
     encoder_id = await _make_encoder_job(session)
     await _make_complete_notes_job(session, event_encoder_job_id=encoder_id)
     row, _ = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
     latest = await latest_for_encoder_job(session, event_encoder_job_id=encoder_id)
     assert latest is not None
@@ -323,7 +467,11 @@ async def test_complete_for_encoder_job_version(session) -> None:
         session, event_encoder_job_id=encoder_id, extractor_version="v2"
     )
     row, _ = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id, extractor_version="v2"
+        session,
+        event_encoder_job_id=encoder_id,
+        extractor_version="v2",
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
     )
     row.status = JobStatus.complete.value
     row.finished_at = datetime.now(timezone.utc)

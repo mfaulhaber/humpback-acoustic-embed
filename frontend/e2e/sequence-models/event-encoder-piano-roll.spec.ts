@@ -1370,4 +1370,215 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
       "audio missing for one event",
     );
   });
+
+  test("piano-roll windowed export: posts the view's time range, exposes both downloads, re-export emphasis updates", async ({
+    page,
+  }) => {
+    await setupMocks(page, { notesStatus: buildNotesStatus("complete") });
+    const exportState = await setupMidiExportMocks(page);
+
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const exportButton = page.getByTestId("eej-piano-roll-midi-export-button");
+    await expect(exportButton).toHaveText(/^Export view$/);
+    await exportButton.click();
+
+    // Worker progresses queued -> complete on the next status poll.
+    exportState.advance("complete");
+    await expect(
+      page.getByTestId("eej-piano-roll-midi-export-download"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("eej-piano-roll-audio-export-download"),
+    ).toBeVisible();
+
+    expect(exportState.createRequests).toHaveLength(1);
+    const body = exportState.createRequests[0];
+    expect(typeof body.window_start_utc).toBe("number");
+    expect(typeof body.window_end_utc).toBe("number");
+    expect(body.window_end_utc).toBeGreaterThan(body.window_start_utc);
+
+    // Window match expected immediately after a successful export.
+    const reExport = page.getByTestId("eej-piano-roll-midi-export-button");
+    await expect(reExport).toHaveAttribute("data-window-match", "true");
+  });
+
+  test("piano-roll windowed export: emphasizes Re-export view when viewport drifts from exported window", async ({
+    page,
+  }) => {
+    await setupMocks(page, { notesStatus: buildNotesStatus("complete") });
+    const exportState = await setupMidiExportMocks(page, {
+      // Persist a stored window that does not match the current viewport.
+      initial: {
+        status: "complete",
+        window_start_utc: COMPLETE_JOB ? 0 : 0,
+        window_end_utc: 0.0001,
+      },
+    });
+
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const reExport = page.getByTestId("eej-piano-roll-midi-export-button");
+    await expect(reExport).toHaveAttribute("data-window-match", "false");
+    // Touch exportState so the variable is read (linter satisfaction).
+    expect(exportState.createRequests.length).toBeGreaterThanOrEqual(0);
+  });
 });
+
+// ---------- MIDI export mock harness ----------
+
+interface PianoRollMidiExportRowMock {
+  id: string;
+  event_encoder_job_id: string;
+  extractor_version: string;
+  status: "queued" | "running" | "complete" | "failed" | "canceled";
+  started_at: string | null;
+  finished_at: string | null;
+  error_message: string | null;
+  midi_path: string | null;
+  n_notes: number | null;
+  n_bytes: number | null;
+  compute_seconds: number | null;
+  params_json: string;
+  window_start_utc: number;
+  window_end_utc: number;
+  audio_path: string;
+  audio_size_bytes: number;
+  audio_sample_rate: number;
+  audio_duration_s: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface MidiExportMockState {
+  row: PianoRollMidiExportRowMock | null;
+  createRequests: Array<Record<string, unknown>>;
+  advance: (
+    status: PianoRollMidiExportRowMock["status"],
+    overrides?: Partial<PianoRollMidiExportRowMock>,
+  ) => void;
+}
+
+async function setupMidiExportMocks(
+  page: Page,
+  options: {
+    initial?: Partial<PianoRollMidiExportRowMock> & {
+      status?: PianoRollMidiExportRowMock["status"];
+    };
+  } = {},
+): Promise<MidiExportMockState> {
+  const now = "2026-05-21T12:00:00Z";
+  const defaultRow: PianoRollMidiExportRowMock = {
+    id: "pre-1",
+    event_encoder_job_id: COMPLETE_JOB.id,
+    extractor_version: "v2",
+    status: "queued",
+    started_at: null,
+    finished_at: null,
+    error_message: null,
+    midi_path: null,
+    n_notes: null,
+    n_bytes: null,
+    compute_seconds: null,
+    params_json: "{}",
+    window_start_utc: 0,
+    window_end_utc: 0,
+    audio_path: "",
+    audio_size_bytes: 0,
+    audio_sample_rate: 0,
+    audio_duration_s: 0,
+    created_at: now,
+    updated_at: now,
+  };
+
+  const state: MidiExportMockState = {
+    row: options.initial
+      ? { ...defaultRow, ...options.initial }
+      : null,
+    createRequests: [],
+    advance: (status, overrides = {}) => {
+      if (state.row == null) return;
+      const completion: Partial<PianoRollMidiExportRowMock> =
+        status === "complete"
+          ? {
+              status,
+              midi_path: "exports/event_encoders/eej-piano-roll-1/notes_v2.mid",
+              audio_path:
+                "exports/event_encoders/eej-piano-roll-1/audio_v2.flac",
+              n_notes: 9,
+              n_bytes: 4096,
+              audio_size_bytes: 1024 * 1024,
+              audio_sample_rate: 32_000,
+              audio_duration_s:
+                state.row.window_end_utc - state.row.window_start_utc,
+              finished_at: "2026-05-21T12:00:05Z",
+            }
+          : { status };
+      state.row = { ...state.row, ...completion, ...overrides };
+    },
+  };
+
+  await page.route(
+    "**/sequence-models/event-encoders/*/midi-export-status",
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(state.row ?? { status: "absent" }),
+      }),
+  );
+
+  await page.route(
+    "**/sequence-models/event-encoders/*/midi-exports",
+    async (route) => {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      state.createRequests.push(body);
+      state.row = {
+        ...(state.row ?? defaultRow),
+        status: "queued",
+        midi_path: null,
+        audio_path: "",
+        n_notes: null,
+        n_bytes: null,
+        audio_size_bytes: 0,
+        audio_sample_rate: 0,
+        audio_duration_s: 0,
+        finished_at: null,
+        window_start_utc: Number(body.window_start_utc ?? 0),
+        window_end_utc: Number(body.window_end_utc ?? 0),
+        updated_at: "2026-05-21T12:00:01Z",
+      };
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(state.row),
+      });
+    },
+  );
+
+  await page.route(
+    "**/sequence-models/event-encoders/*/midi-export",
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "audio/midi",
+        body: Buffer.from("MThd...mock...", "utf-8"),
+      }),
+  );
+
+  await page.route(
+    "**/sequence-models/event-encoders/*/audio-export",
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "audio/flac",
+        body: Buffer.from("fLaCmock", "utf-8"),
+      }),
+  );
+
+  return state;
+}

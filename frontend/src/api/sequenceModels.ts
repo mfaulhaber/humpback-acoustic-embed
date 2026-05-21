@@ -252,9 +252,20 @@ export interface PianoRollMidiExportRead {
   n_bytes: number | null;
   compute_seconds: number | null;
   params_json: string;
+  window_start_utc: number;
+  window_end_utc: number;
+  audio_path: string;
+  audio_size_bytes: number;
+  audio_sample_rate: number;
+  audio_duration_s: number;
   created_at: string;
   updated_at: string;
 }
+
+export const MAX_EXPORT_WINDOW_SECONDS = 1800;
+// Server-side cache-hit tolerance is 1 ms (see services/piano_roll_midi_export_service.py);
+// the frontend uses a looser ~50 ms tolerance only to decide whether to emphasize
+// the "Re-export view" button.
 
 export interface PianoRollMidiExportStatusAbsent {
   status: "absent";
@@ -274,6 +285,8 @@ export interface CreatePianoRollMidiExportRequest {
   extractor_version?: string;
   params?: Record<string, unknown>;
   force?: boolean;
+  window_start_utc: number;
+  window_end_utc: number;
 }
 
 export interface EventEncoderTimelineResponse {
@@ -523,7 +536,7 @@ export function fetchPianoRollMidiExportStatus(
 
 export function createPianoRollMidiExport(
   jobId: string,
-  body: CreatePianoRollMidiExportRequest = {},
+  body: CreatePianoRollMidiExportRequest,
 ): Promise<PianoRollMidiExportRead> {
   return request<PianoRollMidiExportRead>(
     `${EVENT_ENCODER_ROOT}/${jobId}/midi-exports`,
@@ -537,6 +550,10 @@ export function createPianoRollMidiExport(
 
 export function pianoRollMidiExportDownloadUrl(jobId: string): string {
   return `${EVENT_ENCODER_ROOT}/${jobId}/midi-export`;
+}
+
+export function pianoRollAudioExportDownloadUrl(jobId: string): string {
+  return `${EVENT_ENCODER_ROOT}/${jobId}/audio-export`;
 }
 
 const ACTIVE_STATUSES = new Set(["queued", "running"]);
@@ -765,7 +782,7 @@ export function usePianoRollMidiExportStatus(jobId: string | null) {
 export function useCreatePianoRollMidiExport(jobId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: CreatePianoRollMidiExportRequest = {}) =>
+    mutationFn: (body: CreatePianoRollMidiExportRequest) =>
       createPianoRollMidiExport(jobId as string, body),
     onSuccess: () => {
       if (jobId == null) return;

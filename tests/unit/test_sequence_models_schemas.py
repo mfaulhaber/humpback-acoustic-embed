@@ -286,3 +286,39 @@ def test_event_encoder_job_create_accepts_effective_mode():
     assert payload.event_source_mode == "effective"
     assert payload.preprocessing.pca_dim == 64
     assert payload.k_values == [50]
+
+
+def test_piano_roll_midi_export_request_accepts_valid_window():
+    from humpback.schemas.piano_roll_midi_export import (
+        PianoRollMidiExportCreateRequest,
+    )
+
+    body = PianoRollMidiExportCreateRequest(
+        window_start_utc=1_000.0, window_end_utc=1_060.0
+    )
+    assert body.window_start_utc == 1_000.0
+    assert body.window_end_utc == 1_060.0
+    assert body.force is False
+
+
+def test_piano_roll_midi_export_request_rejects_zero_duration():
+    from humpback.schemas.piano_roll_midi_export import (
+        PianoRollMidiExportCreateRequest,
+    )
+
+    with pytest.raises(ValidationError):
+        PianoRollMidiExportCreateRequest(
+            window_start_utc=1_000.0, window_end_utc=1_000.0
+        )
+
+
+def test_piano_roll_midi_export_request_rejects_over_cap():
+    from humpback.schemas.piano_roll_midi_export import (
+        PianoRollMidiExportCreateRequest,
+    )
+
+    with pytest.raises(ValidationError):
+        PianoRollMidiExportCreateRequest(
+            window_start_utc=1_000.0,
+            window_end_utc=1_000.0 + 1801.0,
+        )
