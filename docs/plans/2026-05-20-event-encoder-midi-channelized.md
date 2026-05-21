@@ -30,7 +30,7 @@
 - [ ] When `params.enabled is False`, the function is a no-op (all `partial_index` stay at -1) — existing behavior preserved.
 - [ ] When `tracks` is empty, the function returns the empty list — existing behavior preserved.
 - [ ] Frequency conversion goes through `bin_frequency_hz(...)` from `piano_roll_cqt.py`; do not duplicate the formula in-module.
-- [ ] No change to `Track`, `MidiNote`, `TrackerParams`, `MIDIQuantizeParams`, `build_tracks`, or `quantize_to_midi` in this task.
+- [ ] No change to `MidiNote`, `TrackerParams`, `MIDIQuantizeParams`, or `quantize_to_midi` in this task. `Track` and `build_tracks` are minimally extended: `Track` gains a `frames: list[int]` field populated by `build_tracks()` so the per-frame labeler can align two tracks even when one has missed frames. Legacy/test fixtures with empty `frames` are synthesized as contiguous from `start_frame` so existing callers keep working.
 
 **Tests needed:**
 - Two-track exact 2× pair across all frames → `partial_index` becomes `0` and `1`.

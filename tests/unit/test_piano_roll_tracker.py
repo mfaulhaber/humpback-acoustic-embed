@@ -224,8 +224,13 @@ def test_label_harmonics_far_off_rejected_at_default_tolerance() -> None:
     assert tracks[1].partial_index == 0
 
 
-def test_label_harmonics_out_of_range_keeps_minus_one() -> None:
-    """A non-integer-multiple overlap leaves the candidate unlabeled."""
+def test_label_harmonics_non_integer_multiple_anchors_own_cluster() -> None:
+    """A non-integer-multiple overlap leaves the candidate unlabeled-as-harmonic.
+
+    Under v2's leave-unprocessed semantic such a track is not labeled
+    as a harmonic of the original F0; instead it anchors its own
+    (singleton) cluster as partial_index = 0 on a later iteration.
+    """
     params = CQTParams()
     # F0 = 108, then a track at bin 130 — that's between 2x and 3x ratio,
     # not close to an integer multiple → no harmonic label.

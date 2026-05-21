@@ -257,15 +257,15 @@ def label_harmonics(
     processed: set[int] = set()
 
     for candidate in sorted_tracks:
-        if id(candidate) in processed:
+        if candidate.track_id in processed:
             continue
         if bin_frequency_hz(candidate.median_bin, cqt_params) <= 0.0:
             continue
         candidate.partial_index = 0
-        processed.add(id(candidate))
+        processed.add(candidate.track_id)
 
         for other in sorted_tracks:
-            if id(other) in processed:
+            if other.track_id in processed:
                 continue
             ratios = _per_frame_ratios(candidate, other, cqt_params)
             if len(ratios) < params.min_overlap_frames:
@@ -280,7 +280,7 @@ def label_harmonics(
             if statistics.median(cents_per_frame) > params.cents_tolerance:
                 continue
             other.partial_index = median_harmonic - 1
-            processed.add(id(other))
+            processed.add(other.track_id)
 
     return tracks
 

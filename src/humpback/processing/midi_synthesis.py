@@ -59,7 +59,6 @@ CHANNEL_HARMONIC_4 = 3
 CHANNEL_HARMONIC_5 = 4
 CHANNEL_HARMONIC_HIGH = 5
 CHANNEL_UNMATCHED = 6
-_GM_DRUM_CHANNEL = 9
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,8 +234,12 @@ def _channel_for_partial(partial_index: int) -> int:
     channel. Harmonics 6 and above (``partial_index >= 5``) collapse onto
     the single ``CHANNEL_HARMONIC_HIGH``. The GM drum channel is never
     returned.
+
+    Defensive: any negative ``partial_index`` (``-1`` or otherwise
+    unexpected) routes to ``CHANNEL_UNMATCHED`` rather than silently
+    falling through to the high-harmonics bucket.
     """
-    if partial_index == -1:
+    if partial_index < 0:
         return CHANNEL_UNMATCHED
     if partial_index == 0:
         return CHANNEL_F0

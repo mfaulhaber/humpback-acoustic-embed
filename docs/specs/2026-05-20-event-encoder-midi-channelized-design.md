@@ -164,10 +164,24 @@ all tracks keep `partial_index = -1`).
 From the deep-dive numbers on the reference job:
 
 - `max_harmonic` 8 → 16 reclaims ~55% of current `-1` (the above-8× content)
-- F0 sort fix + consume-on-overlap fix + 50→75¢ widening reclaims a
-  further ~5–10% (the "would-be" + "near 50–100¢" buckets)
-- Residual `-1`: ~17% (genuinely non-harmonic content)
-- Expected new `-1` rate: **17–25%**, down from 83%
+- F0 sort fix + 50→75¢ widening reclaims ~5–10% of `-1` (the "would-be"
+  + "near 50–100¢" buckets) by labeling them as actual harmonics
+- The consume-on-overlap fix is structurally stronger than originally
+  modeled: under v2, every track that fails the harmonic check is left
+  unprocessed and on a later iteration becomes the F0 anchor of its own
+  (typically singleton) cluster, so it ends up with `partial_index = 0`
+  rather than `-1`. The only remaining paths to `partial_index = -1` are
+  (a) `params.enabled = False`, or (b) a degenerate
+  `bin_frequency_hz <= 0` track (unreachable for default
+  `CQTParams.fmin = 27.5`).
+
+Practical outcome: the "genuinely non-harmonic" 17% from the v1 data
+becomes `partial_index = 0` (singleton clusters) rather than `-1`. The
+`CHANNEL_UNMATCHED` track in the MIDI export is therefore expected to be
+near-empty in practice. It is preserved in the slim layout for forward
+compatibility (e.g., a future labeler that wants to explicitly emit
+`-1` for some content) and to keep the SMF track layout structurally
+identical across jobs.
 
 ### 5.5 Out of scope for v2 (callouts)
 
