@@ -1,5 +1,32 @@
 import { expect, test } from "@playwright/test";
 
+/**
+ * Build a minimal SMF Type-1 file with `numTracks` empty tracks. Each track
+ * contains only an end_of_track meta event. Used as the mocked
+ * /midi-export response body so the test exercises a structurally valid
+ * MIDI payload (matching the slim 7-channel layout produced by the
+ * backend: tempo + 7 channel tracks = 8 total).
+ */
+function buildMinimalSMF(numTracks: number, ticksPerBeat = 480): Buffer {
+  const header = Buffer.from([
+    0x4d, 0x54, 0x68, 0x64, // "MThd"
+    0x00, 0x00, 0x00, 0x06, // header length = 6
+    0x00, 0x01, // format = 1
+    (numTracks >> 8) & 0xff, numTracks & 0xff,
+    (ticksPerBeat >> 8) & 0xff, ticksPerBeat & 0xff,
+  ]);
+  // Each MTrk chunk: 4-byte tag + 4-byte length + delta=0 + 0xFF 0x2F 0x00 (EOT)
+  const trackChunk = Buffer.from([
+    0x4d, 0x54, 0x72, 0x6b, // "MTrk"
+    0x00, 0x00, 0x00, 0x04, // length = 4
+    0x00, 0xff, 0x2f, 0x00, // delta=0; end_of_track meta
+  ]);
+  const tracks = Buffer.concat(Array.from({ length: numTracks }, () => trackChunk));
+  return Buffer.concat([header, tracks]);
+}
+
+const MOCK_MIDI_BYTES = buildMinimalSMF(8); // tempo + 7 channel tracks
+
 const JOB_ID = "eej-midi-export-1";
 const REGION_JOB_ID = "rj-midi-export-1";
 const JOB_START = 1_751_644_800;
@@ -124,12 +151,12 @@ function completeNotesStatus(): NotesStatus {
   return {
     id: "notes-job-1",
     event_encoder_job_id: JOB_ID,
-    extractor_version: "v1",
+    extractor_version: "v2",
     status: "complete",
     started_at: "2026-05-20T01:00:00Z",
     finished_at: "2026-05-20T01:01:00Z",
     error_message: null,
-    notes_path: `event_encoders/${JOB_ID}/event_notes_v1.parquet`,
+    notes_path: `event_encoders/${JOB_ID}/event_notes_v2.parquet`,
     n_events: 1,
     n_notes: 1,
     compute_seconds: 1.0,
@@ -145,14 +172,14 @@ function midiExportRow(
   return {
     id: "midi-export-1",
     event_encoder_job_id: JOB_ID,
-    extractor_version: "v1",
+    extractor_version: "v2",
     status: state,
     started_at: state === "queued" ? null : "2026-05-20T01:02:00Z",
     finished_at: state === "complete" ? "2026-05-20T01:02:05Z" : null,
     error_message: state === "failed" ? "synth failed" : null,
     midi_path:
       state === "complete"
-        ? `exports/event_encoders/${JOB_ID}/notes_v1.mid`
+        ? `exports/event_encoders/${JOB_ID}/notes_v2.mid`
         : null,
     n_notes: state === "complete" ? 1 : null,
     n_bytes: state === "complete" ? 256 : null,
@@ -218,9 +245,9 @@ async function mockRoutes(page: import("@playwright/test").Page, state: MockStat
         status: 200,
         contentType: "audio/midi",
         headers: {
-          "content-disposition": `attachment; filename="event_encoder_${JOB_ID}_notes_v1.mid"`,
+          "content-disposition": `attachment; filename="event_encoder_${JOB_ID}_notes_v2.mid"`,
         },
-        body: Buffer.alloc(128),
+        body: MOCK_MIDI_BYTES,
       });
     }
     if (url.includes("/notes-status")) {
@@ -292,6 +319,47 @@ test.describe("Event Encoder Piano Roll — MIDI export", () => {
 
     state.midiExportStatus = midiExportRow("complete");
     await expect(button).toHaveText("Download MIDI", { timeout: 5_000 });
+  });
+
+  test("download endpoint returns the v2 channelized SMF via page fetch", async ({
+    page,
+  }) => {
+    const state: MockState = {
+      notesStatus: completeNotesStatus(),
+      midiExportStatus: midiExportRow("complete"),
+      midiExportPosts: [],
+    };
+    await mockRoutes(page, state);
+    await page.goto(`/app/sequence-models/event-encoder/${JOB_ID}/piano-roll`);
+
+    // Use page-context fetch so the mocked routes intercept the request.
+    // (Playwright's request fixture is a separate APIRequestContext and
+    // does not honor page.route handlers.)
+    const result = await page.evaluate(async (jobId: string) => {
+      const resp = await fetch(
+        `/api/sequence-models/event-encoders/${jobId}/midi-export`,
+      );
+      const buf = await resp.arrayBuffer();
+      return {
+        ok: resp.ok,
+        contentDisposition: resp.headers.get("content-disposition"),
+        bytes: Array.from(new Uint8Array(buf)),
+      };
+    }, JOB_ID);
+
+    expect(result.ok).toBe(true);
+    expect(result.contentDisposition ?? "").toContain(
+      `event_encoder_${JOB_ID}_notes_v2.mid`,
+    );
+
+    const bytes = new Uint8Array(result.bytes);
+    const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+    expect(magic).toBe("MThd");
+    // SMF format (bytes 8-9, big-endian)
+    expect((bytes[8] << 8) | bytes[9]).toBe(1);
+    // Track count >= 3 (tempo + at least 2 channel tracks); the v2
+    // channelized layout actually emits 8.
+    expect((bytes[10] << 8) | bytes[11]).toBeGreaterThanOrEqual(3);
   });
 
   test("re-export submits force=true", async ({ page }) => {

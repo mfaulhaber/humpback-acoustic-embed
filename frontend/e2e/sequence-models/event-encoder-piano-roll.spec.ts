@@ -373,7 +373,7 @@ function buildNotesStatus(
   return {
     id: "prn-1",
     event_encoder_job_id: COMPLETE_JOB.id,
-    extractor_version: "v1",
+    extractor_version: "v2",
     status,
     started_at: null,
     finished_at: null,
@@ -557,7 +557,7 @@ async function setupMocks(
       }
       const payload: NotesPayload = state.notesPayload ?? {
         job_id: id,
-        extractor_version: "v1",
+        extractor_version: "v2",
         n_notes: 0,
         notes: [],
       };
@@ -1177,7 +1177,7 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
   }) => {
     const notesPayload: NotesPayload = {
       job_id: COMPLETE_JOB.id,
-      extractor_version: "v1",
+      extractor_version: "v2",
       n_notes: 2,
       notes: [
         {
@@ -1295,7 +1295,7 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
     );
     const notesPayload: NotesPayload = {
       job_id: COMPLETE_JOB.id,
-      extractor_version: "v1",
+      extractor_version: "v2",
       n_notes: fixtureNotes.length,
       notes: fixtureNotes,
     };

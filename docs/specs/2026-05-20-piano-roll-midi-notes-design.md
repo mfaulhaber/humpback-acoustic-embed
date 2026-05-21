@@ -1,8 +1,15 @@
 # Piano Roll MIDI Notes — Design Spec
 
-**Status:** Approved
+**Status:** Approved (superseded in part)
 **Date:** 2026-05-20
 **Primary domain:** sequence-models
+
+> §6.5 (harmonic labeling) is superseded by
+> [2026-05-20-event-encoder-midi-channelized-design.md](2026-05-20-event-encoder-midi-channelized-design.md)
+> §5. The v2 labeler replaces the median-bin ratio metric with per-frame
+> ratio matching, bumps `max_harmonic` 8 → 16, widens `cents_tolerance`
+> 50 → 75, adds `min_overlap_frames = 3`, and leaves tracks that fail
+> the harmonic check eligible to anchor their own clusters.
 **Neighbor domains:** core-platform, signal-timeline, frontend-shell
 
 ## 1. Goal

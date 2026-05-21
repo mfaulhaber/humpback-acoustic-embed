@@ -43,7 +43,7 @@ async def test_persist_and_read_back_defaults(session) -> None:
 
     assert row.id is not None
     assert row.event_encoder_job_id == encoder_id
-    assert row.extractor_version == "v1"
+    assert row.extractor_version == "v2"
     assert row.status == JobStatus.queued.value
     assert row.started_at is None
     assert row.finished_at is None
@@ -59,12 +59,12 @@ async def test_persist_and_read_back_defaults(session) -> None:
 async def test_unique_constraint_on_encoder_and_version(session) -> None:
     encoder_id = await _make_encoder_job(session)
     session.add(
-        PianoRollMidiExport(event_encoder_job_id=encoder_id, extractor_version="v1")
+        PianoRollMidiExport(event_encoder_job_id=encoder_id, extractor_version="v2")
     )
     await session.commit()
 
     session.add(
-        PianoRollMidiExport(event_encoder_job_id=encoder_id, extractor_version="v1")
+        PianoRollMidiExport(event_encoder_job_id=encoder_id, extractor_version="v2")
     )
     with pytest.raises(IntegrityError):
         await session.commit()

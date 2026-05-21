@@ -136,9 +136,16 @@ async def test_worker_writes_midi_and_marks_complete(session, settings) -> None:
     assert midi_path.exists()
     assert midi_path.stat().st_size == job.n_bytes
 
-    # File parses as a valid MIDI file with the expected notes.
+    # File parses as a valid MIDI file with the expected notes spread
+    # across the per-channel tracks (F0 + 2nd harmonic in this fixture).
     parsed = mido.MidiFile(file=io.BytesIO(midi_path.read_bytes()))
-    note_ons = [m for m in parsed.tracks[1] if m.type == "note_on" and m.velocity > 0]
+    assert parsed.type == 1
+    note_ons = [
+        m
+        for track in parsed.tracks[1:]
+        for m in track
+        if m.type == "note_on" and m.velocity > 0
+    ]
     assert {m.note for m in note_ons} == {60, 72}
 
 

@@ -4,11 +4,17 @@ Pure functions and small dataclasses. Consumes the output of
 ``pick_peaks_per_frame`` from ``piano_roll_cqt`` and emits Track objects
 that the worker quantizes into MIDI note records.
 
-See ``docs/specs/2026-05-20-piano-roll-midi-notes-design.md`` §6.4–§6.6.
+The harmonic prior labels tracks with their integer-multiple relationship
+to the lowest-bin track in each overlap cluster. See
+``docs/specs/2026-05-20-event-encoder-midi-channelized-design.md`` §5 for
+the per-frame ratio algorithm. The original v1 algorithm is documented in
+``docs/specs/2026-05-20-piano-roll-midi-notes-design.md`` §6.4–§6.6.
 """
 
 from __future__ import annotations
 
+import math
+import statistics
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -47,8 +53,9 @@ class HarmonicParams:
     """Harmonic-prior labeling pass (does not filter tracks)."""
 
     enabled: bool = True
-    max_harmonic: int = 8
-    cents_tolerance: float = 50.0
+    max_harmonic: int = 16
+    cents_tolerance: float = 75.0
+    min_overlap_frames: int = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,13 +68,21 @@ class MIDIQuantizeParams:
 
 @dataclass(slots=True)
 class Track:
-    """One spectral peak followed across frames."""
+    """One spectral peak followed across frames.
+
+    ``bins``, ``log_magnitudes``, and ``frames`` are kept in lock-step:
+    one entry per frame in which the track was extended. The ``frames``
+    list records the absolute frame indices of those extensions so the
+    per-frame harmonic labeler can align two tracks even when one of
+    them has missed frames in the middle of its lifetime.
+    """
 
     track_id: int
     start_frame: int
     end_frame: int
     bins: list[float] = field(default_factory=list)
     log_magnitudes: list[float] = field(default_factory=list)
+    frames: list[int] = field(default_factory=list)
     partial_index: int = -1
 
     @property
@@ -148,6 +163,7 @@ def build_tracks(
                 entry = open_tracks[best_track_index]
                 entry.track.bins.append(float(bin_idx))
                 entry.track.log_magnitudes.append(float(magnitude))
+                entry.track.frames.append(t)
                 entry.track.end_frame = t
                 entry.last_bin = bin_idx
                 entry.misses = 0
@@ -178,6 +194,7 @@ def build_tracks(
                 end_frame=t,
                 bins=[float(bin_idx)],
                 log_magnitudes=[float(magnitude)],
+                frames=[t],
             )
             next_track_id += 1
             open_tracks.append(_Open(track=new_track, last_bin=bin_idx, misses=0))
@@ -209,14 +226,24 @@ def label_harmonics(
     cqt_params: CQTParams,
     params: HarmonicParams = HarmonicParams(),
 ) -> list[Track]:
-    """Set ``track.partial_index`` per the harmonic-prior rules.
+    """Set ``track.partial_index`` using per-frame harmonic ratios.
 
-    The lowest-bin track in each overlapping cluster is treated as the F0
-    candidate. Other tracks that overlap in time AND whose median
-    frequency is within ``cents_tolerance`` cents of an integer multiple
-    (``2×``…``max_harmonic×``) of the F0 candidate's median frequency
-    receive ``partial_index = harmonic_number - 1``. Tracks not matched
-    keep ``partial_index = -1``. The harmonic prior never drops a track.
+    Iterates ``tracks`` by ``median_bin`` ascending. Each unprocessed
+    track becomes the F0 anchor of its cluster
+    (``partial_index = 0``). For every other unprocessed track that
+    overlaps the anchor for at least ``params.min_overlap_frames``
+    frames, per-frame frequency ratios are computed at every shared
+    frame. The track is labeled as the Nth harmonic when:
+
+    - The median of the per-frame ``round(ratio)`` values
+      (``median_harmonic``) lies in ``[2, params.max_harmonic]``, AND
+    - The median absolute cents deviation against ``median_harmonic``
+      across overlapping frames is ≤ ``params.cents_tolerance``.
+
+    Tracks that fail the check are **left unprocessed** so they remain
+    eligible to anchor their own clusters on later iterations. Tracks
+    never matched as either anchor or harmonic keep
+    ``partial_index = -1``. The harmonic prior never drops a track.
 
     When ``params.enabled`` is False this is a no-op (all tracks keep
     ``partial_index = -1``). Returns the same list for fluent chaining.
@@ -224,37 +251,37 @@ def label_harmonics(
     if not params.enabled or not tracks:
         return tracks
 
-    sorted_tracks = sorted(tracks, key=lambda t: (t.start_frame, t.median_bin))
-    used: set[int] = set()
-    for i, candidate in enumerate(sorted_tracks):
-        if id(candidate) in used:
+    # Sort lowest-bin first so F0 anchors are selected by frequency rank
+    # rather than start-time. Break ties by track_id for determinism.
+    sorted_tracks = sorted(tracks, key=lambda t: (t.median_bin, t.track_id))
+    processed: set[int] = set()
+
+    for candidate in sorted_tracks:
+        if candidate.track_id in processed:
             continue
-        f0_hz = bin_frequency_hz(candidate.median_bin, cqt_params)
-        if f0_hz <= 0.0:
+        if bin_frequency_hz(candidate.median_bin, cqt_params) <= 0.0:
             continue
         candidate.partial_index = 0
-        used.add(id(candidate))
-        # Sweep all later tracks that share time with this F0. Tracks in
-        # the cluster get a harmonic label when their median frequency
-        # falls within tolerance of an integer multiple; otherwise they
-        # keep partial_index = -1. Either way they are considered
-        # "processed" and won't be promoted to F0 on a later iteration.
-        for other in sorted_tracks[i + 1 :]:
-            if id(other) in used:
+        processed.add(candidate.track_id)
+
+        for other in sorted_tracks:
+            if other.track_id in processed:
                 continue
-            if not _overlaps(candidate, other):
+            ratios = _per_frame_ratios(candidate, other, cqt_params)
+            if len(ratios) < params.min_overlap_frames:
                 continue
-            used.add(id(other))
-            other_hz = bin_frequency_hz(other.median_bin, cqt_params)
-            if other_hz <= 0.0:
+            per_frame_harmonics = [round(r) for r in ratios]
+            median_harmonic = statistics.median_low(per_frame_harmonics)
+            if not (2 <= median_harmonic <= params.max_harmonic):
                 continue
-            ratio = other_hz / f0_hz
-            harmonic = int(round(ratio))
-            if harmonic < 2 or harmonic > params.max_harmonic:
+            cents_per_frame = [
+                abs(1200.0 * math.log2(r / median_harmonic)) for r in ratios
+            ]
+            if statistics.median(cents_per_frame) > params.cents_tolerance:
                 continue
-            cents = 1200.0 * abs(np.log2(other_hz / (harmonic * f0_hz)))
-            if cents <= params.cents_tolerance:
-                other.partial_index = harmonic - 1
+            other.partial_index = median_harmonic - 1
+            processed.add(other.track_id)
+
     return tracks
 
 
@@ -289,5 +316,38 @@ def quantize_to_midi(
     )
 
 
-def _overlaps(a: Track, b: Track) -> bool:
-    return not (a.end_frame < b.start_frame or b.end_frame < a.start_frame)
+def _per_frame_ratios(
+    anchor: Track, other: Track, cqt_params: CQTParams
+) -> list[float]:
+    """Return ``freq(other) / freq(anchor)`` at every shared frame index.
+
+    Only frames present in both tracks' ``frames`` lists contribute. A
+    legacy/test Track with empty ``frames`` is synthesized as
+    contiguous from ``start_frame`` so existing fixtures keep working.
+    """
+    anchor_by_frame = _frame_to_bin(anchor)
+    other_by_frame = _frame_to_bin(other)
+    shared = anchor_by_frame.keys() & other_by_frame.keys()
+    ratios: list[float] = []
+    for frame in shared:
+        anchor_hz = bin_frequency_hz(anchor_by_frame[frame], cqt_params)
+        if anchor_hz <= 0.0:
+            continue
+        other_hz = bin_frequency_hz(other_by_frame[frame], cqt_params)
+        ratios.append(other_hz / anchor_hz)
+    return ratios
+
+
+def _frame_to_bin(track: Track) -> dict[int, float]:
+    """Map absolute frame index → bin for a track.
+
+    When ``track.frames`` is empty (typical of hand-built test fixtures
+    that pre-date the per-frame labeler), assume the track was extended
+    contiguously starting at ``start_frame``. When ``frames`` is
+    populated by ``build_tracks`` it is used verbatim.
+    """
+    if track.frames:
+        return dict(zip(track.frames, track.bins))
+    if not track.bins:
+        return {}
+    return {track.start_frame + i: bin_idx for i, bin_idx in enumerate(track.bins)}

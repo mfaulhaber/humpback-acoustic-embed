@@ -90,7 +90,7 @@ async def test_enqueue_complete_without_force_returns_existing(session) -> None:
         session, event_encoder_job_id=encoder_id
     )
     first.status = JobStatus.complete.value
-    first.midi_path = "exports/event_encoders/x/notes_v1.mid"
+    first.midi_path = "exports/event_encoders/x/notes_v2.mid"
     first.finished_at = datetime.now(timezone.utc)
     await session.commit()
 
@@ -100,7 +100,7 @@ async def test_enqueue_complete_without_force_returns_existing(session) -> None:
     assert created is False
     assert second.id == first.id
     assert second.status == JobStatus.complete.value
-    assert second.midi_path == "exports/event_encoders/x/notes_v1.mid"
+    assert second.midi_path == "exports/event_encoders/x/notes_v2.mid"
 
 
 @pytest.mark.asyncio
@@ -111,7 +111,7 @@ async def test_enqueue_complete_with_force_resets(session) -> None:
         session, event_encoder_job_id=encoder_id
     )
     row.status = JobStatus.complete.value
-    row.midi_path = "exports/event_encoders/x/notes_v1.mid"
+    row.midi_path = "exports/event_encoders/x/notes_v2.mid"
     row.finished_at = datetime.now(timezone.utc)
     row.n_notes = 42
     row.n_bytes = 1024
@@ -218,7 +218,7 @@ async def test_enqueue_resolves_version_when_none(session) -> None:
     await _make_complete_notes_job(
         session,
         event_encoder_job_id=encoder_id,
-        extractor_version="v1",
+        extractor_version="v2",
         finished_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
     )
 
@@ -249,7 +249,7 @@ async def test_enqueue_version_not_complete_raises(session) -> None:
     encoder_id = await _make_encoder_job(session)
     notes = PianoRollNotesJob(
         event_encoder_job_id=encoder_id,
-        extractor_version="v1",
+        extractor_version="v2",
         status=JobStatus.queued.value,
     )
     session.add(notes)
@@ -257,7 +257,7 @@ async def test_enqueue_version_not_complete_raises(session) -> None:
 
     with pytest.raises(ValueError):
         await enqueue_piano_roll_midi_export(
-            session, event_encoder_job_id=encoder_id, extractor_version="v1"
+            session, event_encoder_job_id=encoder_id, extractor_version="v2"
         )
 
 
@@ -320,17 +320,17 @@ async def test_latest_for_encoder_job_returns_none_when_absent(session) -> None:
 async def test_complete_for_encoder_job_version(session) -> None:
     encoder_id = await _make_encoder_job(session)
     await _make_complete_notes_job(
-        session, event_encoder_job_id=encoder_id, extractor_version="v1"
+        session, event_encoder_job_id=encoder_id, extractor_version="v2"
     )
     row, _ = await enqueue_piano_roll_midi_export(
-        session, event_encoder_job_id=encoder_id, extractor_version="v1"
+        session, event_encoder_job_id=encoder_id, extractor_version="v2"
     )
     row.status = JobStatus.complete.value
     row.finished_at = datetime.now(timezone.utc)
     await session.commit()
 
     pinned = await complete_for_encoder_job_version(
-        session, event_encoder_job_id=encoder_id, extractor_version="v1"
+        session, event_encoder_job_id=encoder_id, extractor_version="v2"
     )
     assert pinned is not None
     assert pinned.id == row.id

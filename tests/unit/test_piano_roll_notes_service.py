@@ -146,7 +146,7 @@ async def test_latest_for_encoder_job_prefers_complete(session) -> None:
     older, _ = await enqueue_piano_roll_notes_job(
         session,
         event_encoder_job_id=encoder_id,
-        extractor_version="v1",
+        extractor_version="v2",
     )
     older.status = JobStatus.complete.value
     older.finished_at = datetime(2026, 5, 1, tzinfo=timezone.utc)
@@ -187,7 +187,7 @@ async def test_latest_for_encoder_job_returns_none_when_absent(session) -> None:
 async def test_complete_for_encoder_job_version_pinned_to_version(session) -> None:
     encoder_id = await _make_encoder_job(session)
     v1, _ = await enqueue_piano_roll_notes_job(
-        session, event_encoder_job_id=encoder_id, extractor_version="v1"
+        session, event_encoder_job_id=encoder_id, extractor_version="v2"
     )
     v1.status = JobStatus.complete.value
     v1.finished_at = datetime(2026, 5, 1, tzinfo=timezone.utc)
@@ -205,7 +205,7 @@ async def test_complete_for_encoder_job_version_pinned_to_version(session) -> No
     assert pinned.id == v2.id
 
     pinned_v1 = await complete_for_encoder_job_version(
-        session, event_encoder_job_id=encoder_id, extractor_version="v1"
+        session, event_encoder_job_id=encoder_id, extractor_version="v2"
     )
     assert pinned_v1 is not None
     assert pinned_v1.id == v1.id
@@ -220,11 +220,11 @@ async def test_complete_for_encoder_job_version_pinned_to_version(session) -> No
 async def test_complete_for_encoder_job_version_ignores_incomplete(session) -> None:
     encoder_id = await _make_encoder_job(session)
     queued, _ = await enqueue_piano_roll_notes_job(
-        session, event_encoder_job_id=encoder_id, extractor_version="v1"
+        session, event_encoder_job_id=encoder_id, extractor_version="v2"
     )
     # row is queued, not complete
     pinned = await complete_for_encoder_job_version(
-        session, event_encoder_job_id=encoder_id, extractor_version="v1"
+        session, event_encoder_job_id=encoder_id, extractor_version="v2"
     )
     assert pinned is None
     assert queued.status == JobStatus.queued.value
@@ -310,12 +310,12 @@ def test_schema_round_trip_from_orm() -> None:
     row = PianoRollNotesJob(
         id="abc",
         event_encoder_job_id="eej-1",
-        extractor_version="v1",
+        extractor_version="v2",
         status=JobStatus.complete.value,
         started_at=datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc),
         finished_at=datetime(2026, 5, 20, 12, 1, tzinfo=timezone.utc),
         error_message=None,
-        notes_path="/storage/event_encoders/eej-1/event_notes_v1.parquet",
+        notes_path="/storage/event_encoders/eej-1/event_notes_v2.parquet",
         n_events=42,
         n_notes=137,
         compute_seconds=1.23,

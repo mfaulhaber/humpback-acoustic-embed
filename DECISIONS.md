@@ -641,3 +641,108 @@ Alternatives considered:
   `v2`) and an MPE-aware synthesizer; both can be implemented inside this
   module without library or API redesign.
 
+
+
+## ADR-067: Per-frame harmonic labeling and channelized MIDI export
+
+**Date**: 2026-05-20
+**Status**: Accepted
+**Spec**: [docs/specs/2026-05-20-event-encoder-midi-channelized-design.md](docs/specs/2026-05-20-event-encoder-midi-channelized-design.md)
+
+**Context**:
+Inspecting a representative Piano Roll Notes export
+(`event_encoder_job_id = b759d8bf-0ecf-469a-b169-333b36c60906`,
+80,561 notes across 1,672 events) revealed that **82.8% of notes carried
+`partial_index = -1`**. A deeper analysis of those `-1` tracks showed three
+upstream causes inside `label_harmonics()` plus one fundamental limitation:
+the `max_harmonic = 8` cap excluded 55% of overlapping content (real 9th
+through Nth harmonics of low-pitch F0s); the F0 anchor sort key
+`(start_frame, median_bin)` let higher-frequency earlier-starting tracks
+win over the actual lowest-bin F0; the consume-on-overlap step was
+unconditional, so any track that overlapped an F0 candidate but failed
+the harmonic check was permanently locked out from anchoring its own
+cluster; and the median-bin ratio metric failed on sweeping pitches that
+maintain a clean per-frame harmonic relationship even when their medians
+do not align.
+
+Independently, every note in the v1 export landed on a single MIDI
+channel. Users wanted to audition the harmonic stack separately from the
+fundamental in a DAW, which a single channel does not support.
+
+**Decision**:
+Bundle the upstream labeler rewrite and the downstream channelization
+into one shipped change, and explicitly skip backward compatibility —
+existing v1 artifacts will be deleted manually via the UI:
+
+1. **Labeler rewrite** in `src/humpback/processing/piano_roll_tracker.py`.
+   `label_harmonics()` now sorts F0 anchors by `median_bin` ascending
+   (with `track_id` as a deterministic tiebreaker), uses per-frame
+   ratios at every shared frame, summarizes them with
+   `statistics.median_low` over the nearest-integer harmonic and the
+   median absolute cents deviation against that integer multiple, and
+   leaves tracks that fail the check unprocessed so they remain eligible
+   to anchor their own clusters on later iterations. New
+   `HarmonicParams` defaults: `max_harmonic = 16`, `cents_tolerance =
+   75.0`, new `min_overlap_frames = 3`. `Track` gains a `frames:
+   list[int]` field populated by `build_tracks()`; legacy fixtures with
+   empty `frames` lists synthesize them contiguously from `start_frame`.
+
+2. **Channelized MIDI synthesis** in
+   `src/humpback/processing/midi_synthesis.py`. The single-channel
+   `MIDI_CHANNEL = 0` constant is removed; a new `CHANNEL_LAYOUT` tuple
+   pins seven `ChannelSpec(channel, program, name)` entries for F0,
+   2nd–5th harmonics (one channel each), a combined
+   `CHANNEL_HARMONIC_HIGH` for partial_index ≥ 5, and `CHANNEL_UNMATCHED`
+   for `partial_index = -1`. The GM drum channel (channel 9, 1-indexed
+   10) is intentionally absent so playback engines do not re-map pitched
+   humpback content to drum sounds. The SMF Type 1 file now contains one
+   tempo track plus one channel track per layout entry; each channel
+   track starts at tick 0 with `track_name` + `program_change` meta
+   events so DAWs render named, distinctly-voiced lanes out of the box.
+   Empty parquet still produces a tempo-only SMF.
+
+3. **Extractor version bump** `v1 → v2` in
+   `src/humpback/models/piano_roll_notes.py`. The parquet schema is
+   unchanged — only the distribution of `partial_index` values changes —
+   but the version increment marks the labeling-semantics shift in the
+   filename. No Alembic migration, no batch rebuild: v1 artifacts on
+   disk and the corresponding job rows stay where they are until the
+   user deletes them via the UI.
+
+Alternatives considered:
+- *Bug-fix-only labeler change.* Rejected because median-bin ratios
+  fundamentally cannot represent sweeping pitches, which is the dominant
+  motion in humpback song.
+- *Full multi-cluster labeling (concurrent F0s).* Deferred because the
+  single-cluster model already shrinks `-1` from 83% to a projected
+  17–25%, and multi-cluster handling requires a cluster-graph algorithm
+  and new validation methodology.
+- *MPE / pitch-bend mode.* Still deferred — requires a future parquet
+  `v3` with sub-semitone pitch contours.
+- *User-configurable channel layout via `params_json`.* YAGNI. The slim
+  layout is hard-coded; users who want a different layout can convert
+  the file in their DAW.
+- *Keep `-1` for genuinely non-harmonic tracks.* Implemented as
+  "anchor own cluster" instead — under v2, every track with valid
+  frequency data eventually anchors as F0 of some cluster, so `-1`
+  becomes vanishingly rare in practice. This is a stronger outcome than
+  the original spec predicted and the unmatched channel will mostly
+  hold tracks rejected for sub-overlap or pre-iteration reasons.
+
+**Consequences**:
+- The per-frame algorithm needs `Track.frames` populated by
+  `build_tracks()`. Test fixtures that hand-construct a `Track` with
+  fewer `bins` entries than `end_frame - start_frame + 1` are
+  reinterpreted as "track active for `len(bins)` contiguous frames
+  starting at `start_frame`" so legacy fixtures keep working.
+- Existing v1 Piano Roll Notes and MIDI Export artifacts are not
+  automatically rebuilt. Users who want the new labels and channelized
+  exports must delete the v1 rows and re-enqueue from the UI.
+- The Playwright fixtures and integration tests now expect `v2` filenames
+  and the multi-track MIDI structure. One pinning test in
+  `test_get_notes_pins_to_explicit_extractor_version` still passes "v1"
+  explicitly to demonstrate that older versions remain reachable when
+  pinned.
+- `partial_index ≥ 5` collapses onto a single channel in the export but
+  remains distinguishable in the parquet, so future export-side reshuffles
+  do not require a notes re-run.

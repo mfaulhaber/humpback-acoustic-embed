@@ -72,7 +72,11 @@ full. Read the relevant domain section when planning or implementing.
   user-initiated async export worker (`piano_roll_midi_exports` table). The
   artifact lives under `<storage_root>/exports/event_encoders/{job_id}/`.
   An "Export MIDI" button in the piano roll toolbar drives the lifecycle and
-  becomes "Download MIDI" once the file is on disk.
+  becomes "Download MIDI" once the file is on disk. As of v2 (ADR-067),
+  the labeler uses per-frame harmonic ratio matching and the export
+  emits a slim seven-channel SMF (F0, 2nd–5th harmonics, higher
+  harmonics, unmatched) with one SMF track and a distinct GM
+  `program_change` per channel.
 
 ## Frontend Shell
 

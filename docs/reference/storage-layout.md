@@ -59,7 +59,7 @@
   {job_id}/report.json              (summary, token distributions, exemplar event ids, descriptor_feature_names, descriptor summaries, sequence preview)
   {job_id}/preprocess.joblib        (PCA model when used plus descriptor robust-scaling state)
   {job_id}/kmeans_k{k}.joblib       (one k-means model per valid k)
-  {job_id}/event_notes_{extractor_version}.parquet  (Piano Roll Notes sidecar; first version is v1)
+  {job_id}/event_notes_{extractor_version}.parquet  (Piano Roll Notes sidecar; current default is v2 — per-frame harmonic labeling from ADR-067; legacy v1 may coexist until manually deleted)
 /exports/
   event_encoders/{job_id}/notes_{extractor_version}.mid  (Piano Roll Notes MIDI export artifact produced by the user-initiated async export worker)
 /timeline_cache/
