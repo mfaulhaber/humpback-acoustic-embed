@@ -249,7 +249,10 @@ def test_louder_event_has_higher_peak_magnitude() -> None:
     loud = extract_notes_v3(audio_loud, SAMPLE_RATE, params=_default_params())
     quiet_f0 = next(n for n in quiet.notes if n.partial_index == 0)
     loud_f0 = next(n for n in loud.notes if n.partial_index == 0)
-    assert loud_f0.peak_magnitude > quiet_f0.peak_magnitude * 5.0
+    # peak_magnitude is log(strength) since ADR-069 follow-up unified F0
+    # and harmonic peaks on the same natural-log scale. A 10× amplitude
+    # ratio in linear strength becomes ~log(10) ≈ 2.3 in log space.
+    assert loud_f0.peak_magnitude > quiet_f0.peak_magnitude + 1.5
 
 
 def test_deterministic_outputs() -> None:

@@ -302,6 +302,9 @@ class _MPEVoice:
     on_tick: int
     off_tick: int
     channel: int
+    duration_s: (
+        float  # note's seconds duration, used to map contour time_offset_s to ticks
+    )
     contour: list[dict]  # frames sorted by frame_index
 
 
@@ -387,6 +390,7 @@ def _allocate_channels(
             on_tick=on_tick,
             off_tick=off_tick,
             channel=chosen,
+            duration_s=float(row["duration_s"]),
             contour=contour,
         )
         voices.append(voice)
@@ -493,6 +497,11 @@ def _build_mpe_member_track(
             off_tick=effective_off,
             quantize_cents=MPE_DEFAULT_QUANTIZE_CENTS,
         )
+        # Event-type sort priorities at the same tick on the same channel:
+        # note_off (0) → pitchwheel (1) → note_on (2). This ensures that
+        # on a voice steal, the stolen note's note_off precedes the new
+        # voice's bend reset and note_on — preventing a brief two-on
+        # stack when the steal lands on a same-pitch voice.
         for bend_tick, bend_value in bend_events:
             events.append(
                 (
@@ -523,7 +532,7 @@ def _build_mpe_member_track(
         events.append(
             (
                 effective_off,
-                (3, index, 0),
+                (0, index, 0),
                 mido.Message(
                     "note_off",
                     note=voice.midi_pitch,
@@ -568,9 +577,15 @@ def _bend_events_for_voice(
         return [(on_tick, center), (off_tick, center)]
 
     duration_ticks = max(1, off_tick - on_tick)
+    duration_s = max(float(voice.duration_s), 1e-9)
     frames = sorted(voice.contour, key=lambda f: int(f["frame_index"]))
     frame_count = len(frames)
 
+    # Map each frame's time_offset_s (seconds from the note's start) to a
+    # tick via its position in the note's duration. The ridge tracker can
+    # drop frames where no candidate clears the prominence floor, so
+    # frame_index is sequential but time_offset_s is non-uniform — using
+    # the index ratio would skew the bend timing.
     events: list[tuple[int, int]] = []
     last_cents = float("nan")
     for i, frame in enumerate(frames):
@@ -580,7 +595,9 @@ def _bend_events_for_voice(
         elif i == frame_count - 1:
             tick = off_tick
         else:
-            tick = on_tick + int(round(duration_ticks * (i / max(1, frame_count - 1))))
+            t_off = float(frame["time_offset_s"])
+            ratio = max(0.0, min(1.0, t_off / duration_s))
+            tick = on_tick + int(round(ratio * duration_ticks))
         if i == 0 or i == frame_count - 1 or abs(cents - last_cents) >= quantize_cents:
             events.append((tick, _cents_to_bend(cents)))
             last_cents = cents

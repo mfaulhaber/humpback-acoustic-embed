@@ -45,6 +45,16 @@ _MIDI_A4 = 69.0
 _HZ_A4 = 440.0
 _CENTS_PER_OCTAVE = 1200.0
 _NOTE_UID_NAMESPACE = uuid.UUID("4ce4dc63-a07f-4f3e-a0e0-1b6f1bc6f7e8")
+# F0 peak strengths come from the linear-magnitude STFT ridge, harmonic
+# peaks come from the log-magnitude CQT. Velocity calibration mixes both
+# pools, so we log-transform F0 strengths here to put both populations on
+# a coherent natural-log scale. EPS floors silence so log() is finite.
+_F0_STRENGTH_EPS = 1e-8
+_F0_LOG_FLOOR = math.log(_F0_STRENGTH_EPS)
+
+
+def _log_strength(strength: float) -> float:
+    return math.log(max(float(strength), _F0_STRENGTH_EPS))
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,6 +516,10 @@ def _segment_f0_runs(
                 segments.append(current)
             current = []
             gap_count = 0
+            # last_octave and last_frame_index intentionally not reset
+            # here — the bottom-of-loop append (line below) refreshes
+            # both with the current frame's values. Resetting them now
+            # would re-trigger spurious closures on the next iteration.
         if bool(below_floor[idx]):
             gap_count += 1
             if gap_count >= params.min_break_frames:
@@ -546,7 +560,9 @@ def _build_f0_note(
     end_offset_s = float(segment[-1].time_offset_s) - pad_seconds
     duration_s = max(end_offset_s - start_offset_s, 0.0)
     start_utc = float(params.event_start_utc) + start_offset_s
-    peak_magnitude = float(max((f.strength for f in segment), default=0.0))
+    peak_magnitude = float(
+        max((_log_strength(f.strength) for f in segment), default=_F0_LOG_FLOOR)
+    )
     note_uid = _build_note_uid(
         job_id=params.job_id,
         event_id=params.event_id,
@@ -562,7 +578,7 @@ def _build_f0_note(
             - pad_seconds
             - start_offset_s,
             cents_from_pitch=float(cents[i]),
-            harmonic_strength=float(segment[i].strength),
+            harmonic_strength=_log_strength(segment[i].strength),
             subharmonic_octave=int(segment[i].subharmonic_octave),
         )
         for i in range(len(segment))
@@ -642,10 +658,9 @@ def _build_harmonic_notes(
                 continue
             if magnitude - floor < 0.0:
                 continue
-            bin_log_freq = float(cqt_bin_log_freqs[bin_idx])
-            cents_dev = abs(_CENTS_PER_OCTAVE * (bin_log_freq - target_log_freq))
-            if cents_dev > cents_tolerance:
-                continue
+            # bin_idx came from window_mask, which is itself bounded by
+            # ±cents_window_log of target_log_freq — the cents tolerance
+            # is already enforced by construction.
             present.append((frame, magnitude))
 
         if not present:

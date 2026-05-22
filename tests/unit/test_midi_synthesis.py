@@ -563,18 +563,24 @@ def _make_v3_table(rows: list[dict]) -> pa.Table:
 
 
 def _make_contour_table(rows: list[dict]) -> pa.Table:
-    defaults = {
-        "time_offset_s": 0.0,
+    # Default time_offset_s scales with frame_index so the MPE bend
+    # quantizer doesn't collapse every frame onto on_tick. Tests that
+    # care about specific ticks should supply time_offset_s explicitly.
+    defaults_for_field = {
         "harmonic_strength": 0.0,
         "subharmonic_octave": 0,
     }
-    expanded = [
-        {
-            field.name: row.get(field.name, defaults.get(field.name))
-            for field in NOTE_CONTOURS_V3_SCHEMA
-        }
-        for row in rows
-    ]
+    expanded = []
+    for row in rows:
+        expanded_row: dict[str, object] = {}
+        for field in NOTE_CONTOURS_V3_SCHEMA:
+            if field.name in row:
+                expanded_row[field.name] = row[field.name]
+            elif field.name == "time_offset_s":
+                expanded_row[field.name] = float(row["frame_index"]) * 0.01
+            else:
+                expanded_row[field.name] = defaults_for_field.get(field.name)
+        expanded.append(expanded_row)
     return pa.Table.from_pylist(expanded, schema=NOTE_CONTOURS_V3_SCHEMA)
 
 
@@ -729,6 +735,75 @@ def test_mpe_voice_steal_emits_note_off_at_steal_tick() -> None:
     assert total_note_ons == 17
     # Every note_on has a matching note_off — no dangling notes from the steal.
     assert total_note_offs == 17
+
+
+def test_mpe_bend_ticks_track_contour_time_offset() -> None:
+    """Bend events land at ticks proportional to ``time_offset_s``, not
+    to a uniform spacing across frame_index. When the ridge tracker drops
+    frames mid-note, the remaining frame_index series is contiguous but
+    time_offset_s is non-uniform; bends must follow the real timeline.
+    """
+    notes = _make_v3_table(
+        [
+            {
+                "event_id": "ev-1",
+                "partial_index": 0,
+                "midi_pitch": 60,
+                "start_utc": 0.0,
+                "duration_s": 1.0,
+                "velocity": 80,
+                "note_uid": "uid-f0",
+                "track_id": 0,
+                "f0_track_id": 0,
+            },
+        ]
+    )
+    # Four contour frames, but the middle two are clumped at 10 ms / 90 ms
+    # — the worst case where uniform-by-index mapping would land both
+    # middle bends at the half-second mark.
+    contour_rows = [
+        {
+            "note_uid": "uid-f0",
+            "frame_index": 0,
+            "time_offset_s": 0.0,
+            "cents_from_pitch": 0.0,
+        },
+        {
+            "note_uid": "uid-f0",
+            "frame_index": 1,
+            "time_offset_s": 0.10,
+            "cents_from_pitch": 200.0,
+        },
+        {
+            "note_uid": "uid-f0",
+            "frame_index": 2,
+            "time_offset_s": 0.90,
+            "cents_from_pitch": -200.0,
+        },
+        {
+            "note_uid": "uid-f0",
+            "frame_index": 3,
+            "time_offset_s": 1.0,
+            "cents_from_pitch": 0.0,
+        },
+    ]
+    parsed = _parse_midi(
+        notes_table_to_midi_bytes(
+            notes, contour_table=_make_contour_table(contour_rows)
+        )
+    )
+    track = _track_by_name(parsed, "Voice 1")
+    # Convert delta-times in the SMF to absolute ticks.
+    abs_tick = 0
+    bend_ticks: list[int] = []
+    for msg in track:
+        abs_tick += msg.time
+        if msg.type == "pitchwheel":
+            bend_ticks.append(abs_tick)
+    # Note spans 960 ticks (1 s at 120 BPM / 480 PPQ → 2 beats × 480).
+    # The four contour frames at 0/0.10/0.90/1.0 s should land at
+    # 0/96/864/960 ticks.
+    assert bend_ticks == [0, 96, 864, 960]
 
 
 def test_mpe_harmonic_bend_stream_matches_parent_in_cents() -> None:

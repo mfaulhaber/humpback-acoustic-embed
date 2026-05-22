@@ -870,7 +870,12 @@ than a patch.
    A sweep from C5 to E5 emits one note, not three. Harmonic siblings are
    derived structurally at `n · f₀(t)` for `n ∈ {2..16}` with ±75¢ tolerance;
    harmonic bend streams in cents equal their parent F0's bend stream in
-   cents (cents conservation).
+   cents (cents conservation). Subharmonic refinement gates each candidate
+   on two tests: the per-frame `k_sub · MAD` noise-floor check from spec
+   §5.2 *and* a `min_relative_log_magnitude = -2.5` ceiling that rejects
+   CQT leakage at `f₀/2` for pure tones — without the second gate, clean
+   sinusoids could be demoted by spectral skirts that pass the bare
+   noise-floor test.
 3. **MPE Lower Zone replaces slim 7-channel.** Per-voice channel rotation
    (deterministic on `(start_utc, note_uid)` with longest-idle pick and FIFO
    voice steal across the 15 member channels) plus per-member ±24-semitone
@@ -946,10 +951,15 @@ Alternatives considered:
 - `partial_index = -1` is no longer reachable; the v3 architecture has no
   "unmatched tracks" concept — every ridge segment is either an F0 anchor or
   a derived harmonic. Older parquets keeping `-1` rows remain readable.
-- New API endpoint `GET /sequence-models/event-encoders/{id}/notes/contours`
-  is bounded to 2000 `note_uids` per request (413 above cap). 422 when the
-  resolved job has no v3 contour sidecar. Unknown `note_uid` in a valid
-  request is silently dropped (partial misses aren't errors).
+- New API endpoint `POST /sequence-models/event-encoders/{id}/notes/contours`
+  takes `{note_uids: [str], extractor_version?: str}` in the request body
+  and is bounded to 2000 `note_uids` per request (413 above cap). 422 when
+  the resolved job has no v3 contour sidecar. Unknown `note_uid` in a
+  valid request is silently dropped (partial misses aren't errors). The
+  endpoint uses POST (not GET) because a viewport-scale uid list at
+  ~48 bytes per UUID overruns the Vite dev server's ~8 KB header limit
+  when sent as repeated query parameters — caught in production after
+  Phase 4 shipped GET; commit ee9467c migrated both sides to POST.
 - Encoder runs not produced under the new sidecar-writing code fall through
   to in-process ridge recomputation in the notes worker. Output is
   identical; cost is ~50 s extra on a 1672-event job.

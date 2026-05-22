@@ -10,6 +10,7 @@ import { ArrowLeft, ChevronDown, ChevronUp, Pause, Play } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 
 import {
+  ApiError,
   type EventEncoderTimelineEvent,
   type EventEncoderTimelineResponse,
   type PianoRollNote,
@@ -822,10 +823,59 @@ function EventEncoderPianoRollViewer({
       const transform = makeTransform();
       const rowHeight =
         (transform.plotBottom - transform.plotTop) / MIDI_PITCH_COUNT;
+      // Polyline ribbons can swing beyond the row's vertical extent, so
+      // ribbon notes use distance-to-polyline; flat-bar notes (no
+      // contour fetched) keep the row-height bounding box. ADR-069 §9.3
+      // specifies ≤ 6 px hit-test radius in canvas space.
+      const hitRadius = 6;
+      const hitRadiusSq = hitRadius * hitRadius;
       for (let i = visibleNotes.length - 1; i >= 0; i -= 1) {
         const note = visibleNotes[i];
         const left = transform.timeToX(note.start_utc);
         const right = transform.timeToX(note.start_utc + note.duration_s);
+        if (x < left - hitRadius || x > right + hitRadius) continue;
+        const contour = note.note_uid
+          ? visibleContours.get(note.note_uid)
+          : undefined;
+        if (contour && contour.length >= 2) {
+          let minDistSq = Number.POSITIVE_INFINITY;
+          let prevX = transform.timeToX(note.start_utc + contour[0].time_offset_s);
+          let prevY = midiPitchToY(
+            note.midi_pitch + contour[0].cents_from_pitch / 100,
+            transform.plotTop,
+            transform.plotBottom,
+          );
+          for (let k = 1; k < contour.length; k += 1) {
+            const px = transform.timeToX(note.start_utc + contour[k].time_offset_s);
+            const py = midiPitchToY(
+              note.midi_pitch + contour[k].cents_from_pitch / 100,
+              transform.plotTop,
+              transform.plotBottom,
+            );
+            const dx = px - prevX;
+            const dy = py - prevY;
+            const lenSq = dx * dx + dy * dy;
+            let t = 0;
+            if (lenSq > 0) {
+              t = Math.max(
+                0,
+                Math.min(1, ((x - prevX) * dx + (y - prevY) * dy) / lenSq),
+              );
+            }
+            const cx = prevX + t * dx;
+            const cy = prevY + t * dy;
+            const ex = x - cx;
+            const ey = y - cy;
+            const distSq = ex * ex + ey * ey;
+            if (distSq < minDistSq) minDistSq = distSq;
+            prevX = px;
+            prevY = py;
+          }
+          if (minDistSq <= hitRadiusSq) {
+            return { note, index: i };
+          }
+          continue;
+        }
         const yCenter = midiPitchToY(
           note.midi_pitch,
           transform.plotTop,
@@ -842,7 +892,7 @@ function EventEncoderPianoRollViewer({
       }
       return null;
     },
-    [makeTransform, visibleNotes],
+    [makeTransform, visibleContours, visibleNotes],
   );
 
   useEffect(() => {
@@ -1414,7 +1464,25 @@ function NotesStatusControls({ jobId }: { jobId: string }) {
       >
         <PianoRollNotesStatusPill
           status={status}
-          onRequestV3Upgrade={() => mutation.mutate({ extractor_version: "v3" })}
+          onRequestV3Upgrade={async () => {
+            try {
+              await mutation.mutateAsync({ extractor_version: "v3" });
+            } catch (err) {
+              // The displayed status is the latest *complete* row, so the
+              // v3-available badge can render even when a v3 row is
+              // already queued or running. The backend then returns 409;
+              // surface the in-flight state with a non-blocking toast
+              // instead of letting the global error path raise.
+              if (err instanceof ApiError && err.status === 409) {
+                toast({
+                  title: "Already enqueued",
+                  description: "A v3 notes job is already queued or running for this encoder.",
+                });
+                return;
+              }
+              throw err;
+            }
+          }}
         />
       </button>
       {showGenerate ? (

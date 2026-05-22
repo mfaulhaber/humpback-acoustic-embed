@@ -390,8 +390,11 @@ export function continuousEmbeddingSourceKind(
 const ROOT = "/sequence-models/continuous-embeddings";
 const EVENT_ENCODER_ROOT = "/sequence-models/event-encoders";
 
-class ApiError extends Error {
-  constructor(public status: number, message: string) {
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -784,11 +787,17 @@ export function usePianoRollNotes(
 }
 
 /**
- * Batch-fetches v3 ribbon contours for the requested ``note_uid``s.
+ * Batch-fetches v3 ribbon contours for the requested ``note_uid``s and
+ * populates a per-uid React Query cache entry for each row returned.
  *
- * React Query caches by ``note_uid`` so panning the viewport never
- * re-fetches a contour we already have — uid stability is guaranteed
- * by the backend's deterministic UUID v5 derivation (ADR-069 §6.2).
+ * The batch query itself uses a short content-hash key (length plus the
+ * first and last sorted uid) so the queryKey doesn't carry ~74 KB of
+ * UUIDs at full batch. Per-uid cache entries — keyed
+ * ``["piano-roll-note-contour", jobId, ev, uid]`` — let downstream
+ * consumers read a single note's contour without re-fetching, and let
+ * callers that already filter against this cache skip a network round
+ * trip entirely. uid stability is guaranteed by the backend's
+ * deterministic UUID v5 derivation (ADR-069 §6.2).
  */
 export function usePianoRollNoteContours(
   jobId: string | null,
@@ -796,19 +805,36 @@ export function usePianoRollNoteContours(
   enabled: boolean,
   extractorVersion?: string | null,
 ) {
+  const qc = useQueryClient();
   const sortedUids = [...noteUids].sort();
+  const batchKey = sortedUids.length
+    ? `${sortedUids.length}:${sortedUids[0]}:${sortedUids[sortedUids.length - 1]}`
+    : "empty";
   return useQuery({
     queryKey: [
       "piano-roll-note-contours",
       jobId,
       extractorVersion ?? null,
-      sortedUids.join(","),
+      batchKey,
     ],
-    queryFn: () =>
-      fetchPianoRollNoteContours(jobId as string, {
+    queryFn: async () => {
+      const response = await fetchPianoRollNoteContours(jobId as string, {
         noteUids: sortedUids,
         extractorVersion,
-      }),
+      });
+      for (const [uid, rows] of Object.entries(response.contours)) {
+        qc.setQueryData(
+          [
+            "piano-roll-note-contour",
+            jobId,
+            extractorVersion ?? null,
+            uid,
+          ],
+          rows,
+        );
+      }
+      return response;
+    },
     enabled: enabled && jobId != null && sortedUids.length > 0,
   });
 }

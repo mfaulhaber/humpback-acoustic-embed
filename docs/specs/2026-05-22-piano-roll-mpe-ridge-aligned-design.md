@@ -153,8 +153,18 @@ passes the wider ceiling.
 
 For each frame `t` with ridge frequency `f₀(t)`, check whether energy at
 `f₀(t) / 2` is plausibly present in the CQT log-magnitude (the same CQT
-already computed for harmonic search in §5.4): the bin nearest `f₀(t)/2` must
-exceed the per-frame noise floor by `≥ k_sub · MAD` where `k_sub = 2.0`.
+already computed for harmonic search in §5.4). Two gates must pass:
+
+1. The bin nearest `f₀(t)/2` must exceed the per-frame noise floor by
+   `≥ k_sub · MAD` where `k_sub = 2.0`.
+2. The bin's log magnitude must sit within
+   `min_relative_log_magnitude = -2.5` natural-log units (~22 dB) of the
+   current ridge bin. The constant-Q filter bank rejects an octave away
+   by ~4 log units even for clean sines, so this gate keeps spectral
+   leakage at `f₀/2` (which can otherwise pass the bare noise-floor
+   test for pure tones with no real sub-fundamental energy) from
+   demoting the F0. A real weak fundamental whose CQT magnitude lies
+   within ~15 dB of the ridge still passes.
 
 When evidence is present, divide `f₀(t)` by 2 and re-test. Iterate up to 3
 times so a dominant ridge that's actually H4 of a very weak fundamental can be
@@ -347,7 +357,7 @@ All under `/sequence-models/event-encoders/{job_id}/...`:
 | method | path | change |
 |---|---|---|
 | GET | `.../notes` | Response gains `note_uid`, `f0_track_id`, `contour_frame_count` per note row. Existing fields unchanged. |
-| GET | `.../notes/contours` | **New.** Body / query: `{note_uids: [str]}`. Response: `{contours: {note_uid: [{time_offset_s, cents_from_pitch, harmonic_strength, subharmonic_octave}, ...]}}`. Cap of 2000 note_uids per request (413 above cap). |
+| POST | `.../notes/contours` | **New.** Body: `{note_uids: [str], extractor_version?: str}`. Response: `{contours: {note_uid: [{time_offset_s, cents_from_pitch, harmonic_strength, subharmonic_octave}, ...]}}`. Cap of 2000 note_uids per request (413 above cap). POST (not GET) because the UUID-shaped uid list at viewport scale exceeds typical 8 KB HTTP-header limits when sent as repeated query parameters. |
 | GET | `.../notes-status` | Unchanged. |
 | POST | `.../notes-jobs` | Accepts `extractor_version: "v3"` in addition to legacy values. |
 | GET | `.../midi-export` | Streams MPE SMF when `extractor_version = "v3"`. `Content-Disposition` filename suffix becomes `notes_v3.mid`. |
@@ -470,7 +480,7 @@ delete them via existing UI. The download `Content-Disposition` derives from
 
 Add `usePianoRollNoteContours(jobId, noteUids, enabled)` to
 `frontend/src/api/sequenceModels.ts`. The hook batches `note_uid` requests
-against `GET .../notes/contours` and caches by `note_uid` via React Query so
+against `POST .../notes/contours` and caches by `note_uid` via React Query so
 panning doesn't re-fetch already-loaded contours.
 
 The page computes `visibleNotes` (existing logic) and asks the contours hook

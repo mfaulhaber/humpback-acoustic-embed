@@ -301,6 +301,9 @@ async def test_v3_worker_writes_notes_and_contours(
     # No `partial_index = -1` regression.
     assert all(row["partial_index"] >= 0 for row in notes_pylist)
 
+    # event_token propagates from the encoder's token parquet (k=50, token_id=7).
+    assert {row["event_token"] for row in notes_pylist} == {7}
+
     # params_json carries sidecar paths and contour frame count.
     payload = json.loads(refreshed.params_json)
     assert "contours_path" in payload

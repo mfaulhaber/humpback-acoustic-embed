@@ -25,6 +25,7 @@ from typing import Any, Iterator, Optional
 
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -151,19 +152,21 @@ def _load_contours_for_window(
 
     The MPE synthesizer only needs contour rows for the notes that
     survived window clipping; loading the rest would waste memory on
-    long jobs.
+    long jobs. The filter pushes into PyArrow (``pa.compute.is_in``) so
+    we never materialize a Python-level mask of the full contour table.
     """
     note_uids: list[str] = []
     for value in windowed_notes.column("note_uid").to_pylist():
         if value is None:
             continue
         note_uids.append(str(value))
-    uid_set = set(note_uids)
     table = pq.read_table(contours_path)
-    if not uid_set:
+    if not note_uids:
         return table.slice(0, 0)
-    mask = [str(row) in uid_set for row in table.column("note_uid").to_pylist()]
-    return table.filter(pa.array(mask))
+    mask = pc.is_in(  # type: ignore[attr-defined]
+        table.column("note_uid"), value_set=pa.array(note_uids, type=pa.string())
+    )
+    return table.filter(mask)
 
 
 async def _resolve_region_job(
