@@ -140,6 +140,21 @@ def event_encoder_notes_path(
     )
 
 
+def event_encoder_ridges_path(
+    storage_root: Path, job_id: str, tokenizer_version: str
+) -> Path:
+    """Path to the per-event ridge sidecar parquet for an Event Encoder job.
+
+    Written by the encoder worker (ADR-069 / spec §3.1) so the Piano Roll
+    Notes v3 extractor consumes the same per-frame ridge contour the
+    encoder's descriptor summaries were derived from.
+    """
+    return (
+        event_encoder_dir(storage_root, job_id)
+        / f"event_ridges_{tokenizer_version}.parquet"
+    )
+
+
 def exports_root(storage_root: Path) -> Path:
     """Root directory for export artifacts (e.g. MIDI files)."""
     return storage_root / "exports"

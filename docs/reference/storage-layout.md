@@ -60,6 +60,7 @@
   {job_id}/preprocess.joblib        (PCA model when used plus descriptor robust-scaling state)
   {job_id}/kmeans_k{k}.joblib       (one k-means model per valid k)
   {job_id}/event_notes_{extractor_version}.parquet  (Piano Roll Notes sidecar; current default is v2 — per-frame harmonic labeling from ADR-067; legacy v1 may coexist until manually deleted)
+  {job_id}/event_ridges_{tokenizer_version}.parquet (Per-event STFT ridge contour: one row per frame per event with `event_id`, `frame_index`, `frame_time_offset_s`, `log_frequency`, `strength`, `energy_ratio`. Produced by the encoder worker; consumed by the Piano Roll Notes v3 extractor — ADR-069 spec §3.1 / §6.1)
 /exports/
   event_encoders/{job_id}/notes_{extractor_version}.mid    (Piano Roll Notes MIDI for the last-exported window — produced atomically with audio_{extractor_version}.flac; ADR-068)
   event_encoders/{job_id}/audio_{extractor_version}.flac   (Co-exported 32 kHz mono 16-bit PCM FLAC clip for the same window — not loudness-normalized; ADR-068)

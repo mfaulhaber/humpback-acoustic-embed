@@ -119,6 +119,7 @@ helpers, or the retained Sequence Models UI.
 - `event_encoders/{job_id}/manifest.json`
 - `event_encoders/{job_id}/report.json`
 - `event_encoders/{job_id}/event_notes_{extractor_version}.parquet` (Piano Roll Notes sidecar; current default is `v2` — the per-frame harmonic labeler from ADR-067; legacy `v1` artifacts may coexist until manually deleted)
+- `event_encoders/{job_id}/event_ridges_{tokenizer_version}.parquet` (per-event STFT ridge contours produced by the encoder worker. One row per frame per event with `log_frequency`, `strength`, `energy_ratio`; consumed by the Piano Roll Notes v3 extractor — ADR-069 spec §3.1 / §6.1)
 - `exports/event_encoders/{job_id}/notes_{extractor_version}.mid` (Piano Roll Notes MIDI export artifact for the last-exported window, produced on demand by the export worker)
 - `exports/event_encoders/{job_id}/audio_{extractor_version}.flac` (co-exported 32 kHz mono FLAC clip for the same exported window)
 

@@ -20,8 +20,15 @@ from humpback.schemas.sequence_models import (
 )
 from humpback.sequence_models.event_encoder import DESCRIPTOR_ORDER
 from humpback.services.event_encoder_service import create_event_encoder_job
-from humpback.storage import continuous_embedding_dir, event_encoder_dir
-from humpback.workers.event_encoder_worker import run_event_encoder_job
+from humpback.storage import (
+    continuous_embedding_dir,
+    event_encoder_dir,
+    event_encoder_ridges_path,
+)
+from humpback.workers.event_encoder_worker import (
+    EVENT_RIDGE_SCHEMA,
+    run_event_encoder_job,
+)
 
 
 async def _seed_source(session, settings, *, chunks_region_id: str = "region-1"):
@@ -170,6 +177,59 @@ async def test_event_encoder_worker_writes_artifacts(session, settings):
     ).exists()
 
 
+async def test_event_encoder_worker_writes_ridge_sidecar(session, settings):
+    """The worker persists per-event ridge contours to a sidecar parquet so
+    the Piano Roll Notes v3 extractor (ADR-069) can consume them without
+    recomputing STFT ridges."""
+    seg, continuous = await _seed_source(session, settings)
+    job, _ = await create_event_encoder_job(
+        session,
+        EventEncoderJobCreate(
+            event_segmentation_job_id=seg.id,
+            continuous_embedding_job_id=continuous.id,
+            k_values=[1, 2],
+            preprocessing=EventEncoderPreprocessingConfig(pca_dim=64),
+        ),
+    )
+
+    await run_event_encoder_job(session, job, settings, audio_provider=_audio_provider)
+    await session.refresh(job)
+
+    assert job.status == JobStatus.complete.value
+
+    ridges_path = event_encoder_ridges_path(
+        settings.storage_root, job.id, job.tokenizer_version
+    )
+    assert ridges_path.exists()
+    assert ridges_path.stat().st_size > 0
+
+    # Schema matches the spec (§6.1).
+    table = pq.read_table(ridges_path)
+    assert table.schema == EVENT_RIDGE_SCHEMA
+
+    # Every event_id in the sidecar appears in event_vectors.parquet, and
+    # frames per event are non-empty and sorted by (event_id, frame_index).
+    vector_table = pq.read_table(job.event_vectors_path)
+    vector_event_ids = set(vector_table.column("event_id").to_pylist())
+    ridge_event_ids = set(table.column("event_id").to_pylist())
+    assert ridge_event_ids.issubset(vector_event_ids)
+    assert ridge_event_ids  # at least one event produced ridge frames
+
+    rows = table.to_pylist()
+    sorted_rows = sorted(rows, key=lambda r: (r["event_id"], r["frame_index"]))
+    assert rows == sorted_rows
+
+    # No leftover .tmp files in the job directory.
+    job_dir = event_encoder_dir(settings.storage_root, job.id)
+    assert not list(job_dir.glob("*.tmp"))
+
+    # Manifest exposes the sidecar path and row count.
+    assert job.manifest_path is not None
+    manifest = json.loads(Path(job.manifest_path).read_text())
+    assert manifest["event_ridges_path"] == str(ridges_path)
+    assert manifest["event_ridge_row_count"] == len(rows)
+
+
 async def test_event_encoder_worker_partial_configs_use_v3_fallbacks(
     session, settings, monkeypatch
 ):
@@ -197,10 +257,10 @@ async def test_event_encoder_worker_partial_configs_use_v3_fallbacks(
 
     descriptor_kwargs: list[dict[str, object]] = []
     preprocess_kwargs: list[dict[str, object]] = []
-    original_compute = worker_module.compute_acoustic_descriptors
+    original_compute = worker_module.compute_acoustic_features
     original_preprocess = worker_module.preprocess_event_features
 
-    def capture_compute_acoustic_descriptors(*args, **kwargs):
+    def capture_compute_acoustic_features(*args, **kwargs):
         descriptor_kwargs.append(dict(kwargs))
         return original_compute(*args, **kwargs)
 
@@ -210,8 +270,8 @@ async def test_event_encoder_worker_partial_configs_use_v3_fallbacks(
 
     monkeypatch.setattr(
         worker_module,
-        "compute_acoustic_descriptors",
-        capture_compute_acoustic_descriptors,
+        "compute_acoustic_features",
+        capture_compute_acoustic_features,
     )
     monkeypatch.setattr(
         worker_module,
