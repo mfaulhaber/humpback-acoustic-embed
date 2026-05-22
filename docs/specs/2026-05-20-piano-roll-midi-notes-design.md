@@ -10,6 +10,17 @@
 > ratio matching, bumps `max_harmonic` 8 → 16, widens `cents_tolerance`
 > 50 → 75, adds `min_overlap_frames = 3`, and leaves tracks that fail
 > the harmonic check eligible to anchor their own clusters.
+>
+> §6 (entire extraction algorithm, including the harmonic labeler) and
+> §8.1 (Notes view rectangle rendering) are further superseded by
+> [2026-05-22-piano-roll-mpe-ridge-aligned-design.md](2026-05-22-piano-roll-mpe-ridge-aligned-design.md)
+> (ADR-069). The v3 extractor uses a shared STFT ridge tracker as the
+> canonical F0 source, segments notes by coherent contour rather than by
+> per-semitone splitting, derives harmonic siblings structurally at
+> `n · f₀(t)`, persists per-frame sub-semitone contours to
+> `event_note_contours_v3.parquet`, and renders the Notes view as curved
+> ribbons on a MIDI 12–120 Y axis. Legacy v1/v2 sidecars remain readable
+> on disk.
 **Neighbor domains:** core-platform, signal-timeline, frontend-shell
 
 ## 1. Goal

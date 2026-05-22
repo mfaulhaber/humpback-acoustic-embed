@@ -826,3 +826,136 @@ Alternatives considered:
   existing `timeRange` state. The button's "Re-export view" affordance
   is emphasized when the current viewport differs from the persisted
   window by more than 50 ms.
+
+## ADR-069: Ridge-aligned F0 + harmonics extractor and MPE Piano Roll MIDI export
+
+**Date**: 2026-05-22
+
+**Status**: Accepted
+
+**Context**: The Piano Roll Notes pipeline ran an independent CQT peak tracker
+that produced one MIDI note per semitone-quantized track. Three structural
+problems followed:
+
+1. A continuous frequency sweep crossing semitone boundaries fragmented into a
+   staircase of short fixed-pitch notes — the visual track did not match the
+   spectrogram ridge.
+2. The Event Encoder already runs its own STFT ridge tracker for descriptor
+   computation, so the system had two DSP paths computing F0 independently
+   from the same audio.
+3. ADR-067's slim 7-channel MIDI layout encoded partial identity by channel
+   but offered no per-note expressive pitch — DAWs could not audition the
+   actual humpback pitch trajectory.
+
+Production data on job `2679ab0d` showed 66.2 % `partial_index = 0` (F0
+dominance) versus ADR-067's predicted 17–25 % unmatched rate. Root cause: a
+stale-params bug in `_resolve_params()` silently downgraded harmonic prior
+thresholds for every auto-enqueued v2 job, so the v2 algorithm ran with v1
+tolerances. The bug was real, but the fix path was a clean rewrite rather
+than a patch.
+
+**Decision**:
+
+1. **STFT ridge as canonical F0 source.** Extract `compute_ridge_path()` into
+   `src/humpback/processing/ridge_path.py` (shared module). The Event Encoder
+   worker persists per-event ridge contours to
+   `event_encoders/{job_id}/event_ridges_{tokenizer_version}.parquet`
+   (one row per frame per event with `event_id`, `frame_index`,
+   `frame_time_offset_s`, `log_frequency`, `strength`, `energy_ratio`). The
+   Piano Roll Notes v3 worker reads this sidecar; if absent, it recomputes
+   in-process.
+2. **Coherent-contour note model.** The v3 extractor segments the refined F0
+   contour into notes only at energy gaps (≥ 3 frames below the per-frame
+   amplitude floor) or surviving octave jumps from subharmonic refinement.
+   A sweep from C5 to E5 emits one note, not three. Harmonic siblings are
+   derived structurally at `n · f₀(t)` for `n ∈ {2..16}` with ±75¢ tolerance;
+   harmonic bend streams in cents equal their parent F0's bend stream in
+   cents (cents conservation).
+3. **MPE Lower Zone replaces slim 7-channel.** Per-voice channel rotation
+   (deterministic on `(start_utc, note_uid)` with longest-idle pick and FIFO
+   voice steal across the 15 member channels) plus per-member ±24-semitone
+   pitch bend. Partial identity is preserved through per-note
+   `program_change` (F0→0, H2→11, H3→12, H4→10, H5→8, H6..H16→88), CC 74
+   (= `partial_index * 16`), and master-track `MetaMessage("text", "pN")`
+   events. DAW-side per-partial mute/solo by routing is structurally lost —
+   documented regression.
+4. **MIDI pitch range MIDI 12–120.** Notes view Y-axis becomes C0…G9; the
+   88-key band (MIDI 21–108) keeps normal shading and extended bands render
+   with a desaturated tint. Cents are clamped to ±9600 for safety even
+   though the bend range is ±2400 cents.
+5. **Two new sidecars.** `event_encoders/{job_id}/event_notes_v3.parquet`
+   gains `note_uid` (deterministic UUID v5 of
+   `(job_id, event_id, partial_index, track_id, start_utc_rounded_ms)`),
+   `f0_track_id`, and `contour_frame_count` columns. A new
+   `event_encoders/{job_id}/event_note_contours_v3.parquet` carries one row
+   per frame per note with `cents_from_pitch`, `harmonic_strength`, and
+   `subharmonic_octave`. Both files write via `.tmp` + atomic rename with
+   paired cleanup on exception.
+6. **Curved-ribbon rendering by default.** The Piano Roll page batches
+   `/notes/contours` requests via React Query keyed on `note_uid`; cached
+   uids survive viewport pans. Notes without a fetched contour render as
+   flat bars and hydrate into ribbons when their contour arrives. A 500 on
+   `/notes/contours` triggers a single non-blocking toast.
+7. **No backward compatibility for v1/v2.** Existing artifacts on disk stay
+   readable but are not regenerated. The export worker resolves the highest
+   `complete` notes-job version (`max("v1", "v2", "v3")`), so a job with a
+   complete v3 row gets v3 exports automatically. Users delete legacy rows
+   via the existing job-admin UI when they want to free space.
+8. **`HarmonicParams` retired.** The dataclass and the per-frame harmonic
+   labeling pass from ADR-067 (`label_harmonics` in `piano_roll_tracker.py`)
+   leave the active code path. The stale-params bug ceases to exist by
+   construction. Users wanting "correct v2" quality re-run jobs at v3.
+9. **`DEFAULT_EXTRACTOR_VERSION = "v3"`.** Auto-enqueue creates v3 notes
+   jobs for any newly-completing encoder job.
+
+Alternatives considered:
+
+- *Patch the stale-params bug and keep ADR-067's slim 7-channel layout.*
+  Rejected — fixes one defect but leaves the staircase artifact, the dual
+  DSP paths, and the lack of per-note expressive pitch.
+- *Keep MIDI pitch range at MIDI 21–108.* Rejected — humpback fundamentals
+  routinely fall below C2 and harmonics reach above C8; clipping outside the
+  88-key band hides real content. The extended bands are tinted in the
+  renderer so users still recognize them as "outside piano range" at a
+  glance.
+- *Use one MIDI channel per partial (extend ADR-067 with bend on a small
+  channel pool).* Rejected — pitch bend is channel-wide, so two simultaneous
+  F0 notes at different pitches collide on channel 1. MPE Lower Zone solves
+  this by design.
+- *Multi-F0 per event.* Rejected as out of scope. The single-cluster-per-event
+  simplification from ADR-067 is preserved; tracks that don't fit the
+  dominant F0 cluster become their own F0 anchors.
+- *Pre-populate v1/v2 → v3 migration via batch job.* Rejected — bumping the
+  default version and letting users opt in via the existing UI matches the
+  pattern in ADR-066 and ADR-067.
+
+**Consequences**:
+
+- The Piano Roll Notes spec from ADR-064 / ADR-067 is superseded in part:
+  §6 of [2026-05-20-piano-roll-midi-notes-design.md](docs/specs/2026-05-20-piano-roll-midi-notes-design.md)
+  (extraction algorithm) and §8.1 (Notes view rectangle rendering); §5–§6 of
+  [2026-05-20-event-encoder-midi-channelized-design.md](docs/specs/2026-05-20-event-encoder-midi-channelized-design.md)
+  (harmonic labeler + slim 7-channel layout); §10 of
+  [2026-05-20-piano-roll-midi-export-design.md](docs/specs/2026-05-20-piano-roll-midi-export-design.md)
+  (single-channel MIDI synthesis).
+- `notes_table_to_midi_bytes()` detects v3 input by the presence of
+  `note_uid` in the parquet and switches to MPE synthesis. v2-shape callers
+  remain on the legacy slim 7-channel path during the dual-version window
+  for regression-test stability; the production worker resolves to v3 once
+  any v3 job is complete.
+- `partial_index = -1` is no longer reachable; the v3 architecture has no
+  "unmatched tracks" concept — every ridge segment is either an F0 anchor or
+  a derived harmonic. Older parquets keeping `-1` rows remain readable.
+- New API endpoint `GET /sequence-models/event-encoders/{id}/notes/contours`
+  is bounded to 2000 `note_uids` per request (413 above cap). 422 when the
+  resolved job has no v3 contour sidecar. Unknown `note_uid` in a valid
+  request is silently dropped (partial misses aren't errors).
+- Encoder runs not produced under the new sidecar-writing code fall through
+  to in-process ridge recomputation in the notes worker. Output is
+  identical; cost is ~50 s extra on a 1672-event job.
+- No Alembic migration — sidecar paths live in `params_json` on the existing
+  `piano_roll_notes_jobs` row.
+- Frontend ribbon hit-testing uses ≤ 6 px polyline distance. The
+  `rafBudgetMs` cap protects against worst-case redraw cost. A new
+  Playwright perf spec asserts ≥ 30 fps median during a pan gesture on a
+  synthetic 10k-notes × 10-frames-each fixture.

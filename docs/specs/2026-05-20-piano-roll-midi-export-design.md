@@ -10,6 +10,16 @@
 > a slim seven-channel layout (F0 + 2nd–5th + higher + unmatched) with
 > one SMF track per channel and a distinct GM `program_change` and
 > `track_name` per channel.
+>
+> §10 (MIDI synthesis) is further superseded by
+> [2026-05-22-piano-roll-mpe-ridge-aligned-design.md](2026-05-22-piano-roll-mpe-ridge-aligned-design.md)
+> (ADR-069). For `v3` notes the export switches to MPE Lower Zone: 15
+> member channels with per-member ±24-semitone pitch-bend range, a
+> deterministic longest-idle voice allocator with FIFO voice steal,
+> per-note `program_change` + CC 74 carrying partial identity, and a
+> per-frame contour-driven pitch-bend stream. Pitch-bend inclusion is the
+> central deliverable of ADR-069. Legacy v1/v2 exports stay on the slim
+> seven-channel layout.
 
 ## 1. Summary
 

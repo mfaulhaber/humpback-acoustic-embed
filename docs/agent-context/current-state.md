@@ -83,7 +83,14 @@ full. Read the relevant domain section when planning or implementing.
   when the current viewport differs from the persisted window by more
   than ~50 ms. Window duration is capped at 1800 s (30 min) at the
   schema, service, API, and button layers. The MIDI's SMF Type 1 /
-  480 PPQ / 120 BPM / 7-channel layout from ADR-067 is unchanged.
+  480 PPQ / 120 BPM framing is unchanged.
+- Piano Roll Notes now produces MPE-ready ridge-aligned contours; export
+  uses MPE Lower Zone (ADR-069). `DEFAULT_EXTRACTOR_VERSION = "v3"`, the
+  encoder worker persists per-event ridge contours, the notes worker
+  writes a per-frame contour sidecar, and the Notes view defaults to
+  curved-ribbon rendering on a MIDI 12–120 Y axis. Legacy v1/v2 sidecars
+  remain readable; the export resolver picks the highest complete
+  version per string comparison.
 
 ## Frontend Shell
 

@@ -59,10 +59,11 @@
   {job_id}/report.json              (summary, token distributions, exemplar event ids, descriptor_feature_names, descriptor summaries, sequence preview)
   {job_id}/preprocess.joblib        (PCA model when used plus descriptor robust-scaling state)
   {job_id}/kmeans_k{k}.joblib       (one k-means model per valid k)
-  {job_id}/event_notes_{extractor_version}.parquet  (Piano Roll Notes sidecar; current default is v2 — per-frame harmonic labeling from ADR-067; legacy v1 may coexist until manually deleted)
-  {job_id}/event_ridges_{tokenizer_version}.parquet (Per-event STFT ridge contour: one row per frame per event with `event_id`, `frame_index`, `frame_time_offset_s`, `log_frequency`, `strength`, `energy_ratio`. Produced by the encoder worker; consumed by the Piano Roll Notes v3 extractor — ADR-069 spec §3.1 / §6.1)
+  {job_id}/event_notes_{extractor_version}.parquet  (Piano Roll Notes sidecar; current default is v3 — ridge-aware coherent-contour extractor from ADR-069. v3 rows add `note_uid`, `f0_track_id`, `contour_frame_count`. Legacy v1/v2 sidecars remain readable on disk until manually deleted)
+  {job_id}/event_ridges_{tokenizer_version}.parquet (Per-event STFT ridge contour: one row per frame per event with `event_id`, `frame_index`, `frame_time_offset_s`, `log_frequency`, `strength`, `energy_ratio`. Produced by the encoder worker; consumed by the Piano Roll Notes v3 extractor — ADR-069 §6.1)
+  {job_id}/event_note_contours_v3.parquet           (Per-frame note contour sidecar for v3 notes: one row per frame per note keyed on `note_uid` with `frame_index`, `time_offset_s`, `cents_from_pitch` (clamped to ±9600), `harmonic_strength`, `subharmonic_octave`. Consumed by the MPE MIDI synthesizer and the frontend ribbon renderer — ADR-069 §6.3)
 /exports/
-  event_encoders/{job_id}/notes_{extractor_version}.mid    (Piano Roll Notes MIDI for the last-exported window — produced atomically with audio_{extractor_version}.flac; ADR-068)
+  event_encoders/{job_id}/notes_{extractor_version}.mid    (Piano Roll Notes MIDI for the last-exported window — produced atomically with audio_{extractor_version}.flac. v3 uses MPE Lower Zone with per-voice pitch bend; legacy v1/v2 use the slim seven-channel layout from ADR-067. ADR-068, ADR-069)
   event_encoders/{job_id}/audio_{extractor_version}.flac   (Co-exported 32 kHz mono 16-bit PCM FLAC clip for the same window — not loudness-normalized; ADR-068)
 /timeline_cache/
   spans/{span_key}/.source.json            (hydrophone id, source identity, start/end timestamps, deterministic span key)

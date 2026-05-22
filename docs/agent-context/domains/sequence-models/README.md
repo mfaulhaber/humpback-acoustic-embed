@@ -12,7 +12,9 @@ helpers, or the retained Sequence Models UI.
 - `src/humpback/services/event_encoder_service.py`
 - `src/humpback/services/piano_roll_notes_service.py`
 - `src/humpback/processing/piano_roll_cqt.py`
-- `src/humpback/processing/piano_roll_tracker.py`
+- `src/humpback/processing/piano_roll_tracker.py` (legacy v1/v2 only; retired by ADR-069)
+- `src/humpback/processing/ridge_path.py` (shared STFT ridge tracker used by the encoder and the v3 notes extractor)
+- `src/humpback/processing/note_extractor_v3.py` (ridge-aware coherent-contour F0 + harmonics; ADR-069)
 - `src/humpback/workers/continuous_embedding_worker.py`
 - `src/humpback/workers/event_encoder_worker.py`
 - `src/humpback/workers/piano_roll_notes_worker.py`
@@ -56,11 +58,27 @@ helpers, or the retained Sequence Models UI.
   frequency descriptors to set one token rectangle's vertical band, with
   conservative spectral-envelope top expansion for broad harmonic events.
 - When a Piano Roll Notes sidecar exists for the Event Encoder job, the page
-  defaults to a new Notes view mode that draws one bar per MIDI note from the
-  sidecar on an 88-key log-frequency Y axis (MIDI 21–108) with semitone
-  gridlines, octave labels (C0…C8), and black-key shading. If the
-  `.../notes` fetch fails, the page reverts to the previous rectangle mode
-  with a non-blocking toast and leaves the Notes selector greyed out.
+  defaults to the Notes view mode. Under ADR-069 (extractor `v3`) it draws
+  curved ribbons that trace each note's per-frame `cents_from_pitch` contour
+  on a MIDI 12–120 log-frequency Y axis with semitone gridlines, octave
+  labels C0…G9, black-key shading, and a desaturated tint on the
+  extended bands outside the 88-key range (MIDI 12–20 and 109–120). Contours
+  are fetched in batches via `/notes/contours` and cached per `note_uid` so
+  panning does not refetch already-loaded notes. Notes without a fetched
+  contour render as the existing flat bar at `midi_pitch` and hydrate into
+  ribbons when the contour resolves; a 500 from `/notes/contours` is a
+  terminal flat-bar state for the session with a single non-blocking toast.
+  Hover tooltip includes a `Δpitch: ±N¢` summary; hit-testing uses ≤ 6 px
+  polyline distance. Legacy v1/v2 sidecars on disk still render as bars
+  because their rows have no `note_uid` and the contour endpoint returns
+  422. If the `.../notes` fetch fails, the page reverts to the previous
+  rectangle mode with a non-blocking toast and leaves the Notes selector
+  greyed out.
+- `PianoRollNotesStatusPill` surfaces a "v3 available" badge when the
+  encoder has a v2 (or older) notes sidecar but no v3 yet; clicking it
+  POSTs a v3 notes job. The "Download MIDI" tooltip names MPE / DAW
+  compatibility; the export status panel displays `Format: MPE v3` below
+  the file size when the latest export is v3.
 - The Piano Roll page exposes a windowed bundled "Export view" action
   to the left of the Notes status badge. Clicking it enqueues an
   asynchronous Piano Roll export job (`piano_roll_midi_exports` table)
@@ -81,17 +99,27 @@ helpers, or the retained Sequence Models UI.
   a "Download audio (FLAC)" link, and a "Re-export view" affordance
   whose emphasis tracks whether the current viewport matches the
   persisted window within ~50 ms. Re-export sends `force=true`.
-  MIDI conventions are unchanged: SMF Type 1, 480 PPQ, constant
-  120 BPM, slim seven-channel layout — F0, 2nd, 3rd, 4th, 5th
+  MIDI conventions follow ADR-069 when the resolved notes-job version is
+  `v3`: SMF Type 1, 480 PPQ, constant 120 BPM, **MPE Lower Zone** with 15
+  member channels and per-member ±24-semitone pitch-bend range. The first
+  non-tempo track is the MPE Master (RPN 6 = 15, per-member RPN 0/0 + Data
+  Entry MSB 24, plus per-note `MetaMessage("text", "pN")` events tagging
+  partial identity). Voices rotate across channels 1–15 via a deterministic
+  longest-idle allocator with FIFO voice steal; the steal count is recorded
+  in `params_json`. Per-note `program_change` (F0→0, H2→11, H3→12, H4→10,
+  H5→8, H6..H16→88) and CC 74 (= `partial_index * 16` clamped) preserve
+  partial identity through the voice rotation. Pitch-bend events are emitted
+  per contour frame whose `cents_from_pitch` differs from the last-emitted
+  bend by ≥ 4¢ (≈14 bend units at ±24 semitones). Harmonic notes inherit
+  their parent F0's bend stream in cents (cents conservation); the measured
+  CQT peak validates harmonic presence only and does not drive the bend.
+  17 tracks total (tempo + master + 15 voice tracks); empty voice tracks
+  still emit `track_name` and `end_of_track`. Legacy v1/v2 exports stay on
+  the slim seven-channel layout from ADR-067 — F0, 2nd, 3rd, 4th, 5th
   harmonics each on their own channel, a combined "higher harmonics"
-  channel for `partial_index ≥ 5`, and an "unmatched" channel for
-  tracks the harmonic prior could not label. The GM drum channel
-  (channel 10, 1-indexed) is intentionally empty. Each channel is
-  rendered as its own SMF track with a `track_name` meta-event and a
-  distinct GM `program_change` so DAWs present each partial as a named,
-  distinctly voiced lane. Pitch-bend is deferred; the underlying `mido`
-  library already supports the MPE primitives needed for the future
-  extension.
+  channel for `partial_index ≥ 5`, and an "unmatched" channel for tracks
+  the harmonic prior could not label. The GM drum channel (channel 10,
+  1-indexed) is intentionally empty in both layouts.
 - Event Encoder timeline previous/next navigation can be token-scoped by
   toggling the selected event's token badge. This is a frontend-only affordance
   derived from the currently loaded selected-k timeline rows; it does not hide
@@ -118,9 +146,10 @@ helpers, or the retained Sequence Models UI.
 - `event_encoders/{job_id}/token_sequences.parquet`
 - `event_encoders/{job_id}/manifest.json`
 - `event_encoders/{job_id}/report.json`
-- `event_encoders/{job_id}/event_notes_{extractor_version}.parquet` (Piano Roll Notes sidecar; current default is `v2` — the per-frame harmonic labeler from ADR-067; legacy `v1` artifacts may coexist until manually deleted)
-- `event_encoders/{job_id}/event_ridges_{tokenizer_version}.parquet` (per-event STFT ridge contours produced by the encoder worker. One row per frame per event with `log_frequency`, `strength`, `energy_ratio`; consumed by the Piano Roll Notes v3 extractor — ADR-069 spec §3.1 / §6.1)
-- `exports/event_encoders/{job_id}/notes_{extractor_version}.mid` (Piano Roll Notes MIDI export artifact for the last-exported window, produced on demand by the export worker)
+- `event_encoders/{job_id}/event_notes_{extractor_version}.parquet` (Piano Roll Notes sidecar; current default is `v3` — the ridge-aware coherent-contour extractor from ADR-069. Legacy `v1` and `v2` artifacts remain readable on disk until manually deleted)
+- `event_encoders/{job_id}/event_ridges_{tokenizer_version}.parquet` (per-event STFT ridge contours produced by the encoder worker. One row per frame per event with `event_id`, `frame_index`, `frame_time_offset_s`, `log_frequency`, `strength`, `energy_ratio`. Consumed by the Piano Roll Notes v3 extractor; v3 falls back to in-process ridge recompute when this sidecar is absent — ADR-069)
+- `event_encoders/{job_id}/event_note_contours_v3.parquet` (per-frame note contour sidecar for v3 notes. One row per frame per note keyed on `note_uid` with `time_offset_s`, `cents_from_pitch`, `harmonic_strength`, `subharmonic_octave`. Consumed by the MPE MIDI synthesizer and the frontend ribbon renderer — ADR-069)
+- `exports/event_encoders/{job_id}/notes_{extractor_version}.mid` (Piano Roll Notes MIDI export artifact for the last-exported window. `v3` is MPE Lower Zone with per-voice pitch bend; legacy `v1`/`v2` remain on the slim seven-channel layout from ADR-067)
 - `exports/event_encoders/{job_id}/audio_{extractor_version}.flac` (co-exported 32 kHz mono FLAC clip for the same exported window)
 
 Event Encoder manifests record ordered `descriptor_feature_names`. The active
@@ -148,6 +177,7 @@ concatenation.
 - ADR-066: User-initiated async MIDI export for Piano Roll Notes.
 - ADR-067: Per-frame harmonic labeling and channelized MIDI export.
 - ADR-068: Piano Roll windowed bundled export (MIDI + FLAC).
+- ADR-069: Ridge-aligned F0 + harmonics extractor and MPE Piano Roll MIDI export.
 
 ## Likely Neighbors
 

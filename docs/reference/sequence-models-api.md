@@ -188,8 +188,22 @@ and fits one k-means tokenizer per feasible k.
   note from the latest completed Piano Roll Notes job's parquet sidecar.
   Optional `start_utc`, `end_utc`, and repeated `event_ids` filter the
   payload to the viewport. Optional `extractor_version` pins the version;
-  omitting it serves the latest completed run. Returns `404` when no
-  completed notes job exists or the parquet sidecar is missing on disk.
+  omitting it serves the latest completed run. For `v3` jobs each row also
+  carries `note_uid` (deterministic UUID v5), `f0_track_id`, and
+  `contour_frame_count`; for legacy `v1`/`v2` jobs these three fields are
+  `null` in the response. Returns `404` when no completed notes job exists
+  or the parquet sidecar is missing on disk.
+
+- `GET /sequence-models/event-encoders/{id}/notes/contours` returns per-frame
+  pitch-contour rows for one or more notes from the latest completed `v3`
+  notes job. `note_uids` is a repeated query parameter (or POST body field)
+  capped at 2000 entries per request. Response:
+  `{contours: {<note_uid>: [{frame_index, time_offset_s, cents_from_pitch,
+  harmonic_strength, subharmonic_octave}, ...], ...}}`, with each note's
+  rows sorted by ascending `frame_index`. Unknown `note_uid`s are silently
+  omitted from the response (partial misses are not errors). Returns `422`
+  when the resolved job has no `v3` contour sidecar on disk, `413` when the
+  request exceeds the 2000-uid cap. ADR-069.
 
 - `GET /sequence-models/event-encoders/{id}/midi-export-status` returns the
   latest `piano_roll_midi_exports` row for the encoder job as
@@ -223,8 +237,13 @@ and fits one k-means tokenizer per feasible k.
   `Content-Disposition: attachment` using the filename
   `event_encoder_{id}_notes_{extractor_version}.mid`. Optional
   `extractor_version` pins the version; omitting it serves the latest
-  `complete` export. Returns `404` when no complete row exists or the file
-  is missing on disk.
+  `complete` export. The resolved `v3` export is an **MPE Lower Zone**
+  Standard MIDI File (15 member channels with per-member ±24-semitone
+  pitch bend; partial identity carried by per-note `program_change` + CC
+  74 + master-track text meta-events) — see ADR-069 for the full layout.
+  Legacy `v1`/`v2` exports retain the slim seven-channel layout from
+  ADR-067. Returns `404` when no complete row exists or the file is
+  missing on disk.
 
 - `GET /sequence-models/event-encoders/{id}/audio-export` streams the
   FLAC clip co-exported with the windowed MIDI. Content type is
