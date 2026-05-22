@@ -81,6 +81,40 @@ class PianoRollNotesResponse(BaseModel):
     notes: list[PianoRollNote] = Field(default_factory=list)
 
 
+class PianoRollNoteContourFrame(BaseModel):
+    """One frame row from ``event_note_contours_v3.parquet``."""
+
+    frame_index: int
+    time_offset_s: float
+    cents_from_pitch: float
+    harmonic_strength: float
+    subharmonic_octave: int
+
+
+class PianoRollNoteContourResponse(BaseModel):
+    """Per-``note_uid`` contour payload for the v3 ribbon renderer.
+
+    ``contours`` is a mapping from ``note_uid`` to its ascending-frame
+    list. Unknown ``note_uid``s in the request are silently dropped from
+    the response (partial misses are not errors).
+    """
+
+    job_id: str
+    extractor_version: str
+    n_notes: int
+    contours: dict[str, list[PianoRollNoteContourFrame]] = Field(default_factory=dict)
+
+
+class PianoRollNoteContourRequest(BaseModel):
+    """POST body for the contours endpoint when callers prefer a body.
+
+    Mirrors the repeated ``note_uids`` query-string form used elsewhere in
+    this router so both forms are interchangeable.
+    """
+
+    note_uids: list[str] = Field(default_factory=list)
+
+
 __all__ = [
     "PianoRollNotesJobStatus",
     "PianoRollNotesJobRead",
@@ -89,4 +123,7 @@ __all__ = [
     "PianoRollNotesStatusResponse",
     "PianoRollNote",
     "PianoRollNotesResponse",
+    "PianoRollNoteContourFrame",
+    "PianoRollNoteContourResponse",
+    "PianoRollNoteContourRequest",
 ]

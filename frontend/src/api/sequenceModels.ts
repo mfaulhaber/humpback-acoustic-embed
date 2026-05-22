@@ -218,6 +218,9 @@ export interface PianoRollNote {
   velocity: number;
   peak_magnitude: number;
   track_id: number;
+  note_uid: string | null;
+  f0_track_id: number | null;
+  contour_frame_count: number | null;
 }
 
 export interface PianoRollNotesResponse {
@@ -226,6 +229,23 @@ export interface PianoRollNotesResponse {
   n_notes: number;
   notes: PianoRollNote[];
 }
+
+export interface PianoRollNoteContourFrame {
+  frame_index: number;
+  time_offset_s: number;
+  cents_from_pitch: number;
+  harmonic_strength: number;
+  subharmonic_octave: number;
+}
+
+export interface PianoRollNoteContourResponse {
+  job_id: string;
+  extractor_version: string;
+  n_notes: number;
+  contours: Record<string, PianoRollNoteContourFrame[]>;
+}
+
+export const PIANO_ROLL_NOTE_CONTOUR_BATCH_LIMIT = 2000;
 
 export interface CreatePianoRollNotesJobRequest {
   extractor_version?: string;
@@ -491,6 +511,28 @@ export interface PianoRollNotesViewport {
   extractorVersion?: string | null;
 }
 
+export interface PianoRollNoteContourQuery {
+  noteUids: string[];
+  extractorVersion?: string | null;
+}
+
+export function fetchPianoRollNoteContours(
+  jobId: string,
+  query: PianoRollNoteContourQuery,
+): Promise<PianoRollNoteContourResponse> {
+  const params = new URLSearchParams();
+  for (const uid of query.noteUids) {
+    params.append("note_uids", uid);
+  }
+  if (query.extractorVersion) {
+    params.set("extractor_version", query.extractorVersion);
+  }
+  const qs = params.toString();
+  return request<PianoRollNoteContourResponse>(
+    `${EVENT_ENCODER_ROOT}/${jobId}/notes/contours${qs ? `?${qs}` : ""}`,
+  );
+}
+
 export function fetchPianoRollNotes(
   jobId: string,
   viewport: PianoRollNotesViewport = {},
@@ -738,6 +780,36 @@ export function usePianoRollNotes(
     ],
     queryFn: () => fetchPianoRollNotes(jobId as string, viewport),
     enabled: enabled && jobId != null,
+  });
+}
+
+/**
+ * Batch-fetches v3 ribbon contours for the requested ``note_uid``s.
+ *
+ * React Query caches by ``note_uid`` so panning the viewport never
+ * re-fetches a contour we already have — uid stability is guaranteed
+ * by the backend's deterministic UUID v5 derivation (ADR-069 §6.2).
+ */
+export function usePianoRollNoteContours(
+  jobId: string | null,
+  noteUids: string[],
+  enabled: boolean,
+  extractorVersion?: string | null,
+) {
+  const sortedUids = [...noteUids].sort();
+  return useQuery({
+    queryKey: [
+      "piano-roll-note-contours",
+      jobId,
+      extractorVersion ?? null,
+      sortedUids.join(","),
+    ],
+    queryFn: () =>
+      fetchPianoRollNoteContours(jobId as string, {
+        noteUids: sortedUids,
+        extractorVersion,
+      }),
+    enabled: enabled && jobId != null && sortedUids.length > 0,
   });
 }
 

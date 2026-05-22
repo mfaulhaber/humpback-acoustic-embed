@@ -361,9 +361,12 @@ interface MockState {
   notesStatusRequests: string[];
   notesJobsRequests: string[];
   notesRequests: string[];
+  notesContourRequests: string[];
   notesStatus: NotesStatusMock;
   notesPayload: NotesPayload | null;
   notesFailWithStatus: number | null;
+  contoursPayload: ContourPayload | null;
+  contoursFailWithStatus: number | null;
 }
 
 function buildNotesStatus(
@@ -462,12 +465,30 @@ function timelineEvent(
   };
 }
 
+interface ContourPayload {
+  job_id: string;
+  extractor_version: string;
+  n_notes: number;
+  contours: Record<
+    string,
+    Array<{
+      frame_index: number;
+      time_offset_s: number;
+      cents_from_pitch: number;
+      harmonic_strength: number;
+      subharmonic_octave: number;
+    }>
+  >;
+}
+
 async function setupMocks(
   page: Page,
   options: {
     notesStatus?: NotesStatusMock;
     notesPayload?: NotesPayload | null;
     notesFailWithStatus?: number;
+    contoursPayload?: ContourPayload | null;
+    contoursFailWithStatus?: number;
   } = {},
 ): Promise<MockState> {
   const state: MockState = {
@@ -477,9 +498,12 @@ async function setupMocks(
     notesStatusRequests: [],
     notesJobsRequests: [],
     notesRequests: [],
+    notesContourRequests: [],
     notesStatus: options.notesStatus ?? { status: "absent" },
     notesPayload: options.notesPayload ?? null,
     notesFailWithStatus: options.notesFailWithStatus ?? null,
+    contoursPayload: options.contoursPayload ?? null,
+    contoursFailWithStatus: options.contoursFailWithStatus ?? null,
   };
 
   await page.addInitScript(() => {
@@ -547,6 +571,24 @@ async function setupMocks(
         status: 201,
         contentType: "application/json",
         body: JSON.stringify(state.notesStatus),
+      });
+    }
+
+    if (url.includes("/notes/contours")) {
+      state.notesContourRequests.push(url);
+      if (state.contoursFailWithStatus != null) {
+        return route.fulfill({ status: state.contoursFailWithStatus });
+      }
+      const payload: ContourPayload = state.contoursPayload ?? {
+        job_id: id,
+        extractor_version: "v3",
+        n_notes: 0,
+        contours: {},
+      };
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(payload),
       });
     }
 
@@ -1233,7 +1275,7 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
     const x = 62 + ((noteCenterTime - viewStart) / (viewEnd - viewStart)) * (width - 72);
     const plotTop = 8;
     const plotBottom = height - 8;
-    const ratio = (60 - 21 + 0.5) / 88;
+    const ratio = (60 - 12 + 0.5) / 109;
     const y = plotBottom - ratio * (plotBottom - plotTop);
 
     await canvas.hover({ position: { x, y } });
@@ -1247,6 +1289,98 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
     await expect(page.getByTestId("eej-piano-roll-note-tooltip")).toContainText(
       "96",
     );
+  });
+
+  test("v3 Notes mode hydrates ribbon contours and shows ±cents in the tooltip", async ({
+    page,
+  }) => {
+    const notesPayload: NotesPayload = {
+      job_id: COMPLETE_JOB.id,
+      extractor_version: "v3",
+      n_notes: 1,
+      notes: [
+        {
+          event_id: "evt-a",
+          event_token: 3,
+          partial_index: 0,
+          midi_pitch: 60,
+          start_utc: JOB_START + 11,
+          start_offset_s: 0,
+          duration_s: 0.5,
+          velocity: 96,
+          peak_magnitude: -2.0,
+          track_id: 1,
+          note_uid: "uid-1",
+          f0_track_id: 1,
+          contour_frame_count: 3,
+        },
+      ],
+    };
+    const contoursPayload: ContourPayload = {
+      job_id: COMPLETE_JOB.id,
+      extractor_version: "v3",
+      n_notes: 1,
+      contours: {
+        "uid-1": [
+          {
+            frame_index: 0,
+            time_offset_s: 0.0,
+            cents_from_pitch: -30,
+            harmonic_strength: 1.0,
+            subharmonic_octave: 0,
+          },
+          {
+            frame_index: 1,
+            time_offset_s: 0.25,
+            cents_from_pitch: 5,
+            harmonic_strength: 1.0,
+            subharmonic_octave: 0,
+          },
+          {
+            frame_index: 2,
+            time_offset_s: 0.5,
+            cents_from_pitch: 40,
+            harmonic_strength: 1.0,
+            subharmonic_octave: 0,
+          },
+        ],
+      },
+    };
+    const state = await setupMocks(page, {
+      notesStatus: buildNotesStatus("complete", { extractor_version: "v3" }),
+      notesPayload,
+      contoursPayload,
+    });
+    await page.goto(
+      `/app/sequence-models/event-encoder/${COMPLETE_JOB.id}/piano-roll`,
+    );
+
+    const canvas = page.getByTestId("eej-piano-roll-canvas");
+    await expect(canvas).toHaveAttribute("data-view-mode", "notes");
+    await expect
+      .poll(async () => state.notesContourRequests.length)
+      .toBeGreaterThan(0);
+    await expect(page.locator("script")).not.toHaveText(/contour fetch failed/);
+
+    const box = await canvas.boundingBox();
+    expect(box).not.toBeNull();
+    const viewStart = Number(await canvas.getAttribute("data-view-start"));
+    const viewEnd = Number(await canvas.getAttribute("data-view-end"));
+    const width = box?.width ?? 1;
+    const height = box?.height ?? 1;
+    const noteCenterTime = JOB_START + 11.25;
+    const x = 62 + ((noteCenterTime - viewStart) / (viewEnd - viewStart)) * (width - 72);
+    const plotTop = 8;
+    const plotBottom = height - 8;
+    const ratio = (60 - 12 + 0.5) / 109;
+    const y = plotBottom - ratio * (plotBottom - plotTop);
+
+    await canvas.hover({ position: { x, y } });
+    const tooltip = page.getByTestId("eej-piano-roll-note-tooltip");
+    await expect(tooltip).toBeVisible();
+    // Tooltip carries the max ±cents from the contour. 40¢ wins here.
+    await expect(tooltip).toContainText("Δpitch");
+    await expect(tooltip).toContainText("±40");
   });
 
   test("Notes mode falls back to rectangle view when /notes fetch fails", async ({
@@ -1326,7 +1460,7 @@ test.describe("Sequence Models - Event Encoder Piano Roll", () => {
       62 + ((noteCenterTime - viewStart) / (viewEnd - viewStart)) * (width - 72);
     const plotTop = 8;
     const plotBottom = height - 8;
-    const ratio = (57 - 21 + 0.5) / 88;
+    const ratio = (57 - 12 + 0.5) / 109;
     const y = plotBottom - ratio * (plotBottom - plotTop);
 
     await canvas.hover({ position: { x, y } });
