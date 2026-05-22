@@ -1222,9 +1222,9 @@ async def test_notes_contours_returns_per_uid_payload(client, app_settings):
         n_notes=len(v3_rows),
     )
 
-    response = await client.get(
+    response = await client.post(
         f"/sequence-models/event-encoders/{job_id}/notes/contours",
-        params=[("note_uids", "uid-1"), ("note_uids", "uid-missing")],
+        json={"note_uids": ["uid-1", "uid-missing"]},
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -1247,9 +1247,9 @@ async def test_notes_contours_413_above_cap(client, app_settings):
         extractor_version="v3",
     )
     note_uids = [f"uid-{i}" for i in range(2001)]
-    response = await client.get(
+    response = await client.post(
         f"/sequence-models/event-encoders/{job_id}/notes/contours",
-        params=[("note_uids", uid) for uid in note_uids],
+        json={"note_uids": note_uids},
     )
     assert response.status_code == 413, response.text
 
@@ -1284,9 +1284,9 @@ async def test_notes_contours_422_when_no_v3_sidecar(client, app_settings):
         n_notes=1,
     )
 
-    response = await client.get(
+    response = await client.post(
         f"/sequence-models/event-encoders/{job_id}/notes/contours",
-        params=[("note_uids", "uid-1")],
+        json={"note_uids": ["uid-1"]},
     )
     assert response.status_code == 422, response.text
 
@@ -1337,9 +1337,9 @@ async def test_notes_contours_unknown_uid_dropped(client, app_settings):
         n_notes=1,
     )
 
-    response = await client.get(
+    response = await client.post(
         f"/sequence-models/event-encoders/{job_id}/notes/contours",
-        params=[("note_uids", "uid-1"), ("note_uids", "uid-not-here")],
+        json={"note_uids": ["uid-1", "uid-not-here"]},
     )
     assert response.status_code == 200, response.text
     body = response.json()

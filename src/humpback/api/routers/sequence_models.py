@@ -25,6 +25,7 @@ from humpback.schemas.piano_roll_midi_export import (
 from humpback.schemas.piano_roll_notes import (
     PianoRollNote,
     PianoRollNoteContourFrame,
+    PianoRollNoteContourRequest,
     PianoRollNoteContourResponse,
     PianoRollNotesJobCreateRequest,
     PianoRollNotesJobRead,
@@ -580,18 +581,19 @@ async def get_piano_roll_notes(
 _MAX_CONTOUR_NOTE_UIDS = 2000
 
 
-@router.get("/event-encoders/{job_id}/notes/contours")
+@router.post("/event-encoders/{job_id}/notes/contours")
 async def get_piano_roll_note_contours(
     job_id: str,
+    body: PianoRollNoteContourRequest,
     session: SessionDep,
     settings: SettingsDep,
-    note_uids: list[str] = Query(default_factory=list),
-    extractor_version: Optional[str] = Query(default=None),
 ) -> PianoRollNoteContourResponse:
     """Return per-frame contour rows for the requested ``note_uid``s.
 
-    The endpoint always reads the v3 contour sidecar so it returns 422
-    when no v3 sidecar exists yet. Requests above
+    POST so the ``note_uids`` list (UUIDs at ~48 bytes each in URL form)
+    rides in the JSON body and stays clear of the dev server's HTTP
+    header limit. The endpoint always reads the v3 contour sidecar so it
+    returns 422 when no v3 sidecar exists yet. Requests above
     ``_MAX_CONTOUR_NOTE_UIDS`` return 413; unknown ``note_uid``s in an
     otherwise valid request are dropped from the response.
     """
@@ -599,19 +601,20 @@ async def get_piano_roll_note_contours(
     if job is None:
         raise HTTPException(status_code=404, detail="event encoder job not found")
 
-    if len(note_uids) > _MAX_CONTOUR_NOTE_UIDS:
+    if len(body.note_uids) > _MAX_CONTOUR_NOTE_UIDS:
         raise HTTPException(
             status_code=413,
             detail=(
-                f"note_uids cap is {_MAX_CONTOUR_NOTE_UIDS}; received {len(note_uids)}"
+                f"note_uids cap is {_MAX_CONTOUR_NOTE_UIDS};"
+                f" received {len(body.note_uids)}"
             ),
         )
 
-    if extractor_version is not None:
+    if body.extractor_version is not None:
         latest = await complete_for_encoder_job_version(
             session,
             event_encoder_job_id=job.id,
-            extractor_version=extractor_version,
+            extractor_version=body.extractor_version,
         )
     else:
         latest = await latest_for_encoder_job(session, event_encoder_job_id=job.id)
@@ -636,7 +639,7 @@ async def get_piano_roll_note_contours(
             ),
         )
 
-    requested = set(note_uids)
+    requested = set(body.note_uids)
     contours: dict[str, list[PianoRollNoteContourFrame]] = {}
     if requested:
         table = pq.read_table(contours_path)

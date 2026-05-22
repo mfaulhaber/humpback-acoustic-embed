@@ -119,6 +119,7 @@ const MIN_FREQUENCY_SPAN_HZ = 100;
 const DEFAULT_FREQUENCY_MAX = 2000;
 const DEFAULT_RIDGE_FREQUENCY_MAX = 6000;
 const FREQUENCY_OPTIONS = [1500, 2000, 3000, 4000, 5000, 6000];
+const CONTOUR_BATCH_LIMIT = 2000;
 
 export function EventEncoderPianoRollPage() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -740,17 +741,24 @@ function EventEncoderPianoRollViewer({
   );
   const [contourVersion, setContourVersion] = useState(0);
 
+  // Server caps a single /notes/contours request at 2000 note_uids
+  // (ADR-069 §7). On a dense viewport the uncached set easily exceeds
+  // that, so request one batch per render: each successful batch bumps
+  // `contourVersion`, which re-runs this memo, drops the now-cached uids,
+  // and exposes the next chunk for the hook to fetch.
   const uncachedContourUids = useMemo(() => {
     if (!isNotesMode) return [] as string[];
     const out: string[] = [];
     for (const note of visibleNotes) {
       if (!note.note_uid) continue;
-      if (!contourCacheRef.current.has(note.note_uid)) {
-        out.push(note.note_uid);
-      }
+      if (contourCacheRef.current.has(note.note_uid)) continue;
+      out.push(note.note_uid);
+      if (out.length >= CONTOUR_BATCH_LIMIT) break;
     }
     return out;
-  }, [isNotesMode, visibleNotes]);
+    // contourVersion is intentionally a dep so successive batches fire
+    // as previous ones land in the cache.
+  }, [isNotesMode, visibleNotes, contourVersion]);
 
   const contourQuery = usePianoRollNoteContours(
     timeline.job_id,

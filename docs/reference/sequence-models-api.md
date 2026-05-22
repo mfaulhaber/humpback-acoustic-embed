@@ -194,10 +194,13 @@ and fits one k-means tokenizer per feasible k.
   `null` in the response. Returns `404` when no completed notes job exists
   or the parquet sidecar is missing on disk.
 
-- `GET /sequence-models/event-encoders/{id}/notes/contours` returns per-frame
-  pitch-contour rows for one or more notes from the latest completed `v3`
-  notes job. `note_uids` is a repeated query parameter (or POST body field)
-  capped at 2000 entries per request. Response:
+- `POST /sequence-models/event-encoders/{id}/notes/contours` returns
+  per-frame pitch-contour rows for one or more notes from the latest
+  completed `v3` notes job. Body:
+  `{note_uids: [str], extractor_version?: str}`, capped at 2000 `note_uids`
+  per request. POST (not GET) because the UUID-shaped `note_uids` list at
+  viewport scale exceeds typical 8 KB HTTP-header limits when sent as
+  repeated query parameters. Response:
   `{contours: {<note_uid>: [{frame_index, time_offset_s, cents_from_pitch,
   harmonic_strength, subharmonic_octave}, ...], ...}}`, with each note's
   rows sorted by ascending `frame_index`. Unknown `note_uid`s are silently

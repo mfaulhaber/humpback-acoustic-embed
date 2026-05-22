@@ -106,13 +106,15 @@ class PianoRollNoteContourResponse(BaseModel):
 
 
 class PianoRollNoteContourRequest(BaseModel):
-    """POST body for the contours endpoint when callers prefer a body.
+    """POST body for the contours endpoint.
 
-    Mirrors the repeated ``note_uids`` query-string form used elsewhere in
-    this router so both forms are interchangeable.
+    Lives in the body rather than the query string so a viewport with
+    thousands of UUID-shaped ``note_uid`` entries does not blow past the
+    dev server's HTTP header size limit (~8 KB).
     """
 
     note_uids: list[str] = Field(default_factory=list)
+    extractor_version: Optional[str] = None
 
 
 __all__ = [

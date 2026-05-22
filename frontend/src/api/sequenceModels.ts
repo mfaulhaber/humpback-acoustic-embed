@@ -520,16 +520,16 @@ export function fetchPianoRollNoteContours(
   jobId: string,
   query: PianoRollNoteContourQuery,
 ): Promise<PianoRollNoteContourResponse> {
-  const params = new URLSearchParams();
-  for (const uid of query.noteUids) {
-    params.append("note_uids", uid);
-  }
-  if (query.extractorVersion) {
-    params.set("extractor_version", query.extractorVersion);
-  }
-  const qs = params.toString();
   return request<PianoRollNoteContourResponse>(
-    `${EVENT_ENCODER_ROOT}/${jobId}/notes/contours${qs ? `?${qs}` : ""}`,
+    `${EVENT_ENCODER_ROOT}/${jobId}/notes/contours`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        note_uids: query.noteUids,
+        extractor_version: query.extractorVersion ?? null,
+      }),
+    },
   );
 }
 
