@@ -701,3 +701,224 @@ async def test_stale_running_recovered(session, settings) -> None:
 
     await session.refresh(job)
     assert job.status == JobStatus.queued.value
+
+
+# --------------------------------------------------------------------------- #
+# v3 MPE export branch
+# --------------------------------------------------------------------------- #
+
+
+from humpback.storage import event_encoder_note_contours_path  # noqa: E402
+from humpback.workers.piano_roll_notes_worker import (  # noqa: E402
+    NOTE_CONTOURS_V3_SCHEMA,
+    NOTES_V3_SCHEMA,
+)
+
+
+def _write_v3_parquets(
+    notes_path: Path, contours_path: Path, *, notes: list[dict], contours: list[dict]
+) -> None:
+    notes_path.parent.mkdir(parents=True, exist_ok=True)
+    contours_path.parent.mkdir(parents=True, exist_ok=True)
+    note_defaults = {
+        "event_token": 0,
+        "start_offset_s": 0.0,
+        "peak_magnitude": 0.0,
+        "track_id": 0,
+        "f0_track_id": 0,
+        "contour_frame_count": 0,
+    }
+    notes_table = pa.Table.from_pylist(
+        [
+            {
+                field.name: row.get(field.name, note_defaults.get(field.name))
+                for field in NOTES_V3_SCHEMA
+            }
+            for row in notes
+        ],
+        schema=NOTES_V3_SCHEMA,
+    )
+    pq.write_table(notes_table, notes_path)
+
+    contour_defaults = {
+        "time_offset_s": 0.0,
+        "harmonic_strength": 0.0,
+        "subharmonic_octave": 0,
+    }
+    contour_table = pa.Table.from_pylist(
+        [
+            {
+                field.name: row.get(field.name, contour_defaults.get(field.name))
+                for field in NOTE_CONTOURS_V3_SCHEMA
+            }
+            for row in contours
+        ],
+        schema=NOTE_CONTOURS_V3_SCHEMA,
+    )
+    pq.write_table(contour_table, contours_path)
+
+
+@pytest.mark.asyncio
+async def test_v3_export_reads_contour_sidecar(session, settings, monkeypatch) -> None:
+    """v3 export must consume the contour sidecar and emit an MPE SMF."""
+    encoder_id = await _make_encoder_and_notes(session, extractor_version="v3")
+    notes_path = event_encoder_notes_path(settings.storage_root, encoder_id, "v3")
+    contours_path = event_encoder_note_contours_path(
+        settings.storage_root, encoder_id, "v3"
+    )
+    _write_v3_parquets(
+        notes_path,
+        contours_path,
+        notes=[
+            {
+                "event_id": "ev-1",
+                "partial_index": 0,
+                "midi_pitch": 60,
+                "start_utc": _WINDOW_START + 1.0,
+                "duration_s": 0.5,
+                "velocity": 80,
+                "note_uid": "uid-1",
+                "track_id": 0,
+                "f0_track_id": 0,
+                "contour_frame_count": 2,
+            },
+        ],
+        contours=[
+            {"note_uid": "uid-1", "frame_index": 0, "cents_from_pitch": 0.0},
+            {"note_uid": "uid-1", "frame_index": 1, "cents_from_pitch": 0.0},
+        ],
+    )
+    monkeypatch.setattr(
+        piano_roll_midi_export_worker,
+        "_resolve_window_audio",
+        _stub_resolve_window_audio(value=0.25),
+    )
+
+    job, _ = await enqueue_piano_roll_midi_export(
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WINDOW_START,
+        window_end_utc=_WINDOW_END,
+        extractor_version="v3",
+    )
+    await run_piano_roll_midi_export(session, job, settings)
+
+    await session.refresh(job)
+    assert job.status == JobStatus.complete.value, job.error_message
+    midi_path_abs = event_encoder_midi_export_path(
+        settings.storage_root, encoder_id, "v3"
+    )
+    parsed = mido.MidiFile(file=io.BytesIO(midi_path_abs.read_bytes()))
+    # MPE shape: tempo + master + 15 members.
+    assert len(parsed.tracks) == 1 + 1 + 15
+
+
+@pytest.mark.asyncio
+async def test_v3_export_fails_without_contour_sidecar(
+    session, settings, monkeypatch
+) -> None:
+    """v3 export must fail with a clear error when the sidecar is missing."""
+    encoder_id = await _make_encoder_and_notes(session, extractor_version="v3")
+    notes_path = event_encoder_notes_path(settings.storage_root, encoder_id, "v3")
+    # Write notes only — no contour parquet.
+    notes_path.parent.mkdir(parents=True, exist_ok=True)
+    notes_table = pa.Table.from_pylist(
+        [
+            {field.name: 0 for field in NOTES_V3_SCHEMA}
+            | {
+                "event_id": "ev-1",
+                "note_uid": "uid-1",
+                "midi_pitch": 60,
+                "start_utc": _WINDOW_START + 1.0,
+                "duration_s": 0.5,
+                "velocity": 80,
+            }
+        ],
+        schema=NOTES_V3_SCHEMA,
+    )
+    pq.write_table(notes_table, notes_path)
+    monkeypatch.setattr(
+        piano_roll_midi_export_worker,
+        "_resolve_window_audio",
+        _stub_resolve_window_audio(),
+    )
+
+    job, _ = await enqueue_piano_roll_midi_export(
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WINDOW_START,
+        window_end_utc=_WINDOW_END,
+        extractor_version="v3",
+    )
+    await run_piano_roll_midi_export(session, job, settings)
+
+    await session.refresh(job)
+    assert job.status == JobStatus.failed.value
+    assert job.error_message is not None
+    assert "contour" in job.error_message.lower()
+
+
+@pytest.mark.asyncio
+async def test_v3_export_clips_notes_to_window(session, settings, monkeypatch) -> None:
+    """A v3 note whose end exceeds the window must be truncated."""
+    encoder_id = await _make_encoder_and_notes(session, extractor_version="v3")
+    notes_path = event_encoder_notes_path(settings.storage_root, encoder_id, "v3")
+    contours_path = event_encoder_note_contours_path(
+        settings.storage_root, encoder_id, "v3"
+    )
+    _write_v3_parquets(
+        notes_path,
+        contours_path,
+        notes=[
+            # Note runs past window_end_utc; should be clipped.
+            {
+                "event_id": "ev-1",
+                "partial_index": 0,
+                "midi_pitch": 60,
+                "start_utc": _WINDOW_END - 0.2,
+                "duration_s": 1.0,
+                "velocity": 80,
+                "note_uid": "uid-1",
+                "track_id": 0,
+                "f0_track_id": 0,
+                "contour_frame_count": 3,
+            },
+            # Note fully outside; dropped.
+            {
+                "event_id": "ev-2",
+                "partial_index": 0,
+                "midi_pitch": 62,
+                "start_utc": _WINDOW_END + 5.0,
+                "duration_s": 1.0,
+                "velocity": 80,
+                "note_uid": "uid-2",
+                "track_id": 1,
+                "f0_track_id": 1,
+                "contour_frame_count": 2,
+            },
+        ],
+        contours=[
+            {"note_uid": "uid-1", "frame_index": 0, "cents_from_pitch": 0.0},
+            {"note_uid": "uid-1", "frame_index": 1, "cents_from_pitch": 0.0},
+            {"note_uid": "uid-1", "frame_index": 2, "cents_from_pitch": 0.0},
+            {"note_uid": "uid-2", "frame_index": 0, "cents_from_pitch": 0.0},
+        ],
+    )
+    monkeypatch.setattr(
+        piano_roll_midi_export_worker,
+        "_resolve_window_audio",
+        _stub_resolve_window_audio(),
+    )
+
+    job, _ = await enqueue_piano_roll_midi_export(
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WINDOW_START,
+        window_end_utc=_WINDOW_END,
+        extractor_version="v3",
+    )
+    await run_piano_roll_midi_export(session, job, settings)
+
+    await session.refresh(job)
+    assert job.status == JobStatus.complete.value, job.error_message
+    assert job.n_notes == 1

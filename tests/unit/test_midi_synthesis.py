@@ -526,3 +526,388 @@ def test_per_track_deterministic_ordering_within_channel() -> None:
     # Both note_ons should come before either note_off (notes overlap).
     types = [m.type for m in note_messages]
     assert types == ["note_on", "note_on", "note_off", "note_off"]
+
+
+# --------------------------------------------------------------------------- #
+# v3 MPE Lower Zone synthesis
+# --------------------------------------------------------------------------- #
+
+
+from humpback.processing.midi_synthesis import (  # noqa: E402
+    MPE_BEND_RANGE_SEMITONES,
+    MPE_MEMBER_CHANNELS,
+)
+from humpback.workers.piano_roll_notes_worker import (  # noqa: E402
+    NOTE_CONTOURS_V3_SCHEMA,
+    NOTES_V3_SCHEMA,
+)
+
+
+def _make_v3_table(rows: list[dict]) -> pa.Table:
+    defaults = {
+        "event_token": 0,
+        "start_offset_s": 0.0,
+        "peak_magnitude": 0.0,
+        "track_id": 0,
+        "f0_track_id": 0,
+        "contour_frame_count": 0,
+    }
+    expanded = [
+        {
+            field.name: row.get(field.name, defaults.get(field.name))
+            for field in NOTES_V3_SCHEMA
+        }
+        for row in rows
+    ]
+    return pa.Table.from_pylist(expanded, schema=NOTES_V3_SCHEMA)
+
+
+def _make_contour_table(rows: list[dict]) -> pa.Table:
+    defaults = {
+        "time_offset_s": 0.0,
+        "harmonic_strength": 0.0,
+        "subharmonic_octave": 0,
+    }
+    expanded = [
+        {
+            field.name: row.get(field.name, defaults.get(field.name))
+            for field in NOTE_CONTOURS_V3_SCHEMA
+        }
+        for row in rows
+    ]
+    return pa.Table.from_pylist(expanded, schema=NOTE_CONTOURS_V3_SCHEMA)
+
+
+def _track_by_name(midi_file: mido.MidiFile, name: str) -> mido.MidiTrack:
+    for track in midi_file.tracks:
+        for message in track:
+            if getattr(message, "type", None) == "track_name" and message.name == name:
+                return track
+    raise KeyError(f"track {name!r} not in SMF")
+
+
+def test_mpe_master_track_emits_configuration_message_at_tick_zero() -> None:
+    notes = _make_v3_table(
+        [
+            {
+                "event_id": "ev-1",
+                "partial_index": 0,
+                "midi_pitch": 60,
+                "start_utc": 0.0,
+                "duration_s": 0.5,
+                "velocity": 80,
+                "note_uid": "uid-1",
+            }
+        ]
+    )
+    contours = _make_contour_table(
+        [
+            {"note_uid": "uid-1", "frame_index": 0, "cents_from_pitch": 0.0},
+            {"note_uid": "uid-1", "frame_index": 1, "cents_from_pitch": 0.0},
+        ]
+    )
+    parsed = _parse_midi(notes_table_to_midi_bytes(notes, contour_table=contours))
+
+    # SMF layout: tempo + master + 15 members = 17 tracks.
+    assert len(parsed.tracks) == 1 + 1 + 15
+
+    master = _track_by_name(parsed, "MPE Master")
+    cc_messages = [m for m in master if m.type == "control_change"]
+    # The first three CCs are RPN 6 / payload 15 on the Master (channel 0).
+    assert (cc_messages[0].control, cc_messages[0].value, cc_messages[0].channel) == (
+        101,
+        0,
+        0,
+    )
+    assert (cc_messages[1].control, cc_messages[1].value, cc_messages[1].channel) == (
+        100,
+        6,
+        0,
+    )
+    assert (cc_messages[2].control, cc_messages[2].value, cc_messages[2].channel) == (
+        6,
+        15,
+        0,
+    )
+    # Member channels then receive ±24 semitone bend range.
+    member_blocks = cc_messages[3:]
+    assert len(member_blocks) == 15 * 3
+    for i, channel in enumerate(MPE_MEMBER_CHANNELS):
+        block = member_blocks[i * 3 : (i + 1) * 3]
+        assert (
+            block[0].control == 101
+            and block[0].value == 0
+            and block[0].channel == channel
+        )
+        assert (
+            block[1].control == 100
+            and block[1].value == 0
+            and block[1].channel == channel
+        )
+        assert block[2].control == 6
+        assert block[2].value == MPE_BEND_RANGE_SEMITONES
+        assert block[2].channel == channel
+
+
+def test_mpe_voice_emits_program_cc74_noteon_bend_noteoff() -> None:
+    notes = _make_v3_table(
+        [
+            {
+                "event_id": "ev-1",
+                "partial_index": 1,  # harmonic to verify CC74 = 16
+                "midi_pitch": 72,
+                "start_utc": 0.0,
+                "duration_s": 0.5,
+                "velocity": 80,
+                "note_uid": "uid-1",
+            }
+        ]
+    )
+    contours = _make_contour_table(
+        [
+            {"note_uid": "uid-1", "frame_index": 0, "cents_from_pitch": 0.0},
+            {"note_uid": "uid-1", "frame_index": 1, "cents_from_pitch": 0.0},
+        ]
+    )
+    parsed = _parse_midi(notes_table_to_midi_bytes(notes, contour_table=contours))
+
+    voice_track = _track_by_name(parsed, "Voice 1")
+    program_changes = [m for m in voice_track if m.type == "program_change"]
+    cc74_messages = [
+        m for m in voice_track if m.type == "control_change" and m.control == 74
+    ]
+    note_ons = [m for m in voice_track if m.type == "note_on"]
+    note_offs = [m for m in voice_track if m.type == "note_off"]
+    pitchwheels = [m for m in voice_track if m.type == "pitchwheel"]
+
+    # H2 → program 11 (Vibraphone), CC74 = 16, exactly one note_on/note_off.
+    assert len(program_changes) == 1
+    assert program_changes[0].program == 11
+    assert program_changes[0].channel == 1
+
+    assert len(cc74_messages) == 1
+    assert cc74_messages[0].value == 16
+    assert cc74_messages[0].channel == 1
+
+    assert len(note_ons) == 1 and note_ons[0].note == 72
+    assert len(note_offs) == 1 and note_offs[0].note == 72
+    assert len(pitchwheels) >= 1
+
+
+def test_mpe_voice_steal_emits_note_off_at_steal_tick() -> None:
+    """17 overlapping notes force a steal — the stolen voice ends cleanly."""
+    rows = []
+    contours = []
+    for i in range(17):
+        uid = f"uid-{i:02d}"
+        rows.append(
+            {
+                "event_id": f"ev-{i}",
+                "partial_index": 0,
+                "midi_pitch": 60 + i,
+                "start_utc": float(i) * 0.05,  # all overlap at later starts
+                "duration_s": 2.0,
+                "velocity": 80,
+                "note_uid": uid,
+            }
+        )
+        contours.append({"note_uid": uid, "frame_index": 0, "cents_from_pitch": 0.0})
+        contours.append({"note_uid": uid, "frame_index": 1, "cents_from_pitch": 0.0})
+    notes = _make_v3_table(rows)
+    contour_table = _make_contour_table(contours)
+    parsed = _parse_midi(notes_table_to_midi_bytes(notes, contour_table=contour_table))
+
+    # Total note_on count across all member tracks should equal 17.
+    total_note_ons = 0
+    total_note_offs = 0
+    for track in parsed.tracks[2:]:
+        for msg in track:
+            if msg.type == "note_on" and msg.velocity > 0:
+                total_note_ons += 1
+            elif msg.type == "note_off":
+                total_note_offs += 1
+    assert total_note_ons == 17
+    # Every note_on has a matching note_off — no dangling notes from the steal.
+    assert total_note_offs == 17
+
+
+def test_mpe_harmonic_bend_stream_matches_parent_in_cents() -> None:
+    """Cents-conservation: H2's bend stream in cents = F0's."""
+    notes = _make_v3_table(
+        [
+            {
+                "event_id": "ev-1",
+                "partial_index": 0,
+                "midi_pitch": 60,
+                "start_utc": 0.0,
+                "duration_s": 1.0,
+                "velocity": 80,
+                "note_uid": "uid-f0",
+                "track_id": 0,
+                "f0_track_id": 0,
+            },
+            {
+                "event_id": "ev-1",
+                "partial_index": 1,
+                "midi_pitch": 72,
+                "start_utc": 0.0,
+                "duration_s": 1.0,
+                "velocity": 80,
+                "note_uid": "uid-h2",
+                "track_id": 1,
+                "f0_track_id": 0,
+            },
+        ]
+    )
+    # Both notes share the same cents_from_pitch trajectory.
+    contour_rows = []
+    for uid in ("uid-f0", "uid-h2"):
+        for i, cents in enumerate([-50.0, -20.0, 10.0, 40.0]):
+            contour_rows.append(
+                {"note_uid": uid, "frame_index": i, "cents_from_pitch": cents}
+            )
+    parsed = _parse_midi(
+        notes_table_to_midi_bytes(
+            notes, contour_table=_make_contour_table(contour_rows)
+        )
+    )
+
+    def _bend_values(track_name: str) -> list[int]:
+        track = _track_by_name(parsed, track_name)
+        return [m.pitch for m in track if m.type == "pitchwheel"]
+
+    # F0 → channel 1, H2 → channel 2 (longest-idle pick, deterministic).
+    f0_bends = _bend_values("Voice 1")
+    h2_bends = _bend_values("Voice 2")
+    assert f0_bends == h2_bends
+
+
+def test_mpe_deterministic_byte_output() -> None:
+    notes = _make_v3_table(
+        [
+            {
+                "event_id": f"ev-{i}",
+                "partial_index": 0,
+                "midi_pitch": 60 + i,
+                "start_utc": float(i) * 0.5,
+                "duration_s": 0.4,
+                "velocity": 80,
+                "note_uid": f"uid-{i}",
+            }
+            for i in range(5)
+        ]
+    )
+    contours = _make_contour_table(
+        [
+            {
+                "note_uid": f"uid-{i}",
+                "frame_index": j,
+                "cents_from_pitch": 0.0,
+            }
+            for i in range(5)
+            for j in range(3)
+        ]
+    )
+    a = notes_table_to_midi_bytes(notes, contour_table=contours)
+    b = notes_table_to_midi_bytes(notes, contour_table=contours)
+    assert a == b
+
+
+def test_mpe_round_trips_via_mido() -> None:
+    notes = _make_v3_table(
+        [
+            {
+                "event_id": "ev-1",
+                "partial_index": 0,
+                "midi_pitch": 60,
+                "start_utc": 0.0,
+                "duration_s": 0.5,
+                "velocity": 80,
+                "note_uid": "uid-1",
+            }
+        ]
+    )
+    contours = _make_contour_table(
+        [
+            {"note_uid": "uid-1", "frame_index": 0, "cents_from_pitch": 0.0},
+            {"note_uid": "uid-1", "frame_index": 1, "cents_from_pitch": 0.0},
+        ]
+    )
+    data = notes_table_to_midi_bytes(notes, contour_table=contours)
+    parsed = _parse_midi(data)
+    assert parsed.type == 1
+    assert len(parsed.tracks) == 1 + 1 + 15
+
+
+def test_mpe_empty_member_track_still_has_track_name() -> None:
+    """Even idle member channels emit a track_name + end_of_track."""
+    notes = _make_v3_table(
+        [
+            {
+                "event_id": "ev-1",
+                "partial_index": 0,
+                "midi_pitch": 60,
+                "start_utc": 0.0,
+                "duration_s": 0.3,
+                "velocity": 80,
+                "note_uid": "uid-1",
+            }
+        ]
+    )
+    contours = _make_contour_table(
+        [
+            {"note_uid": "uid-1", "frame_index": 0, "cents_from_pitch": 0.0},
+            {"note_uid": "uid-1", "frame_index": 1, "cents_from_pitch": 0.0},
+        ]
+    )
+    parsed = _parse_midi(notes_table_to_midi_bytes(notes, contour_table=contours))
+
+    voice2 = _track_by_name(parsed, "Voice 2")
+    note_messages = [m for m in voice2 if m.type in {"note_on", "note_off"}]
+    assert note_messages == []
+    last_message = voice2[-1]
+    assert getattr(last_message, "type", None) == "end_of_track"
+
+
+def test_v3_table_without_contour_raises() -> None:
+    notes = _make_v3_table(
+        [
+            {
+                "event_id": "ev-1",
+                "partial_index": 0,
+                "midi_pitch": 60,
+                "start_utc": 0.0,
+                "duration_s": 0.5,
+                "velocity": 80,
+                "note_uid": "uid-1",
+            }
+        ]
+    )
+    with pytest.raises(ValueError, match="contour"):
+        notes_table_to_midi_bytes(notes)
+
+
+def test_mpe_partial_index_text_meta_appears_on_master_track() -> None:
+    notes = _make_v3_table(
+        [
+            {
+                "event_id": "ev-1",
+                "partial_index": 3,
+                "midi_pitch": 64,
+                "start_utc": 0.5,
+                "duration_s": 0.3,
+                "velocity": 80,
+                "note_uid": "uid-1",
+            }
+        ]
+    )
+    contours = _make_contour_table(
+        [
+            {"note_uid": "uid-1", "frame_index": 0, "cents_from_pitch": 0.0},
+            {"note_uid": "uid-1", "frame_index": 1, "cents_from_pitch": 0.0},
+        ]
+    )
+    parsed = _parse_midi(notes_table_to_midi_bytes(notes, contour_table=contours))
+    master = _track_by_name(parsed, "MPE Master")
+    texts = [m.text for m in master if getattr(m, "type", None) == "text"]
+    assert "p3" in texts
