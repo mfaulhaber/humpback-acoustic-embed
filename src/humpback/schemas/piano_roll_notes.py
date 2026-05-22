@@ -50,7 +50,12 @@ PianoRollNotesStatusResponse = Union[PianoRollNotesJobRead, PianoRollNotesStatus
 
 
 class PianoRollNote(BaseModel):
-    """One MIDI note row decoded from ``event_notes_{version}.parquet``."""
+    """One MIDI note row decoded from ``event_notes_{version}.parquet``.
+
+    The trailing optional fields (``note_uid``, ``f0_track_id``,
+    ``contour_frame_count``) are populated by v3 sidecars only; v1/v2
+    rows leave them as ``None`` so legacy responses keep deserializing.
+    """
 
     event_id: str
     event_token: int
@@ -62,6 +67,9 @@ class PianoRollNote(BaseModel):
     velocity: int
     peak_magnitude: float
     track_id: int
+    note_uid: Optional[str] = None
+    f0_track_id: Optional[int] = None
+    contour_frame_count: Optional[int] = None
 
 
 class PianoRollNotesResponse(BaseModel):

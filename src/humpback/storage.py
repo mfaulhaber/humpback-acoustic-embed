@@ -155,6 +155,21 @@ def event_encoder_ridges_path(
     )
 
 
+def event_encoder_note_contours_path(
+    storage_root: Path, job_id: str, extractor_version: str
+) -> Path:
+    """Path to the per-frame note contour sidecar (Piano Roll Notes v3+).
+
+    One row per (note_uid, frame_index) per ADR-069 §6.3 — feeds the MPE
+    pitch-bend stream and the frontend ribbon renderer. Co-located with
+    the ``event_notes_{version}.parquet`` sidecar.
+    """
+    return (
+        event_encoder_dir(storage_root, job_id)
+        / f"event_note_contours_{extractor_version}.parquet"
+    )
+
+
 def exports_root(storage_root: Path) -> Path:
     """Root directory for export artifacts (e.g. MIDI files)."""
     return storage_root / "exports"
