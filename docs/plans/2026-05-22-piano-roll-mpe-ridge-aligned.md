@@ -102,7 +102,8 @@ Phase 5 ships the docs alongside Phase 4.
   `note_uid`.
 - [ ] When `ridge_sidecar_rows` is `None`, the extractor recomputes ridges
   in-process via `humpback.processing.ridge_path.compute_ridge_path()` using
-  the wider 8500 Hz ceiling (spec §5.1).
+  the same 6 kHz ceiling the encoder used when writing the sidecar so the
+  fallback is indistinguishable from the persisted path (spec §5.1).
 - [ ] Subharmonic refinement (spec §5.2) is implemented with `k_sub = 2.0`
   and 5-frame majority-vote smoothing; per-frame `subharmonic_octave` is
   exposed on the contour rows.

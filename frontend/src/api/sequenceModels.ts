@@ -787,12 +787,30 @@ export function usePianoRollNotes(
 }
 
 /**
+ * 32-bit FNV-1a content hash over the joined uid sequence, returned as
+ * an 8-char base-36 string. Used to key the React Query batch entry
+ * without inlining ~74 KB of UUIDs into the queryKey. Collision
+ * probability for unrelated viewports is ~1/2^32 — orders of magnitude
+ * tighter than length-plus-first-and-last, which collides on any two
+ * batches sharing those three fields but differing in their interior.
+ */
+function fnv1aHex(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/**
  * Batch-fetches v3 ribbon contours for the requested ``note_uid``s and
  * populates a per-uid React Query cache entry for each row returned.
  *
- * The batch query itself uses a short content-hash key (length plus the
- * first and last sorted uid) so the queryKey doesn't carry ~74 KB of
- * UUIDs at full batch. Per-uid cache entries — keyed
+ * The batch query itself uses a 32-bit FNV-1a content hash of the
+ * sorted-uid join as the queryKey, so the key doesn't inline ~74 KB of
+ * UUIDs but still discriminates batches that differ only in their
+ * interior. Per-uid cache entries — keyed
  * ``["piano-roll-note-contour", jobId, ev, uid]`` — let downstream
  * consumers read a single note's contour without re-fetching, and let
  * callers that already filter against this cache skip a network round
@@ -808,7 +826,7 @@ export function usePianoRollNoteContours(
   const qc = useQueryClient();
   const sortedUids = [...noteUids].sort();
   const batchKey = sortedUids.length
-    ? `${sortedUids.length}:${sortedUids[0]}:${sortedUids[sortedUids.length - 1]}`
+    ? `${sortedUids.length}:${fnv1aHex(sortedUids.join(","))}`
     : "empty";
   return useQuery({
     queryKey: [

@@ -502,6 +502,13 @@ def _build_mpe_member_track(
         # on a voice steal, the stolen note's note_off precedes the new
         # voice's bend reset and note_on — preventing a brief two-on
         # stack when the steal lands on a same-pitch voice.
+        #
+        # Sort tuple is ``(absolute_tick, (priority, voice_index, _))``.
+        # ``voice_index`` is *this* voice's positional index in the
+        # per-channel ``voices`` list, not a global ordering — within a
+        # tick two different voices may interleave, but the priority
+        # class still dominates (note_off events on any voice fire
+        # before note_on events on any voice at the same tick).
         for bend_tick, bend_value in bend_events:
             events.append(
                 (

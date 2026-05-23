@@ -134,7 +134,7 @@ Per event, the v3 extractor runs five stages.
 ```
 compute_ridge_path(
     spectra, freqs, *, sample_rate, hop_length,
-    min_frequency_hz=100.0, max_frequency_hz=8500.0,
+    min_frequency_hz=100.0, max_frequency_hz=6000.0,
     candidate_count=5, smoothness_penalty=8.0,
     peak_prominence_ratio=0.0,
 ) -> RidgePathResult
@@ -144,10 +144,13 @@ compute_ridge_path(
 `strengths`, `energy_ratios`, `total_frames`). Encoder code imports from the
 new module; behavior is byte-identical.
 
-`max_frequency_hz` default rises from 6000 to 8500 Hz to match the new pitch
-range ceiling (~MIDI 120). The encoder retains its 6 kHz default for
-descriptor computation (ADR-063 contract unchanged); only the notes worker
-passes the wider ceiling.
+`max_frequency_hz` stays at 6000 Hz in both the encoder (ADR-063 contract) and
+the notes worker's in-process fallback. Matching the encoder's persisted
+sidecar makes the fallback path produce ridges indistinguishable from the
+sidecar (honors ADR-069 §10 "Output is identical"). Humpback F0s sit well
+below this ceiling; harmonic siblings are caught by the CQT (its 264 bins at
+36 bins/octave from `fmin=27.5` Hz top out near ~4.4 kHz) rather than by the
+STFT ridge.
 
 ### 5.2 Subharmonic refinement
 

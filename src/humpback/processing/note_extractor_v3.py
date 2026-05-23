@@ -61,17 +61,20 @@ def _log_strength(strength: float) -> float:
 class STFTParams:
     """STFT settings for in-process ridge recomputation.
 
-    Used only when the encoder ridge sidecar is unavailable. The defaults
-    mirror the encoder's descriptor STFT (``n_fft=1024``, ``hop=512``)
-    but the notes extractor resamples to its own ``sample_rate`` (the
-    CQT's ``target_sample_rate``) so STFT and CQT frame grids share an
-    integer alignment.
+    Used only when the encoder ridge sidecar is unavailable. Defaults
+    mirror the encoder's descriptor STFT (``n_fft=1024``, ``hop=512``,
+    ``max_frequency_hz=6000``) so the fallback produces ridges
+    indistinguishable from the persisted sidecar (ADR-069 §10 "Output
+    is identical"). The notes extractor resamples to its own
+    ``sample_rate`` (the CQT's ``target_sample_rate``) so STFT and CQT
+    frame grids share an integer alignment. Humpback F0s are well below
+    6 kHz; the CQT (capped near 4.4 kHz) is what searches harmonics.
     """
 
     n_fft: int = 1024
     hop_length: int = 512
     min_frequency_hz: float = 100.0
-    max_frequency_hz: float = 8500.0
+    max_frequency_hz: float = 6000.0
     candidate_count: int = 5
     smoothness_penalty: float = 8.0
     peak_prominence_ratio: float = 0.0
@@ -197,8 +200,10 @@ def extract_notes_v3(
             to this event (one mapping per frame with the keys
             ``frame_time_offset_s``, ``log_frequency``, ``strength``,
             ``energy_ratio``). When ``None`` the extractor recomputes the
-            ridge in-process via :func:`compute_ridge_path` with the
-            spec's wider ``max_frequency_hz`` ceiling.
+            ridge in-process via :func:`compute_ridge_path` with the same
+            6 kHz ``max_frequency_hz`` ceiling the encoder uses, so the
+            fallback path produces ridges indistinguishable from the
+            persisted sidecar (ADR-069 §10).
 
     Returns:
         ``NotesV3Result`` with notes and contour rows aligned by
@@ -528,6 +533,11 @@ def _segment_f0_runs(
                 current = []
                 gap_count = 0
                 last_octave = None
+                # Explicit refresh (vs. the gap-count branch above): the
+                # ``continue`` below skips the bottom-of-loop append, so
+                # without this line ``last_frame_index`` would stay frozen
+                # at the previous accepted frame and the next iteration
+                # would re-count this below-floor frame's skip.
                 last_frame_index = frame.frame_index
                 continue
         else:

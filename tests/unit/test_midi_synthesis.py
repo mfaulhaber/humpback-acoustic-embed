@@ -735,6 +735,34 @@ def test_mpe_voice_steal_emits_note_off_at_steal_tick() -> None:
     assert total_note_ons == 17
     # Every note_on has a matching note_off — no dangling notes from the steal.
     assert total_note_offs == 17
+    # On any channel, every same-tick (note_off, note_on) pair from a steal
+    # must list note_off before note_on. Otherwise the replacement starts
+    # before the stolen voice ends and DAWs see a degenerate zero-length
+    # tail or, worse, two notes overlapping on a monophonic MPE channel.
+    for track in parsed.tracks[2:]:
+        running_tick = 0
+        prev_event: tuple[int, str] | None = None
+        for msg in track:
+            running_tick += msg.time
+            if msg.type not in ("note_on", "note_off"):
+                prev_event = None
+                continue
+            kind = (
+                "note_off"
+                if (msg.type == "note_off" or msg.velocity == 0)
+                else "note_on"
+            )
+            if (
+                prev_event is not None
+                and prev_event[0] == running_tick
+                and prev_event[1] == "note_on"
+                and kind == "note_off"
+            ):
+                raise AssertionError(
+                    f"same-tick note_on precedes note_off on channel "
+                    f"{msg.channel} at tick {running_tick}"
+                )
+            prev_event = (running_tick, kind)
 
 
 def test_mpe_bend_ticks_track_contour_time_offset() -> None:

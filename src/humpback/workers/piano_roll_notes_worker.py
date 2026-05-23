@@ -440,7 +440,7 @@ def _resolve_params(params_json: str) -> _ResolvedParams:
             n_fft=int(stft_raw.get("n_fft", 1024)),
             hop_length=int(stft_raw.get("hop_length", 512)),
             min_frequency_hz=float(stft_raw.get("min_frequency_hz", 100.0)),
-            max_frequency_hz=float(stft_raw.get("max_frequency_hz", 8500.0)),
+            max_frequency_hz=float(stft_raw.get("max_frequency_hz", 6000.0)),
             candidate_count=int(stft_raw.get("candidate_count", 5)),
             smoothness_penalty=float(stft_raw.get("smoothness_penalty", 8.0)),
             peak_prominence_ratio=float(stft_raw.get("peak_prominence_ratio", 0.0)),

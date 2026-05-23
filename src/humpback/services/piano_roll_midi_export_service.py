@@ -262,7 +262,11 @@ async def _latest_complete_notes_version(
     that completed *after* v3 still defers to v3 — users wanting v2 must
     pin via ``extractor_version=`` explicitly. ``finished_at desc`` is a
     deterministic tiebreaker if two rows share the same version string
-    (a re-run that lands at the same version).
+    (a re-run that lands at the same version). Lexicographic ordering
+    assumes single-digit ``vN`` suffixes; a future ``v10`` would sort
+    *before* ``v2`` and break this. Switch to integer-suffix parsing or
+    zero-padded names (``v01``/``v02``/.../``v10``) before introducing a
+    two-digit version.
     """
     result = await session.execute(
         select(PianoRollNotesJob.extractor_version)

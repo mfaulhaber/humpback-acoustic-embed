@@ -121,6 +121,13 @@ const DEFAULT_FREQUENCY_MAX = 2000;
 const DEFAULT_RIDGE_FREQUENCY_MAX = 6000;
 const FREQUENCY_OPTIONS = [1500, 2000, 3000, 4000, 5000, 6000];
 const CONTOUR_BATCH_LIMIT = 2000;
+// Bound the per-page contour cache so a long pan across a job with
+// millions of v3 notes does not retain every contour for the page
+// lifetime. 50_000 covers ~25 full viewports at the batch cap and is
+// dwarfed by typical browser tab memory budgets; FIFO eviction is fine
+// because the access pattern is dominated by the current viewport, not
+// long-tail re-hits.
+const CONTOUR_CACHE_CAP = 50000;
 
 export function EventEncoderPianoRollPage() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -773,11 +780,21 @@ function EventEncoderPianoRollViewer({
   useEffect(() => {
     if (!contourFetched) return;
     let changed = false;
+    const cache = contourCacheRef.current;
     for (const [uid, rows] of Object.entries(contourFetched.contours)) {
-      if (!contourCacheRef.current.has(uid)) {
-        contourCacheRef.current.set(uid, rows);
+      if (!cache.has(uid)) {
+        cache.set(uid, rows);
         changed = true;
       }
+    }
+    // FIFO eviction: Map preserves insertion order, so the oldest entry
+    // is the first key. Drop in a loop because a single batch can push
+    // the cache up to CONTOUR_BATCH_LIMIT entries past the cap.
+    while (cache.size > CONTOUR_CACHE_CAP) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+      changed = true;
     }
     if (changed) {
       setContourVersion((v) => v + 1);

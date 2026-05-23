@@ -8,6 +8,8 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Response
 import numpy as np
+import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from humpback.api.deps import SessionDep, SettingsDep
@@ -639,15 +641,20 @@ async def get_piano_roll_note_contours(
             ),
         )
 
-    requested = set(body.note_uids)
     contours: dict[str, list[PianoRollNoteContourFrame]] = {}
-    if requested:
+    if body.note_uids:
         table = pq.read_table(contours_path)
-        rows = table.to_pylist()
-        for row in rows:
+        # Mirror the worker's push-down pattern: deduplicate uids and let
+        # PyArrow filter the table column-wise rather than materializing
+        # the rows in Python and probing a set per row.
+        unique_uids = list({uid for uid in body.note_uids})
+        mask = pc.is_in(  # type: ignore[attr-defined]
+            table.column("note_uid"),
+            value_set=pa.array(unique_uids, type=pa.string()),
+        )
+        filtered = table.filter(mask)
+        for row in filtered.to_pylist():
             uid = str(row["note_uid"])
-            if uid not in requested:
-                continue
             contours.setdefault(uid, []).append(
                 PianoRollNoteContourFrame(
                     frame_index=int(row["frame_index"]),

@@ -63,10 +63,10 @@
   F0 source. The Event Encoder worker persists per-event ridge contours to
   `event_encoders/{job_id}/event_ridges_{tokenizer_version}.parquet`; the
   notes worker consumes the sidecar when present and falls back to
-  in-process recompute when it is absent. Encoder descriptor outputs are
-  byte-identical before and after the extraction (the encoder still passes
-  its 6 kHz default `max_frequency_hz`; the notes worker passes the wider
-  8500 Hz ceiling).
+  in-process recompute when it is absent. Both paths use the same 6 kHz
+  `max_frequency_hz` so the fallback ridges are indistinguishable from
+  the persisted sidecar (ADR-069 §10). Encoder descriptor outputs are
+  byte-identical before and after the extraction.
 - Piano Roll Notes v3 pitch contours are sub-semitone and persisted: one
   row per frame per note in
   `event_encoders/{job_id}/event_note_contours_v3.parquet`, keyed on
