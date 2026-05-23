@@ -26,12 +26,13 @@ from humpback.models.audio import AudioFile
 from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
 from humpback.models.processing import JobStatus
 from humpback.models.sequence_models import ContinuousEmbeddingJob, EventEncoderJob
+from humpback.processing.ridge_path import RidgePathResult
 from humpback.sequence_models.event_encoder import (
     ChunkEmbedding,
     DESCRIPTOR_ORDER,
     EventInterval,
     build_event_embedding,
-    compute_acoustic_descriptors,
+    compute_acoustic_features,
     compute_gap_to_previous,
     descriptor_vector,
 )
@@ -50,6 +51,7 @@ from humpback.storage import (
     event_encoder_manifest_path,
     event_encoder_preprocess_path,
     event_encoder_report_path,
+    event_encoder_ridges_path,
     event_encoder_sequences_path,
     event_encoder_tokens_path,
     event_encoder_vectors_path,
@@ -119,6 +121,18 @@ TOKEN_SEQUENCE_SCHEMA = pa.schema(
 )
 
 
+EVENT_RIDGE_SCHEMA = pa.schema(
+    [
+        pa.field("event_id", pa.string(), nullable=False),
+        pa.field("frame_index", pa.uint32(), nullable=False),
+        pa.field("frame_time_offset_s", pa.float32(), nullable=False),
+        pa.field("log_frequency", pa.float32(), nullable=False),
+        pa.field("strength", pa.float32(), nullable=False),
+        pa.field("energy_ratio", pa.float32(), nullable=False),
+    ]
+)
+
+
 EventAudioProvider = Callable[[Event, int], np.ndarray]
 
 
@@ -130,6 +144,7 @@ class _EncodedEvent:
     coverage_fraction: float
     pool_vector: np.ndarray
     descriptors: dict[str, float]
+    ridge_path: RidgePathResult
 
 
 def _atomic_write_parquet(table: pa.Table, dst: Path) -> None:
@@ -183,6 +198,11 @@ def _cleanup_partial_artifacts(job_dir: Path) -> None:
             except OSError:
                 logger.warning("failed to delete %s", path, exc_info=True)
     for path in job_dir.glob("kmeans_k*.joblib"):
+        try:
+            path.unlink()
+        except OSError:
+            logger.warning("failed to delete %s", path, exc_info=True)
+    for path in job_dir.glob("event_ridges_*.parquet"):
         try:
             path.unlink()
         except OSError:
@@ -323,9 +343,17 @@ async def run_event_encoder_job(
 
         vector_rows = _build_event_vector_rows(encoded_events, preprocess)
         token_rows, sequence_rows = _build_token_rows(encoded_events, tokenization)
+        ridge_rows = _build_event_ridge_rows(
+            encoded_events,
+            hop_length=int(descriptor_config.get("hop_length", 512)),
+            sample_rate=int(descriptor_config.get("target_sample_rate", 16000)),
+        )
         vector_path = event_encoder_vectors_path(settings.storage_root, job_id)
         token_path = event_encoder_tokens_path(settings.storage_root, job_id)
         sequence_path = event_encoder_sequences_path(settings.storage_root, job_id)
+        ridges_path = event_encoder_ridges_path(
+            settings.storage_root, job_id, job.tokenizer_version
+        )
         manifest_path = event_encoder_manifest_path(settings.storage_root, job_id)
         report_path = event_encoder_report_path(settings.storage_root, job_id)
         preprocess_path = event_encoder_preprocess_path(settings.storage_root, job_id)
@@ -347,6 +375,10 @@ async def run_event_encoder_job(
         _atomic_write_parquet(
             pa.Table.from_pylist(sequence_rows, schema=TOKEN_SEQUENCE_SCHEMA),
             sequence_path,
+        )
+        _atomic_write_parquet(
+            pa.Table.from_pylist(ridge_rows, schema=EVENT_RIDGE_SCHEMA),
+            ridges_path,
         )
         joblib.dump(
             {
@@ -373,6 +405,8 @@ async def run_event_encoder_job(
             effective_pca_dim=preprocess.effective_pca_dim,
             valid_k_values=sorted(tokenization.tokenizations),
             invalid_k_values=tokenization.invalid_k_values,
+            ridges_path=str(ridges_path),
+            ridge_row_count=len(ridge_rows),
         )
         report = _build_report(
             manifest=manifest,
@@ -566,7 +600,7 @@ async def _build_encoded_events(
             continue
 
         audio = audio_provider(raw_event, target_sr)
-        descriptors = compute_acoustic_descriptors(
+        features = compute_acoustic_features(
             audio,
             sample_rate=target_sr,
             gap_to_previous=gaps[interval.event_id],
@@ -621,7 +655,8 @@ async def _build_encoded_events(
                 chunk_count=embedding.chunk_count,
                 coverage_fraction=embedding.coverage_fraction,
                 pool_vector=embedding.pool_vector,
-                descriptors=descriptors,
+                descriptors=features.descriptors,
+                ridge_path=features.ridge_path,
             )
         )
     return encoded, skip_reasons
@@ -666,6 +701,47 @@ def _build_event_vector_rows(
         for name in DESCRIPTOR_ORDER:
             row[name] = float(descriptors[name])
         rows.append(row)
+    return rows
+
+
+def _build_event_ridge_rows(
+    encoded_events: list[_EncodedEvent],
+    *,
+    hop_length: int,
+    sample_rate: int,
+) -> list[dict[str, Any]]:
+    """Flatten per-event ridge contours into parquet-ready rows.
+
+    ``frame_time_offset_s`` is recomputed from ``frame_index`` and the
+    encoder's hop/sample-rate so the column stays meaningful even for events
+    where the ridge tracker dropped some frames (the path's own
+    ``frame_times`` records the absolute time of each retained frame).
+    """
+    if hop_length <= 0 or sample_rate <= 0:
+        return []
+    seconds_per_frame = float(hop_length) / float(sample_rate)
+    rows: list[dict[str, Any]] = []
+    for encoded in encoded_events:
+        ridge = encoded.ridge_path
+        if ridge.log_frequencies.size == 0:
+            continue
+        log_frequencies = ridge.log_frequencies
+        strengths = ridge.strengths
+        energy_ratios = ridge.energy_ratios
+        frame_times = ridge.frame_times
+        for slot, frame_time in enumerate(frame_times):
+            frame_idx = int(round(float(frame_time) / seconds_per_frame))
+            rows.append(
+                {
+                    "event_id": encoded.event.event_id,
+                    "frame_index": int(max(0, frame_idx)),
+                    "frame_time_offset_s": float(frame_time),
+                    "log_frequency": float(log_frequencies[slot]),
+                    "strength": float(strengths[slot]),
+                    "energy_ratio": float(energy_ratios[slot]),
+                }
+            )
+    rows.sort(key=lambda row: (row["event_id"], row["frame_index"]))
     return rows
 
 
@@ -736,6 +812,8 @@ def _build_manifest(
     effective_pca_dim: int,
     valid_k_values: list[int],
     invalid_k_values: list[int],
+    ridges_path: str,
+    ridge_row_count: int,
 ) -> dict[str, Any]:
     return {
         "job_id": job.id,
@@ -766,6 +844,8 @@ def _build_manifest(
         "encoded_events": encoded_events,
         "skipped_events": total_events - encoded_events,
         "skip_reasons": skip_reasons,
+        "event_ridges_path": ridges_path,
+        "event_ridge_row_count": ridge_row_count,
     }
 
 

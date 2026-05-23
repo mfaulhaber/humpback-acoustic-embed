@@ -1,11 +1,23 @@
 # Event Encoder MIDI Channelization & Per-Frame Harmonic Labeling — Design Spec
 
 **Date:** 2026-05-20
-**Status:** Draft
+**Status:** Approved (superseded in part)
 **Owner:** Sequence Models / Event Encoder Piano Roll
 **Supersedes (in part):**
 [2026-05-20-piano-roll-midi-notes-design.md](2026-05-20-piano-roll-midi-notes-design.md) §6.5 (harmonic labeling) and
 [2026-05-20-piano-roll-midi-export-design.md](2026-05-20-piano-roll-midi-export-design.md) §10 (single-channel MIDI synthesis).
+
+> §5 (per-frame harmonic labeler) and §6 (slim seven-channel MIDI synthesis)
+> are superseded by
+> [2026-05-22-piano-roll-mpe-ridge-aligned-design.md](2026-05-22-piano-roll-mpe-ridge-aligned-design.md)
+> (ADR-069). The v3 architecture has no harmonic prior step — harmonics are
+> derived structurally at `n · f₀(t)` from a shared STFT-ridge F0 source —
+> and the export switches from the slim seven-channel layout to MPE Lower
+> Zone with 15 member channels and per-voice ±24-semitone pitch bend.
+> Partial identity is preserved through per-note `program_change`, CC 74,
+> and master-track text meta-events. The `HarmonicParams` dataclass and
+> `label_harmonics()` are retired. Legacy v1/v2 sidecars and `.mid` files
+> remain readable on disk.
 
 ## 1. Summary
 

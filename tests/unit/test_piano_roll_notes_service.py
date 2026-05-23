@@ -239,6 +239,10 @@ async def test_auto_enqueue_after_encoder_complete_creates_row(session) -> None:
     assert job is not None
     assert job.event_encoder_job_id == encoder_id
     assert job.status == JobStatus.queued.value
+    # ADR-069 made v3 the default extractor; auto-enqueue must use it so
+    # newly-completing encoders flow into the MPE-ready pipeline.
+    assert job.extractor_version == "v3"
+    assert job.extractor_version == DEFAULT_EXTRACTOR_VERSION
 
 
 @pytest.mark.asyncio

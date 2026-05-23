@@ -159,10 +159,17 @@ export function MidiExportButton({
           {formatUtc(row.window_end_utc)} (
           {(row.window_end_utc - row.window_start_utc).toFixed(1)} s)
         </span>
+        <span
+          className="text-[11px] text-zinc-500"
+          data-testid="eej-piano-roll-midi-export-format"
+        >
+          Format: {row.extractor_version === "v3" ? "MPE v3" : row.extractor_version}
+        </span>
         <a
           className="inline-flex h-8 items-center rounded border border-zinc-700 bg-zinc-900 px-2 text-xs text-zinc-100 hover:bg-zinc-800"
           href={pianoRollMidiExportDownloadUrl(jobId)}
           download
+          title="MPE Standard MIDI File (Type 1). Best in DAWs that support MIDI Polyphonic Expression — Logic Pro, Ableton Live 11+, Cubase, Bitwig, Reaper-with-MPE."
           data-testid="eej-piano-roll-midi-export-download"
         >
           Download MIDI{row.n_bytes != null ? ` (${formatBytes(row.n_bytes)})` : ""}

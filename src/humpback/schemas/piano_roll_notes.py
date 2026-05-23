@@ -50,7 +50,12 @@ PianoRollNotesStatusResponse = Union[PianoRollNotesJobRead, PianoRollNotesStatus
 
 
 class PianoRollNote(BaseModel):
-    """One MIDI note row decoded from ``event_notes_{version}.parquet``."""
+    """One MIDI note row decoded from ``event_notes_{version}.parquet``.
+
+    The trailing optional fields (``note_uid``, ``f0_track_id``,
+    ``contour_frame_count``) are populated by v3 sidecars only; v1/v2
+    rows leave them as ``None`` so legacy responses keep deserializing.
+    """
 
     event_id: str
     event_token: int
@@ -62,6 +67,9 @@ class PianoRollNote(BaseModel):
     velocity: int
     peak_magnitude: float
     track_id: int
+    note_uid: Optional[str] = None
+    f0_track_id: Optional[int] = None
+    contour_frame_count: Optional[int] = None
 
 
 class PianoRollNotesResponse(BaseModel):
@@ -73,6 +81,42 @@ class PianoRollNotesResponse(BaseModel):
     notes: list[PianoRollNote] = Field(default_factory=list)
 
 
+class PianoRollNoteContourFrame(BaseModel):
+    """One frame row from ``event_note_contours_v3.parquet``."""
+
+    frame_index: int
+    time_offset_s: float
+    cents_from_pitch: float
+    harmonic_strength: float
+    subharmonic_octave: int
+
+
+class PianoRollNoteContourResponse(BaseModel):
+    """Per-``note_uid`` contour payload for the v3 ribbon renderer.
+
+    ``contours`` is a mapping from ``note_uid`` to its ascending-frame
+    list. Unknown ``note_uid``s in the request are silently dropped from
+    the response (partial misses are not errors).
+    """
+
+    job_id: str
+    extractor_version: str
+    n_notes: int
+    contours: dict[str, list[PianoRollNoteContourFrame]] = Field(default_factory=dict)
+
+
+class PianoRollNoteContourRequest(BaseModel):
+    """POST body for the contours endpoint.
+
+    Lives in the body rather than the query string so a viewport with
+    thousands of UUID-shaped ``note_uid`` entries does not blow past the
+    dev server's HTTP header size limit (~8 KB).
+    """
+
+    note_uids: list[str] = Field(default_factory=list)
+    extractor_version: Optional[str] = None
+
+
 __all__ = [
     "PianoRollNotesJobStatus",
     "PianoRollNotesJobRead",
@@ -81,4 +125,7 @@ __all__ = [
     "PianoRollNotesStatusResponse",
     "PianoRollNote",
     "PianoRollNotesResponse",
+    "PianoRollNoteContourFrame",
+    "PianoRollNoteContourResponse",
+    "PianoRollNoteContourRequest",
 ]

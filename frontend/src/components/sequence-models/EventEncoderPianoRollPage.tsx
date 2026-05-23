@@ -10,12 +10,15 @@ import { ArrowLeft, ChevronDown, ChevronUp, Pause, Play } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 
 import {
+  ApiError,
   type EventEncoderTimelineEvent,
   type EventEncoderTimelineResponse,
   type PianoRollNote,
+  type PianoRollNoteContourFrame,
   useCreatePianoRollNotesJob,
   useEventEncoderJob,
   useEventEncoderTimeline,
+  usePianoRollNoteContours,
   usePianoRollNotes,
   usePianoRollNotesStatus,
 } from "@/api/sequenceModels";
@@ -38,6 +41,7 @@ import {
   MIDI_MIN_PITCH,
   MIDI_PITCH_COUNT,
   isBlackKey,
+  isInPianoBand,
   midiNoteName,
   midiPitchAtY,
   midiPitchToY,
@@ -116,6 +120,14 @@ const MIN_FREQUENCY_SPAN_HZ = 100;
 const DEFAULT_FREQUENCY_MAX = 2000;
 const DEFAULT_RIDGE_FREQUENCY_MAX = 6000;
 const FREQUENCY_OPTIONS = [1500, 2000, 3000, 4000, 5000, 6000];
+const CONTOUR_BATCH_LIMIT = 2000;
+// Bound the per-page contour cache so a long pan across a job with
+// millions of v3 notes does not retain every contour for the page
+// lifetime. 50_000 covers ~25 full viewports at the batch cap and is
+// dwarfed by typical browser tab memory budgets; FIFO eviction is fine
+// because the access pattern is dominated by the current viewport, not
+// long-tail re-hits.
+const CONTOUR_CACHE_CAP = 50000;
 
 export function EventEncoderPianoRollPage() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -728,6 +740,98 @@ function EventEncoderPianoRollViewer({
     );
   }, [notesData, timeRange.end, timeRange.start]);
 
+  // Accumulated contour cache keyed by note_uid. Panning across the
+  // timeline keeps previously-fetched ribbons available without
+  // re-requesting them. Cache survives so long as the page stays
+  // mounted; switching jobs replaces the cache by remount.
+  const contourCacheRef = useRef<Map<string, PianoRollNoteContourFrame[]>>(
+    new Map(),
+  );
+  const [contourVersion, setContourVersion] = useState(0);
+
+  // Server caps a single /notes/contours request at 2000 note_uids
+  // (ADR-069 §7). On a dense viewport the uncached set easily exceeds
+  // that, so request one batch per render: each successful batch bumps
+  // `contourVersion`, which re-runs this memo, drops the now-cached uids,
+  // and exposes the next chunk for the hook to fetch.
+  const uncachedContourUids = useMemo(() => {
+    if (!isNotesMode) return [] as string[];
+    const out: string[] = [];
+    for (const note of visibleNotes) {
+      if (!note.note_uid) continue;
+      if (contourCacheRef.current.has(note.note_uid)) continue;
+      out.push(note.note_uid);
+      if (out.length >= CONTOUR_BATCH_LIMIT) break;
+    }
+    return out;
+    // contourVersion is intentionally a dep so successive batches fire
+    // as previous ones land in the cache.
+  }, [isNotesMode, visibleNotes, contourVersion]);
+
+  const contourQuery = usePianoRollNoteContours(
+    timeline.job_id,
+    uncachedContourUids,
+    isNotesMode && uncachedContourUids.length > 0,
+    notesData?.extractor_version,
+  );
+  const contourFetchError = contourQuery.isError;
+  const contourFetched = contourQuery.data;
+
+  useEffect(() => {
+    if (!contourFetched) return;
+    let changed = false;
+    const cache = contourCacheRef.current;
+    for (const [uid, rows] of Object.entries(contourFetched.contours)) {
+      if (!cache.has(uid)) {
+        cache.set(uid, rows);
+        changed = true;
+      }
+    }
+    // FIFO eviction: Map preserves insertion order, so the oldest entry
+    // is the first key. Drop in a loop because a single batch can push
+    // the cache up to CONTOUR_BATCH_LIMIT entries past the cap.
+    while (cache.size > CONTOUR_CACHE_CAP) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+      changed = true;
+    }
+    if (changed) {
+      setContourVersion((v) => v + 1);
+    }
+  }, [contourFetched]);
+
+  const contourToastedRef = useRef(false);
+  useEffect(() => {
+    if (!isNotesMode) {
+      contourToastedRef.current = false;
+      return;
+    }
+    if (contourFetchError && !contourToastedRef.current) {
+      contourToastedRef.current = true;
+      toast({
+        title: "Contours unavailable",
+        description: "Some notes are showing flat — contour fetch failed.",
+        variant: "destructive",
+      });
+    }
+  }, [contourFetchError, isNotesMode]);
+
+  const visibleContours = useMemo(() => {
+    const out = new Map<string, PianoRollNoteContourFrame[]>();
+    for (const note of visibleNotes) {
+      if (!note.note_uid) continue;
+      const rows = contourCacheRef.current.get(note.note_uid);
+      if (rows) {
+        out.set(note.note_uid, rows);
+      }
+    }
+    // Tie the memo to ``contourVersion`` so newly-arrived rows
+    // re-render even though the Map identity is stable.
+    void contourVersion;
+    return out;
+  }, [contourVersion, visibleNotes]);
+
   const hoveredNote =
     hoveredNoteIndex == null ? null : visibleNotes[hoveredNoteIndex] ?? null;
 
@@ -736,10 +840,59 @@ function EventEncoderPianoRollViewer({
       const transform = makeTransform();
       const rowHeight =
         (transform.plotBottom - transform.plotTop) / MIDI_PITCH_COUNT;
+      // Polyline ribbons can swing beyond the row's vertical extent, so
+      // ribbon notes use distance-to-polyline; flat-bar notes (no
+      // contour fetched) keep the row-height bounding box. ADR-069 §9.3
+      // specifies ≤ 6 px hit-test radius in canvas space.
+      const hitRadius = 6;
+      const hitRadiusSq = hitRadius * hitRadius;
       for (let i = visibleNotes.length - 1; i >= 0; i -= 1) {
         const note = visibleNotes[i];
         const left = transform.timeToX(note.start_utc);
         const right = transform.timeToX(note.start_utc + note.duration_s);
+        if (x < left - hitRadius || x > right + hitRadius) continue;
+        const contour = note.note_uid
+          ? visibleContours.get(note.note_uid)
+          : undefined;
+        if (contour && contour.length >= 2) {
+          let minDistSq = Number.POSITIVE_INFINITY;
+          let prevX = transform.timeToX(note.start_utc + contour[0].time_offset_s);
+          let prevY = midiPitchToY(
+            note.midi_pitch + contour[0].cents_from_pitch / 100,
+            transform.plotTop,
+            transform.plotBottom,
+          );
+          for (let k = 1; k < contour.length; k += 1) {
+            const px = transform.timeToX(note.start_utc + contour[k].time_offset_s);
+            const py = midiPitchToY(
+              note.midi_pitch + contour[k].cents_from_pitch / 100,
+              transform.plotTop,
+              transform.plotBottom,
+            );
+            const dx = px - prevX;
+            const dy = py - prevY;
+            const lenSq = dx * dx + dy * dy;
+            let t = 0;
+            if (lenSq > 0) {
+              t = Math.max(
+                0,
+                Math.min(1, ((x - prevX) * dx + (y - prevY) * dy) / lenSq),
+              );
+            }
+            const cx = prevX + t * dx;
+            const cy = prevY + t * dy;
+            const ex = x - cx;
+            const ey = y - cy;
+            const distSq = ex * ex + ey * ey;
+            if (distSq < minDistSq) minDistSq = distSq;
+            prevX = px;
+            prevY = py;
+          }
+          if (minDistSq <= hitRadiusSq) {
+            return { note, index: i };
+          }
+          continue;
+        }
         const yCenter = midiPitchToY(
           note.midi_pitch,
           transform.plotTop,
@@ -756,7 +909,7 @@ function EventEncoderPianoRollViewer({
       }
       return null;
     },
-    [makeTransform, visibleNotes],
+    [makeTransform, visibleContours, visibleNotes],
   );
 
   useEffect(() => {
@@ -765,6 +918,7 @@ function EventEncoderPianoRollViewer({
         canvas: canvasRef.current,
         size,
         notes: visibleNotes,
+        contours: visibleContours,
         timeRange,
         selectedK: timeline.selected_k,
         playheadTime: visiblePlayheadTime,
@@ -798,6 +952,7 @@ function EventEncoderPianoRollViewer({
     timeline,
     tokenFilter,
     unvoicedMode,
+    visibleContours,
     visibleNotes,
     visiblePlayheadTime,
     yMode,
@@ -1149,6 +1304,11 @@ function EventEncoderPianoRollViewer({
           hoveredNote && cursor ? (
             <NoteTooltip
               canvasSize={size}
+              contour={
+                hoveredNote.note_uid
+                  ? visibleContours.get(hoveredNote.note_uid)
+                  : undefined
+              }
               cursor={cursor}
               note={hoveredNote}
               selectedK={selectedK}
@@ -1319,7 +1479,28 @@ function NotesStatusControls({ jobId }: { jobId: string }) {
         }
         data-testid="eej-piano-roll-notes-pill-button"
       >
-        <PianoRollNotesStatusPill status={status} />
+        <PianoRollNotesStatusPill
+          status={status}
+          onRequestV3Upgrade={async () => {
+            try {
+              await mutation.mutateAsync({ extractor_version: "v3" });
+            } catch (err) {
+              // The displayed status is the latest *complete* row, so the
+              // v3-available badge can render even when a v3 row is
+              // already queued or running. The backend then returns 409;
+              // surface the in-flight state with a non-blocking toast
+              // instead of letting the global error path raise.
+              if (err instanceof ApiError && err.status === 409) {
+                toast({
+                  title: "Already enqueued",
+                  description: "A v3 notes job is already queued or running for this encoder.",
+                });
+                return;
+              }
+              throw err;
+            }
+          }}
+        />
       </button>
       {showGenerate ? (
         <Button
@@ -1542,6 +1723,7 @@ function drawNotesCanvas({
   canvas,
   size,
   notes,
+  contours,
   timeRange,
   selectedK,
   playheadTime,
@@ -1552,6 +1734,7 @@ function drawNotesCanvas({
   canvas: HTMLCanvasElement | null;
   size: Size;
   notes: PianoRollNote[];
+  contours: Map<string, PianoRollNoteContourFrame[]>;
   timeRange: TimeRange;
   selectedK: number;
   playheadTime: number | null;
@@ -1582,6 +1765,24 @@ function drawNotesCanvas({
     const x1 = transform.timeToX(note.start_utc);
     const x2 = transform.timeToX(note.start_utc + note.duration_s);
     if (x2 < transform.plotLeft || x1 > transform.plotRight) continue;
+    const color = labelColor(
+      Math.max(0, note.event_token),
+      Math.max(1, selectedK),
+    );
+    const contour = note.note_uid ? contours.get(note.note_uid) : undefined;
+    const isHovered = i === hoveredNoteIndex;
+    if (contour && contour.length > 1) {
+      drawNoteRibbon({
+        ctx,
+        note,
+        contour,
+        transform,
+        tokenColor: color,
+        isHovered,
+      });
+      continue;
+    }
+
     const width = Math.max(2, x2 - x1);
     const yCenter = midiPitchToY(
       note.midi_pitch,
@@ -1589,11 +1790,6 @@ function drawNotesCanvas({
       transform.plotBottom,
     );
     const height = Math.max(2, rowHeight - 1);
-    const color = labelColor(
-      Math.max(0, note.event_token),
-      Math.max(1, selectedK),
-    );
-
     ctx.save();
     ctx.fillStyle = color;
     ctx.globalAlpha = 0.85;
@@ -1604,7 +1800,7 @@ function drawNotesCanvas({
     ctx.strokeRect(x1, yCenter - height / 2, width, height);
     ctx.restore();
 
-    if (i === hoveredNoteIndex) {
+    if (isHovered) {
       ctx.save();
       ctx.strokeStyle = "#fafafa";
       ctx.lineWidth = 1.5;
@@ -1623,6 +1819,81 @@ function drawNotesCanvas({
   }
 }
 
+
+function drawNoteRibbon({
+  ctx,
+  note,
+  contour,
+  transform,
+  tokenColor,
+  isHovered,
+}: {
+  ctx: CanvasRenderingContext2D;
+  note: PianoRollNote;
+  contour: PianoRollNoteContourFrame[];
+  transform: ReturnType<typeof createTransform>;
+  tokenColor: string;
+  isHovered: boolean;
+}) {
+  if (contour.length < 2) return;
+  const baseY = midiPitchToY(
+    note.midi_pitch,
+    transform.plotTop,
+    transform.plotBottom,
+  );
+  const semitoneHeight =
+    (transform.plotBottom - transform.plotTop) / MIDI_PITCH_COUNT;
+  const points: Array<[number, number]> = [];
+  for (const frame of contour) {
+    const t = note.start_utc + frame.time_offset_s;
+    const x = transform.timeToX(t);
+    const semitoneOffset = frame.cents_from_pitch / 100;
+    const y = baseY - semitoneOffset * semitoneHeight;
+    points.push([x, y]);
+  }
+
+  ctx.save();
+  // Filled ribbon body — 4 px vertical band centred on the polyline.
+  ctx.fillStyle = tokenColor;
+  ctx.globalAlpha = 0.3;
+  ctx.beginPath();
+  ctx.moveTo(points[0][0], points[0][1] - 2);
+  for (let i = 1; i < points.length; i += 1) {
+    ctx.lineTo(points[i][0], points[i][1] - 2);
+  }
+  for (let i = points.length - 1; i >= 0; i -= 1) {
+    ctx.lineTo(points[i][0], points[i][1] + 2);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Stroked polyline — opacity tracks velocity for visual emphasis.
+  ctx.globalAlpha = Math.max(0.25, Math.min(1, note.velocity / 127));
+  ctx.strokeStyle = tokenColor;
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(points[0][0], points[0][1]);
+  for (let i = 1; i < points.length; i += 1) {
+    ctx.lineTo(points[i][0], points[i][1]);
+  }
+  ctx.stroke();
+
+  if (isHovered) {
+    ctx.strokeStyle = "#fafafa";
+    ctx.globalAlpha = 0.9;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(points[0][0], points[0][1]);
+    for (let i = 1; i < points.length; i += 1) {
+      ctx.lineTo(points[i][0], points[i][1]);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawNotesGrid(
   ctx: CanvasRenderingContext2D,
   transform: ReturnType<typeof createTransform>,
@@ -1636,10 +1907,21 @@ function drawNotesGrid(
   const rowHeight =
     (transform.plotBottom - transform.plotTop) / MIDI_PITCH_COUNT;
 
+  // Tint the extended bands outside the 88-key piano range so the
+  // out-of-piano content is visible without overpowering the
+  // black/white-key shading that anchors callers used to MIDI 21..108.
   for (let midi = MIDI_MIN_PITCH; midi <= MIDI_MAX_PITCH; midi += 1) {
     const yCenter = midiPitchToY(midi, transform.plotTop, transform.plotBottom);
     const yTop = yCenter - rowHeight / 2;
-    if (isBlackKey(midi)) {
+    if (!isInPianoBand(midi)) {
+      ctx.fillStyle = "#1f1d24";
+      ctx.fillRect(
+        transform.plotLeft,
+        yTop,
+        transform.plotRight - transform.plotLeft,
+        rowHeight,
+      );
+    } else if (isBlackKey(midi)) {
       ctx.fillStyle = "#18181b";
       ctx.fillRect(transform.plotLeft, yTop, transform.plotRight - transform.plotLeft, rowHeight);
     }
@@ -1659,9 +1941,24 @@ function drawNotesGrid(
   ctx.globalAlpha = 1;
 
   ctx.fillStyle = "#a1a1aa";
-  for (let midi = 24; midi <= MIDI_MAX_PITCH; midi += 12) {
+  // Label every C from C0 (MIDI 12) up through C9 (MIDI 120). Add G9
+  // explicitly so the topmost extended band remains anchored.
+  const cMidis: number[] = [];
+  for (let midi = 12; midi <= MIDI_MAX_PITCH; midi += 12) {
+    cMidis.push(midi);
+  }
+  if (!cMidis.includes(127) && MIDI_MAX_PITCH >= 127) {
+    cMidis.push(127);
+  }
+  for (const midi of cMidis) {
+    if (midi < MIDI_MIN_PITCH || midi > MIDI_MAX_PITCH) continue;
     const yCenter = midiPitchToY(midi, transform.plotTop, transform.plotBottom);
     ctx.fillText(midiNoteName(midi), transform.plotLeft - 8, yCenter);
+  }
+  // G9 (MIDI 127) is the conventional MIDI top — label it for the spec.
+  if (MIDI_MAX_PITCH >= 119) {
+    const yG9 = midiPitchToY(119, transform.plotTop, transform.plotBottom);
+    ctx.fillText("G9", transform.plotLeft - 8, yG9);
   }
 
   const timeStep = chooseTimeStep(transform.timeRange.end - transform.timeRange.start);
@@ -1701,11 +1998,13 @@ function formatCursorMidi(y: number, canvasHeight: number) {
 
 function NoteTooltip({
   canvasSize,
+  contour,
   cursor,
   note,
   selectedK,
 }: {
   canvasSize: Size;
+  contour: PianoRollNoteContourFrame[] | undefined;
   cursor: CursorInfo;
   note: PianoRollNote;
   selectedK: number;
@@ -1743,8 +2042,25 @@ function NoteTooltip({
       <TooltipRow label="event_id" value={note.event_id} />
       <TooltipRow label="token" value={String(note.event_token)} />
       <TooltipRow label="partial" value={partialIndexLabel(note.partial_index)} />
+      {contour && contour.length > 0 ? (
+        <TooltipRow
+          label="Δpitch"
+          value={formatDeltaPitchCents(contour)}
+        />
+      ) : null}
     </div>
   );
+}
+
+function formatDeltaPitchCents(
+  contour: PianoRollNoteContourFrame[],
+): string {
+  let maxAbs = 0;
+  for (const row of contour) {
+    const abs = Math.abs(row.cents_from_pitch);
+    if (abs > maxAbs) maxAbs = abs;
+  }
+  return `±${maxAbs.toFixed(0)}¢`;
 }
 
 function drawMainCanvas({

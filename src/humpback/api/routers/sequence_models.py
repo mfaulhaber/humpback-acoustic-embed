@@ -8,6 +8,8 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Response
 import numpy as np
+import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from humpback.api.deps import SessionDep, SettingsDep
@@ -24,6 +26,9 @@ from humpback.schemas.piano_roll_midi_export import (
 )
 from humpback.schemas.piano_roll_notes import (
     PianoRollNote,
+    PianoRollNoteContourFrame,
+    PianoRollNoteContourRequest,
+    PianoRollNoteContourResponse,
     PianoRollNotesJobCreateRequest,
     PianoRollNotesJobRead,
     PianoRollNotesResponse,
@@ -77,6 +82,7 @@ from humpback.services.piano_roll_notes_service import (
 from humpback.storage import (
     event_encoder_audio_export_path,
     event_encoder_midi_export_path,
+    event_encoder_note_contours_path,
 )
 
 router = APIRouter(prefix="/sequence-models", tags=["sequence-models"])
@@ -541,6 +547,9 @@ async def get_piano_roll_notes(
             continue
         if event_filter is not None and str(row["event_id"]) not in event_filter:
             continue
+        note_uid = row.get("note_uid")
+        f0_track_id = row.get("f0_track_id")
+        contour_frame_count = row.get("contour_frame_count")
         filtered.append(
             PianoRollNote(
                 event_id=str(row["event_id"]),
@@ -553,6 +562,13 @@ async def get_piano_roll_notes(
                 velocity=int(row["velocity"]),
                 peak_magnitude=float(row["peak_magnitude"]),
                 track_id=int(row["track_id"]),
+                note_uid=str(note_uid) if note_uid is not None else None,
+                f0_track_id=int(f0_track_id) if f0_track_id is not None else None,
+                contour_frame_count=(
+                    int(contour_frame_count)
+                    if contour_frame_count is not None
+                    else None
+                ),
             )
         )
 
@@ -561,6 +577,101 @@ async def get_piano_roll_notes(
         extractor_version=latest.extractor_version,
         n_notes=len(filtered),
         notes=filtered,
+    )
+
+
+_MAX_CONTOUR_NOTE_UIDS = 2000
+
+
+@router.post("/event-encoders/{job_id}/notes/contours")
+async def get_piano_roll_note_contours(
+    job_id: str,
+    body: PianoRollNoteContourRequest,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> PianoRollNoteContourResponse:
+    """Return per-frame contour rows for the requested ``note_uid``s.
+
+    POST so the ``note_uids`` list (UUIDs at ~48 bytes each in URL form)
+    rides in the JSON body and stays clear of the dev server's HTTP
+    header limit. The endpoint always reads the v3 contour sidecar so it
+    returns 422 when no v3 sidecar exists yet. Requests above
+    ``_MAX_CONTOUR_NOTE_UIDS`` return 413; unknown ``note_uid``s in an
+    otherwise valid request are dropped from the response.
+    """
+    job = await get_event_encoder_job(session, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="event encoder job not found")
+
+    if len(body.note_uids) > _MAX_CONTOUR_NOTE_UIDS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"note_uids cap is {_MAX_CONTOUR_NOTE_UIDS};"
+                f" received {len(body.note_uids)}"
+            ),
+        )
+
+    if body.extractor_version is not None:
+        latest = await complete_for_encoder_job_version(
+            session,
+            event_encoder_job_id=job.id,
+            extractor_version=body.extractor_version,
+        )
+    else:
+        latest = await latest_for_encoder_job(session, event_encoder_job_id=job.id)
+        if latest is not None and latest.status != JobStatus.complete.value:
+            latest = None
+
+    if latest is None:
+        raise HTTPException(
+            status_code=422,
+            detail="no v3 piano roll notes contour sidecar for this event encoder",
+        )
+
+    contours_path = event_encoder_note_contours_path(
+        settings.storage_root, job.id, latest.extractor_version
+    )
+    if not contours_path.exists():
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "contour sidecar is not available for "
+                f"extractor_version={latest.extractor_version!r}"
+            ),
+        )
+
+    contours: dict[str, list[PianoRollNoteContourFrame]] = {}
+    if body.note_uids:
+        table = pq.read_table(contours_path)
+        # Mirror the worker's push-down pattern: deduplicate uids and let
+        # PyArrow filter the table column-wise rather than materializing
+        # the rows in Python and probing a set per row.
+        unique_uids = list({uid for uid in body.note_uids})
+        mask = pc.is_in(  # type: ignore[attr-defined]
+            table.column("note_uid"),
+            value_set=pa.array(unique_uids, type=pa.string()),
+        )
+        filtered = table.filter(mask)
+        for row in filtered.to_pylist():
+            uid = str(row["note_uid"])
+            contours.setdefault(uid, []).append(
+                PianoRollNoteContourFrame(
+                    frame_index=int(row["frame_index"]),
+                    time_offset_s=float(row["time_offset_s"]),
+                    cents_from_pitch=float(row["cents_from_pitch"]),
+                    harmonic_strength=float(row["harmonic_strength"]),
+                    subharmonic_octave=int(row["subharmonic_octave"]),
+                )
+            )
+        for uid in contours:
+            contours[uid].sort(key=lambda c: c.frame_index)
+
+    return PianoRollNoteContourResponse(
+        job_id=job.id,
+        extractor_version=latest.extractor_version,
+        n_notes=len(contours),
+        contours=contours,
     )
 
 

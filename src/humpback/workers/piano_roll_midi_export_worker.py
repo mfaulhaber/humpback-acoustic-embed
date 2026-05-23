@@ -25,6 +25,7 @@ from typing import Any, Iterator, Optional
 
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +40,7 @@ from humpback.processing.timeline_audio import resolve_timeline_audio
 from humpback.storage import (
     event_encoder_audio_export_path,
     event_encoder_midi_export_path,
+    event_encoder_note_contours_path,
     event_encoder_notes_path,
 )
 
@@ -143,6 +145,30 @@ def _windowed_notes_table(
     return pa.Table.from_pylist(rows, schema=notes_table.schema)
 
 
+def _load_contours_for_window(
+    contours_path: Path, windowed_notes: pa.Table
+) -> pa.Table:
+    """Read the v3 contour sidecar filtered to the windowed notes' ``note_uid`` set.
+
+    The MPE synthesizer only needs contour rows for the notes that
+    survived window clipping; loading the rest would waste memory on
+    long jobs. The filter pushes into PyArrow (``pa.compute.is_in``) so
+    we never materialize a Python-level mask of the full contour table.
+    """
+    note_uids: list[str] = []
+    for value in windowed_notes.column("note_uid").to_pylist():
+        if value is None:
+            continue
+        note_uids.append(str(value))
+    table = pq.read_table(contours_path)
+    if not note_uids:
+        return table.slice(0, 0)
+    mask = pc.is_in(  # type: ignore[attr-defined]
+        table.column("note_uid"), value_set=pa.array(note_uids, type=pa.string())
+    )
+    return table.filter(mask)
+
+
 async def _resolve_region_job(
     session: AsyncSession, encoder: EventEncoderJob
 ) -> RegionDetectionJob:
@@ -218,7 +244,24 @@ async def run_piano_roll_midi_export(
 
         notes_table = pq.read_table(notes_path)
         windowed = _windowed_notes_table(notes_table, window_start, window_end)
-        midi_bytes = notes_table_to_midi_bytes(windowed, time_origin_utc=window_start)
+        is_v3 = "note_uid" in windowed.column_names
+        contour_table: Optional[pa.Table] = None
+        if is_v3:
+            contours_path = event_encoder_note_contours_path(
+                settings.storage_root,
+                job.event_encoder_job_id,
+                job.extractor_version,
+            )
+            if not contours_path.exists():
+                raise FileNotFoundError(
+                    f"v3 export requires contour sidecar at {contours_path}"
+                )
+            contour_table = _load_contours_for_window(contours_path, windowed)
+        midi_bytes = notes_table_to_midi_bytes(
+            windowed,
+            contour_table=contour_table,
+            time_origin_utc=window_start,
+        )
 
         encoder = await session.get(EventEncoderJob, job.event_encoder_job_id)
         if encoder is None:

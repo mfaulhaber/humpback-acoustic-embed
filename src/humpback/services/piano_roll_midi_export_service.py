@@ -256,13 +256,28 @@ async def _reset_row(
 async def _latest_complete_notes_version(
     session: AsyncSession, event_encoder_job_id: str
 ) -> Optional[str]:
+    """Highest ``complete`` notes version for an encoder job (ADR-069 §10).
+
+    Resolved by string-comparison on ``extractor_version`` so a v2 row
+    that completed *after* v3 still defers to v3 — users wanting v2 must
+    pin via ``extractor_version=`` explicitly. ``finished_at desc`` is a
+    deterministic tiebreaker if two rows share the same version string
+    (a re-run that lands at the same version). Lexicographic ordering
+    assumes single-digit ``vN`` suffixes; a future ``v10`` would sort
+    *before* ``v2`` and break this. Switch to integer-suffix parsing or
+    zero-padded names (``v01``/``v02``/.../``v10``) before introducing a
+    two-digit version.
+    """
     result = await session.execute(
         select(PianoRollNotesJob.extractor_version)
         .where(
             PianoRollNotesJob.event_encoder_job_id == event_encoder_job_id,
             PianoRollNotesJob.status == _TERMINAL_COMPLETE,
         )
-        .order_by(desc(PianoRollNotesJob.finished_at))
+        .order_by(
+            desc(PianoRollNotesJob.extractor_version),
+            desc(PianoRollNotesJob.finished_at),
+        )
         .limit(1)
     )
     return result.scalar_one_or_none() or None

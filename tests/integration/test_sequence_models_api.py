@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from humpback.database import create_engine, create_session_factory
 from humpback.models.call_parsing import EventSegmentationJob, RegionDetectionJob
@@ -853,12 +854,14 @@ async def test_create_notes_job_enqueues_and_returns_201(client, app_settings):
     body = response.json()
     assert body["event_encoder_job_id"] == job_id
     assert body["status"] == "queued"
-    assert body["extractor_version"] == "v2"
+    assert body["extractor_version"] == "v3"
 
 
 async def test_create_notes_job_conflicts_with_running_row(client, app_settings):
     job_id = await _seed_event_encoder_timeline_job(app_settings)
-    await _seed_notes_job(app_settings, job_id, status=JobStatus.running.value)
+    await _seed_notes_job(
+        app_settings, job_id, status=JobStatus.running.value, extractor_version="v3"
+    )
 
     response = await client.post(
         f"/sequence-models/event-encoders/{job_id}/notes-jobs",
@@ -1064,3 +1067,280 @@ async def test_get_notes_pins_to_explicit_extractor_version(client, app_settings
         params={"extractor_version": "v99"},
     )
     assert response_missing.status_code == 404
+
+
+# ---------- v3 notes + contour endpoints ----------
+
+
+_V3_NOTES_ROW_SCHEMA = pa.schema(
+    [
+        pa.field("event_id", pa.string()),
+        pa.field("event_token", pa.int32()),
+        pa.field("partial_index", pa.int32()),
+        pa.field("midi_pitch", pa.uint8()),
+        pa.field("start_utc", pa.float64()),
+        pa.field("start_offset_s", pa.float64()),
+        pa.field("duration_s", pa.float64()),
+        pa.field("velocity", pa.uint8()),
+        pa.field("peak_magnitude", pa.float32()),
+        pa.field("track_id", pa.uint32()),
+        pa.field("note_uid", pa.string()),
+        pa.field("f0_track_id", pa.uint32()),
+        pa.field("contour_frame_count", pa.uint32()),
+    ]
+)
+
+
+_CONTOUR_ROW_SCHEMA = pa.schema(
+    [
+        pa.field("note_uid", pa.string()),
+        pa.field("frame_index", pa.uint32()),
+        pa.field("time_offset_s", pa.float32()),
+        pa.field("cents_from_pitch", pa.float32()),
+        pa.field("harmonic_strength", pa.float32()),
+        pa.field("subharmonic_octave", pa.uint8()),
+    ]
+)
+
+
+async def _write_v3_notes_sidecar(app_settings, encoder_job_id: str, rows: list[dict]):
+    path = (
+        app_settings.storage_root
+        / "event_encoders"
+        / encoder_job_id
+        / "event_notes_v3.parquet"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pylist(rows, schema=_V3_NOTES_ROW_SCHEMA), path)
+    return path
+
+
+async def _write_v3_contour_sidecar(
+    app_settings, encoder_job_id: str, rows: list[dict]
+):
+    path = (
+        app_settings.storage_root
+        / "event_encoders"
+        / encoder_job_id
+        / "event_note_contours_v3.parquet"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pylist(rows, schema=_CONTOUR_ROW_SCHEMA), path)
+    return path
+
+
+async def test_get_notes_returns_v3_fields_for_v3_sidecar(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+    v3_rows = [
+        {
+            "event_id": "evt-a",
+            "event_token": 0,
+            "partial_index": 0,
+            "midi_pitch": 60,
+            "start_utc": 2100.0,
+            "start_offset_s": 0.0,
+            "duration_s": 0.5,
+            "velocity": 80,
+            "peak_magnitude": -2.5,
+            "track_id": 1,
+            "note_uid": "uid-1",
+            "f0_track_id": 1,
+            "contour_frame_count": 3,
+        },
+    ]
+    notes_path = await _write_v3_notes_sidecar(app_settings, job_id, v3_rows)
+    await _seed_notes_job(
+        app_settings,
+        job_id,
+        status=JobStatus.complete.value,
+        notes_path=str(notes_path),
+        extractor_version="v3",
+        n_notes=len(v3_rows),
+    )
+
+    response = await client.get(
+        f"/sequence-models/event-encoders/{job_id}/notes",
+        params={"extractor_version": "v3"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["extractor_version"] == "v3"
+    assert body["notes"][0]["note_uid"] == "uid-1"
+    assert body["notes"][0]["f0_track_id"] == 1
+    assert body["notes"][0]["contour_frame_count"] == 3
+
+
+async def test_notes_contours_returns_per_uid_payload(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+    v3_rows = [
+        {
+            "event_id": "evt-a",
+            "event_token": 0,
+            "partial_index": 0,
+            "midi_pitch": 60,
+            "start_utc": 2100.0,
+            "start_offset_s": 0.0,
+            "duration_s": 0.5,
+            "velocity": 80,
+            "peak_magnitude": -2.5,
+            "track_id": 1,
+            "note_uid": "uid-1",
+            "f0_track_id": 1,
+            "contour_frame_count": 3,
+        }
+    ]
+    notes_path = await _write_v3_notes_sidecar(app_settings, job_id, v3_rows)
+    contour_rows = [
+        {
+            "note_uid": "uid-1",
+            "frame_index": i,
+            "time_offset_s": float(i) * 0.01,
+            "cents_from_pitch": float(i) * 5.0,
+            "harmonic_strength": 1.0,
+            "subharmonic_octave": 0,
+        }
+        for i in range(3)
+    ]
+    # Insert a row for a sibling uid that the request does NOT ask for.
+    contour_rows.append(
+        {
+            "note_uid": "uid-other",
+            "frame_index": 0,
+            "time_offset_s": 0.0,
+            "cents_from_pitch": 0.0,
+            "harmonic_strength": 0.0,
+            "subharmonic_octave": 0,
+        }
+    )
+    await _write_v3_contour_sidecar(app_settings, job_id, contour_rows)
+    await _seed_notes_job(
+        app_settings,
+        job_id,
+        status=JobStatus.complete.value,
+        notes_path=str(notes_path),
+        extractor_version="v3",
+        n_notes=len(v3_rows),
+    )
+
+    response = await client.post(
+        f"/sequence-models/event-encoders/{job_id}/notes/contours",
+        json={"note_uids": ["uid-1", "uid-missing"]},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["extractor_version"] == "v3"
+    # Only the known uid materializes in the response (partial misses ok).
+    assert list(body["contours"].keys()) == ["uid-1"]
+    rows = body["contours"]["uid-1"]
+    assert [r["frame_index"] for r in rows] == [0, 1, 2]
+    # Cents-from-pitch progression survives the round-trip.
+    assert rows[2]["cents_from_pitch"] == pytest.approx(10.0)
+
+
+async def test_notes_contours_413_above_cap(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+    await _seed_notes_job(
+        app_settings,
+        job_id,
+        status=JobStatus.complete.value,
+        notes_path="ignored",
+        extractor_version="v3",
+    )
+    note_uids = [f"uid-{i}" for i in range(2001)]
+    response = await client.post(
+        f"/sequence-models/event-encoders/{job_id}/notes/contours",
+        json={"note_uids": note_uids},
+    )
+    assert response.status_code == 413, response.text
+
+
+async def test_notes_contours_422_when_no_v3_sidecar(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+    # Seed a v2-only notes job — no v3 sidecar present.
+    notes_path = await _write_notes_sidecar(
+        app_settings,
+        job_id,
+        [
+            {
+                "event_id": "evt-a",
+                "event_token": 0,
+                "partial_index": 0,
+                "midi_pitch": 60,
+                "start_utc": 2100.0,
+                "start_offset_s": 0.0,
+                "duration_s": 0.5,
+                "velocity": 80,
+                "peak_magnitude": -2.5,
+                "track_id": 1,
+            }
+        ],
+    )
+    await _seed_notes_job(
+        app_settings,
+        job_id,
+        status=JobStatus.complete.value,
+        notes_path=str(notes_path),
+        extractor_version="v2",
+        n_notes=1,
+    )
+
+    response = await client.post(
+        f"/sequence-models/event-encoders/{job_id}/notes/contours",
+        json={"note_uids": ["uid-1"]},
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_notes_contours_unknown_uid_dropped(client, app_settings):
+    job_id = await _seed_event_encoder_timeline_job(app_settings)
+    notes_path = await _write_v3_notes_sidecar(
+        app_settings,
+        job_id,
+        [
+            {
+                "event_id": "evt-a",
+                "event_token": 0,
+                "partial_index": 0,
+                "midi_pitch": 60,
+                "start_utc": 2100.0,
+                "start_offset_s": 0.0,
+                "duration_s": 0.5,
+                "velocity": 80,
+                "peak_magnitude": -2.5,
+                "track_id": 1,
+                "note_uid": "uid-1",
+                "f0_track_id": 1,
+                "contour_frame_count": 1,
+            }
+        ],
+    )
+    await _write_v3_contour_sidecar(
+        app_settings,
+        job_id,
+        [
+            {
+                "note_uid": "uid-1",
+                "frame_index": 0,
+                "time_offset_s": 0.0,
+                "cents_from_pitch": 0.0,
+                "harmonic_strength": 0.0,
+                "subharmonic_octave": 0,
+            }
+        ],
+    )
+    await _seed_notes_job(
+        app_settings,
+        job_id,
+        status=JobStatus.complete.value,
+        notes_path=str(notes_path),
+        extractor_version="v3",
+        n_notes=1,
+    )
+
+    response = await client.post(
+        f"/sequence-models/event-encoders/{job_id}/notes/contours",
+        json={"note_uids": ["uid-1", "uid-not-here"]},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body["contours"].keys()) == {"uid-1"}

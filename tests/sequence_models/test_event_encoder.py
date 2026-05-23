@@ -3,11 +3,11 @@
 import numpy as np
 import pytest
 
+from humpback.processing.ridge_path import RidgePathResult
 from humpback.sequence_models.event_encoder import (
     ChunkEmbedding,
     DESCRIPTOR_ORDER,
     EventInterval,
-    _RidgePathResult,
     _compute_ridge_summary_descriptors,
     build_event_embedding,
     compute_acoustic_descriptors,
@@ -376,7 +376,7 @@ def test_band_limited_peak_resists_low_frequency_rumble():
 
 
 def test_ridge_summary_trimmed_bounds_resist_single_outlier_frame():
-    result = _RidgePathResult(
+    result = RidgePathResult(
         log_frequencies=np.log2(np.asarray([1000.0] * 9 + [6000.0], dtype=np.float64)),
         frame_times=np.arange(10, dtype=np.float64),
         strengths=np.ones(10, dtype=np.float64),

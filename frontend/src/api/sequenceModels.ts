@@ -218,6 +218,9 @@ export interface PianoRollNote {
   velocity: number;
   peak_magnitude: number;
   track_id: number;
+  note_uid: string | null;
+  f0_track_id: number | null;
+  contour_frame_count: number | null;
 }
 
 export interface PianoRollNotesResponse {
@@ -226,6 +229,23 @@ export interface PianoRollNotesResponse {
   n_notes: number;
   notes: PianoRollNote[];
 }
+
+export interface PianoRollNoteContourFrame {
+  frame_index: number;
+  time_offset_s: number;
+  cents_from_pitch: number;
+  harmonic_strength: number;
+  subharmonic_octave: number;
+}
+
+export interface PianoRollNoteContourResponse {
+  job_id: string;
+  extractor_version: string;
+  n_notes: number;
+  contours: Record<string, PianoRollNoteContourFrame[]>;
+}
+
+export const PIANO_ROLL_NOTE_CONTOUR_BATCH_LIMIT = 2000;
 
 export interface CreatePianoRollNotesJobRequest {
   extractor_version?: string;
@@ -370,8 +390,11 @@ export function continuousEmbeddingSourceKind(
 const ROOT = "/sequence-models/continuous-embeddings";
 const EVENT_ENCODER_ROOT = "/sequence-models/event-encoders";
 
-class ApiError extends Error {
-  constructor(public status: number, message: string) {
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -489,6 +512,28 @@ export interface PianoRollNotesViewport {
   endUtc?: number | null;
   eventIds?: string[] | null;
   extractorVersion?: string | null;
+}
+
+export interface PianoRollNoteContourQuery {
+  noteUids: string[];
+  extractorVersion?: string | null;
+}
+
+export function fetchPianoRollNoteContours(
+  jobId: string,
+  query: PianoRollNoteContourQuery,
+): Promise<PianoRollNoteContourResponse> {
+  return request<PianoRollNoteContourResponse>(
+    `${EVENT_ENCODER_ROOT}/${jobId}/notes/contours`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        note_uids: query.noteUids,
+        extractor_version: query.extractorVersion ?? null,
+      }),
+    },
+  );
 }
 
 export function fetchPianoRollNotes(
@@ -738,6 +783,77 @@ export function usePianoRollNotes(
     ],
     queryFn: () => fetchPianoRollNotes(jobId as string, viewport),
     enabled: enabled && jobId != null,
+  });
+}
+
+/**
+ * 32-bit FNV-1a content hash over the joined uid sequence, returned as
+ * an 8-char base-36 string. Used to key the React Query batch entry
+ * without inlining ~74 KB of UUIDs into the queryKey. Collision
+ * probability for unrelated viewports is ~1/2^32 — orders of magnitude
+ * tighter than length-plus-first-and-last, which collides on any two
+ * batches sharing those three fields but differing in their interior.
+ */
+function fnv1aHex(input: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/**
+ * Batch-fetches v3 ribbon contours for the requested ``note_uid``s and
+ * populates a per-uid React Query cache entry for each row returned.
+ *
+ * The batch query itself uses a 32-bit FNV-1a content hash of the
+ * sorted-uid join as the queryKey, so the key doesn't inline ~74 KB of
+ * UUIDs but still discriminates batches that differ only in their
+ * interior. Per-uid cache entries — keyed
+ * ``["piano-roll-note-contour", jobId, ev, uid]`` — let downstream
+ * consumers read a single note's contour without re-fetching, and let
+ * callers that already filter against this cache skip a network round
+ * trip entirely. uid stability is guaranteed by the backend's
+ * deterministic UUID v5 derivation (ADR-069 §6.2).
+ */
+export function usePianoRollNoteContours(
+  jobId: string | null,
+  noteUids: string[],
+  enabled: boolean,
+  extractorVersion?: string | null,
+) {
+  const qc = useQueryClient();
+  const sortedUids = [...noteUids].sort();
+  const batchKey = sortedUids.length
+    ? `${sortedUids.length}:${fnv1aHex(sortedUids.join(","))}`
+    : "empty";
+  return useQuery({
+    queryKey: [
+      "piano-roll-note-contours",
+      jobId,
+      extractorVersion ?? null,
+      batchKey,
+    ],
+    queryFn: async () => {
+      const response = await fetchPianoRollNoteContours(jobId as string, {
+        noteUids: sortedUids,
+        extractorVersion,
+      });
+      for (const [uid, rows] of Object.entries(response.contours)) {
+        qc.setQueryData(
+          [
+            "piano-roll-note-contour",
+            jobId,
+            extractorVersion ?? null,
+            uid,
+          ],
+          rows,
+        );
+      }
+      return response;
+    },
+    enabled: enabled && jobId != null && sortedUids.length > 0,
   });
 }
 
