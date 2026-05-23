@@ -969,3 +969,106 @@ Alternatives considered:
   `rafBudgetMs` cap protects against worst-case redraw cost. A new
   Playwright perf spec asserts ≥ 30 fps median during a pan gesture on a
   synthetic 10k-notes × 10-frames-each fixture.
+
+## ADR-070: Piano Roll Notes v4 — HPS F0 selection with extended low band
+
+**Date**: 2026-05-23
+
+**Status**: Accepted
+
+**Spec**: [docs/specs/2026-05-23-piano-roll-notes-v4-hps-f0-design.md](docs/specs/2026-05-23-piano-roll-notes-v4-hps-f0-design.md)
+
+**Context**: The v3 ridge-aligned extractor (ADR-069) refined the per-frame
+Viterbi ridge by trying to halve F0 one octave at a time and accepting the
+candidate only when its CQT magnitude was within ≈22 dB of the current
+ridge magnitude (`min_relative_log_magnitude = -2.5`). On Event Encoder job
+`690580c5-7804-43c9-bd8d-690691b5d6d4` (1635 events, 56 352 notes, 463 963
+contour rows) this produced a severely top-heavy pitch distribution: only
+10 % of notes were F0 (`partial_index = 0`), median F0 sat at MIDI 69
+(440 Hz), and the ridge tracker emitted **zero frames below 100 Hz**
+because `STFTParams.min_frequency_hz = 100.0` capped every candidate. 39 %
+of F0 frames already triggered subharmonic refinement, yet the post-refine
+median was still 440 Hz — the relative-magnitude gate rejected true F0s
+that were more than ~22 dB weaker than their H2/H3, which is the textbook
+humpback song case.
+
+Wide-CQT noise characterization on the same audio: 3.8 % of sub-100 Hz
+frame-bins exceed the 200–1500 Hz band's 90th percentile, so genuine
+moan content does exist in that band, but the median sub-100 Hz energy
+is ~6 dB below the mid band — single-bin energy thresholds cannot
+separate signal from noise. A multi-bin harmonic-support test can.
+
+**Decision**:
+
+1. **HPS-style F0 selection.** Replace `_refine_subharmonic` with
+   `_score_f0_candidates` (new function in
+   `src/humpback/processing/note_extractor_v4.py`). For each ridge frame
+   at log₂-frequency `L`, score candidates `f_c = ridge / d` for
+   `d ∈ {1, 2, 3, 4, 5, 6}` by total harmonic-stack support across the
+   first 8 partials in the CQT column. Pick the candidate with the
+   highest score, tie-break toward the smallest `d` (Occam). The
+   STFT ridge tracker still seeds frame presence; HPS chooses which
+   sub-divisor represents the true F0.
+2. **Per-harmonic gates.** A harmonic counts toward `count_present`
+   only when (a) it is a strict local maximum in the CQT column,
+   (b) it clears the per-frame noise floor by `k_noise · MAD`, and
+   (c) it sits at least `min_above_floor = 1.0` log units above the
+   noise floor. After collection, drop harmonics more than
+   `max_harmonic_dynamic_range_log = 3.0` (~26 dB) below the candidate's
+   strongest harmonic so CQT filter-skirt artifacts at subharmonic
+   positions of a strong tone (~30 dB below the parent) cannot inflate
+   the count.
+3. **Sub-100 Hz tightening.** Candidates below
+   `low_band_threshold_hz = 100.0` need ≥ 3 surviving harmonics; above
+   100 Hz they need ≥ 2. A flat `low_band_penalty = 0.5` log units
+   acts as a tie-breaker when sub-100 and ≥ 100 Hz scores are within
+   ~4 dB; strong moans outscore noise by far more than 0.5.
+4. **Lower the STFT band floor to 30 Hz.** `STFTParams.min_frequency_hz`
+   default drops from `100.0` to `30.0` so HPS candidates can actually
+   descend into the humpback moan band. v3 jobs keep the historical
+   100 Hz default so re-running an old `params_json` reproduces v3
+   bytes.
+5. **Sidecars and contracts.** Outputs land at
+   `event_encoders/{job_id}/event_notes_v4.parquet` and
+   `event_note_contours_v4.parquet`. The schemas match v3 exactly; only
+   the `subharmonic_octave` column changes semantics — in v4 it stores
+   `chosen_divisor − 1` (0 = ridge is F0, 5 = ridge is H6). Renderers
+   treating it as a diagnostic "ridge-shift indicator" work unchanged.
+6. **`DEFAULT_EXTRACTOR_VERSION = "v4"`.** New encoder jobs auto-enqueue
+   v4. The MIDI export resolver already orders by lex-sorted
+   `extractor_version` desc, so a complete v4 row wins over a complete
+   v3 row automatically; the MPE Lower Zone synthesizer detects MPE by
+   the presence of `note_uid` (unchanged in v4), so the windowed bundled
+   export path needs no changes.
+7. **No auto-backfill of v4 for completed v3 jobs.** Mirrors the v3
+   launch pattern from ADR-069. Users delete legacy rows via the
+   existing job-admin UI when they want to free space and regenerate.
+
+Alternatives considered:
+
+- *Patch the v3 relative-magnitude gate.* Cheaper but still assumes the
+  true F0 sits at an octave subdivision of the ridge; misses H3 lock.
+  Rejected.
+- *Add explicit `f/3` and `f×2/3` candidates without full HPS.* Catches
+  H3 specifically but is ad-hoc and doesn't generalize to H5/H6.
+  Rejected.
+- *Full HPS scan over a coarse F0 grid (no ridge dependency).* Cleaner
+  but loses the ridge tracker's smoothness prior and pays per-frame
+  compute. Rejected for v4 — the ridge is a good seed and the divisor
+  set covers realistic lock cases.
+- *Multi-F0 per event.* Out of scope; one F0 contour per event remains
+  the contract.
+
+**Consequences**:
+
+- No DB migration. The `piano_roll_notes_jobs` table already supports
+  arbitrary `extractor_version` strings.
+- v3 sidecars on disk stay readable; nothing is deleted. Mixed-version
+  coexistence is tested.
+- Renderer, MPE synthesizer, MIDI export worker, and the frontend Notes
+  view need no changes — v4 emits the same `note_uid` keyed contour
+  shape as v3.
+- The `subharmonic_octave` column semantics change for v4 rows. Any
+  downstream code interpreting the field as "octave halvings" needs to
+  switch to "divisor − 1" for v4. Today only the renderer's diagnostic
+  tooltip touches the field, and it treats it as opaque.

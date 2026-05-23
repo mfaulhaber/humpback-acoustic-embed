@@ -353,6 +353,33 @@ async def test_enqueue_resolves_version_when_none(session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_enqueue_resolves_v4_over_v3(session) -> None:
+    """ADR-070: a complete v4 notes row wins over a complete v3 row."""
+    encoder_id = await _make_encoder_job(session)
+    await _make_complete_notes_job(
+        session,
+        event_encoder_job_id=encoder_id,
+        extractor_version="v3",
+        finished_at=datetime(2026, 5, 22, tzinfo=timezone.utc),
+    )
+    await _make_complete_notes_job(
+        session,
+        event_encoder_job_id=encoder_id,
+        extractor_version="v4",
+        finished_at=datetime(2026, 5, 23, tzinfo=timezone.utc),
+    )
+
+    row, created = await enqueue_piano_roll_midi_export(
+        session,
+        event_encoder_job_id=encoder_id,
+        window_start_utc=_WIN_START,
+        window_end_utc=_WIN_END,
+    )
+    assert created is True
+    assert row.extractor_version == "v4"
+
+
+@pytest.mark.asyncio
 async def test_enqueue_no_complete_notes_raises(session) -> None:
     encoder_id = await _make_encoder_job(session)
     notes = PianoRollNotesJob(

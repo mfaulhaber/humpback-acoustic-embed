@@ -87,25 +87,27 @@ _build_f0_note + _build_harmonic_notes     ← unchanged
 For each ridge frame at log₂-frequency `L` and CQT column `c`:
 
 1. Build candidate F0 log₂-frequencies `L_c = L − log₂(d)` for `d ∈ candidate_divisors = (1, 2, 3, 4, 5, 6)`.
-2. For each candidate `L_c`, evaluate harmonic-stack support across `n = 1 .. n_harmonics` (default 8):
+2. Per-frame noise floor: `floor = median(bottom_half(c))`, `mad = max(MAD(bottom_half(c)), MIN_MAD)` where `MIN_MAD = 0.3` (private module constant — keeps the threshold meaningful when a sparse pure-tone column collapses MAD to zero). `threshold = floor + k_noise · mad`.
+3. Precompute per-frame strict local-maxima `is_peak[bin]` in `c` (a bin is a peak when strictly greater than both immediate neighbors). CQT filter skirts from a strong bin produce non-trivial magnitude at adjacent and subharmonic frequencies that clear the noise threshold but are not real peaks; the peak gate rejects them.
+4. For each candidate `L_c` collect survivors across `n = 1 .. n_harmonics` (default 8):
    - Target log₂-frequency for harmonic `n`: `H_n = L_c + log₂(n)`.
-   - If `H_n` exceeds `log₂(cqt_bin_freqs[-1])`, skip (harmonic out of CQT range).
-   - In the CQT column, take the max log-magnitude within `±cents_tolerance` (default 50¢) of `H_n`: call this `m_n`.
-   - Per-frame noise floor `floor = median(bottom_half(c))`, `mad = MAD(bottom_half(c))` (already used by `_frame_noise_floor`). Define `threshold_n = floor + k_noise · mad`.
-   - `is_present[n] = (m_n ≥ threshold_n)`.
-   - `contribution[n] = max(0.0, m_n − floor)` (clipped to 0 when sub-floor so absent harmonics don't subtract).
-3. Score:
+   - If `H_n` exceeds `log₂(cqt_bin_freqs[-1])`, stop walking harmonics for this `d`.
+   - In the CQT column, take the strongest bin within `±cents_tolerance` (default 50¢) of `H_n`: call its index `b` and magnitude `m_n = c[b]`.
+   - Accept `m_n` as a "survivor" only when `is_peak[b]` AND `m_n ≥ threshold` AND `(m_n − floor) ≥ min_above_floor` (default 1.0 log units ≈ 8.7 dB).
+5. Drop survivors more than `max_harmonic_dynamic_range_log` (default 3.0, ≈26 dB) below the candidate's strongest survivor. Real harmonic stacks span a bounded dynamic range; CQT filter-skirt artifacts at subharmonic positions of a strong tone sit 30+ dB below the parent and get dropped here. The kept survivors are the candidate's "present" harmonics.
+6. Score:
    ```
-   raw_score = Σ_n contribution[n]
-   count_present = Σ_n is_present[n]
+   count_present = |kept|
    k_min = low_band_min_harmonics if (2^L_c < low_band_threshold_hz) else high_band_min_harmonics
    if count_present < k_min:
        score(L_c) = -inf
    else:
+       raw_score = Σ_{m ∈ kept} max(0, m − floor)
        score(L_c) = raw_score − (low_band_penalty if 2^L_c < low_band_threshold_hz else 0.0)
    ```
-4. Choose `d* = argmax_d score(L_c)`. On ties, prefer the largest `d` (i.e., the lowest-frequency candidate), preserving the "prefer F0 over an alias" intent that motivated v3's subharmonic refinement.
-5. Record `(frame_index, time_offset_s, log_frequency = L_c*, strength = ridge_strength, divisor = d*)`.
+7. Choose `d* = argmax_d score(L_c)`. On ties, prefer the smallest `d` (Occam's razor — when two candidates score identically, the one explaining the ridge as F0 itself wins over an artifact divisor that gets the same numerical support from incidental harmonic alignments).
+8. Frames where no candidate clears the harmonic-count gate fall back to `d = 1` (ridge stays as F0) so the smoothed stream is well-defined.
+9. Record `(frame_index, time_offset_s, log_frequency = L − log₂(d*), strength = ridge_strength, divisor = d*)`.
 
 After per-frame scoring, majority-smooth the integer `divisor` stream over `smoothing_frames = 5` (reuse `_majority_smooth`). Substitute each frame's `log_frequency` with `L_original − log₂(smoothed_divisor)`.
 
@@ -123,7 +125,11 @@ class HPSParams:
     low_band_threshold_hz: float = 100.0
     low_band_min_harmonics: int = 3
     high_band_min_harmonics: int = 2
+    min_above_floor: float = 1.0
+    max_harmonic_dynamic_range_log: float = 3.0
 ```
+
+Module-private constant: `_MIN_MAD = 0.3` (MAD clamp used inside `_score_f0_candidates` only).
 
 `STFTParams` modified:
 
@@ -148,6 +154,8 @@ class STFTParams:
 - **`cents_tolerance = 50.0`** — ≈1.5 CQT bins at 36 bins/octave; tolerates moderate vibrato and CQT quantization. Tighter than the 75¢ harmonic-sibling search (which has to accommodate sweeps across the F0 segment, not just a single frame).
 - **`low_band_penalty = 0.5`** — 0.5 log units ≈ 4 dB. Activates only when sub-100 Hz and ≥ 100 Hz candidates score within ~4 dB of each other (genuinely ambiguous). Strong moans outscore noise by far more than 0.5.
 - **`low_band_min_harmonics = 3` / `high_band_min_harmonics = 2`** — based on the 3.8% sub-100 Hz "above mid-band p90" frequency: requiring 3 coincident above-floor bins at expected harmonic ratios drops the joint probability of an infrasonic noise false-positive to a negligible level. Above 100 Hz, signal is cleaner, so 2 harmonics suffice to keep short whistles addressable.
+- **`min_above_floor = 1.0`** — empirical noise rejection backstop. Without this, even noise-floor bins from CQT filter skirts technically clear `m_n ≥ threshold` when MAD is small; requiring ~9 dB above floor keeps the harmonic-count test honest.
+- **`max_harmonic_dynamic_range_log = 3.0`** (≈26 dB) — bounds the dynamic range of a candidate's "present" harmonics relative to its strongest harmonic. Filter-skirt leakage at subharmonic positions of a strong tone sits 30+ dB below the parent peak and is dropped here; real humpback harmonic stacks fit comfortably inside 3 log units.
 
 ### 4.5 Persisted contracts
 

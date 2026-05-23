@@ -56,8 +56,37 @@
   outputs. A complete Event Encoder job auto-enqueues a Piano Roll Notes job at
   the current default `extractor_version`; the auto-enqueue hook swallows
   conflicts so an in-flight or completed sidecar never blocks the encoder
-  completion. `DEFAULT_EXTRACTOR_VERSION = "v3"` (ADR-069). Legacy `v1` and
-  `v2` rows remain queryable through the existing API and pinned exports.
+  completion. `DEFAULT_EXTRACTOR_VERSION = "v4"` (ADR-070). Legacy
+  `v1`, `v2`, and `v3` rows remain queryable through the existing API
+  and pinned exports.
+- Piano Roll Notes v4 (ADR-070) drops the STFT ridge band floor from
+  100 Hz to 30 Hz and replaces the v3 octave-halving subharmonic
+  refinement (`SubharmonicParams`) with HPS-style harmonic-stack F0
+  scoring (`HPSParams`). The ridge tracker still seeds frame presence;
+  HPS chooses which divisor `d ∈ {1..6}` of the ridge represents the
+  true F0 each frame, scoring candidates by total harmonic-stack
+  support across the first 8 partials with per-harmonic peak,
+  noise-floor, and dynamic-range gates. Sub-100 Hz candidates need
+  ≥ 3 surviving harmonics; ≥ 100 Hz candidates need ≥ 2. Frames where
+  no candidate clears the gate fall back to the ridge as F0. v3
+  `SubharmonicParams` stays in the v3 module for `params_json`
+  round-trip parsing on historical rows.
+- The `subharmonic_octave` column in `event_note_contours_*.parquet`
+  records different quantities for v3 and v4: v3 stores the octave
+  halving count (0..3) chosen by `_refine_subharmonic`; v4 stores
+  `chosen_divisor − 1` (0..5) chosen by `_score_f0_candidates`. The
+  column name is preserved across versions because both encodings
+  answer the same diagnostic question ("how far did we shift the ridge
+  to get F0?"). Renderers using it for diagnostic display work
+  unchanged.
+- The MIDI export resolver picks the highest `complete` notes-job
+  version by lexicographic ordering on `extractor_version`
+  (`desc(extractor_version)`), so `"v4" > "v3" > "v2" > "v1"`. A
+  complete v4 row wins automatically when present; explicit version
+  pinning via the `extractor_version=` argument still selects an older
+  row. The MPE Lower Zone synthesizer detects MPE by the presence of
+  the `note_uid` column (unchanged in v4), so v4 sidecars route to the
+  MPE path identically to v3.
 - Piano Roll Notes v3 uses the shared STFT ridge tracker
   (`humpback.processing.ridge_path.compute_ridge_path()`) as the canonical
   F0 source. The Event Encoder worker persists per-event ridge contours to

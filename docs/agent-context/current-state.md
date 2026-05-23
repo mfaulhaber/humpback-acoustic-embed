@@ -85,12 +85,19 @@ full. Read the relevant domain section when planning or implementing.
   schema, service, API, and button layers. The MIDI's SMF Type 1 /
   480 PPQ / 120 BPM framing is unchanged.
 - Piano Roll Notes now produces MPE-ready ridge-aligned contours; export
-  uses MPE Lower Zone (ADR-069). `DEFAULT_EXTRACTOR_VERSION = "v3"`, the
-  encoder worker persists per-event ridge contours, the notes worker
-  writes a per-frame contour sidecar, and the Notes view defaults to
-  curved-ribbon rendering on a MIDI 12–120 Y axis. Legacy v1/v2 sidecars
-  remain readable; the export resolver picks the highest complete
-  version per string comparison.
+  uses MPE Lower Zone (ADR-069). The encoder worker persists per-event
+  ridge contours, the notes worker writes a per-frame contour sidecar,
+  and the Notes view defaults to curved-ribbon rendering on a MIDI
+  12–120 Y axis. Legacy v1/v2/v3 sidecars remain readable; the export
+  resolver picks the highest complete version per string comparison.
+- `DEFAULT_EXTRACTOR_VERSION = "v4"` (ADR-070): the v4 extractor
+  replaces v3's octave-halving subharmonic refinement with HPS-style
+  harmonic-stack F0 scoring and lowers the STFT ridge band floor to
+  30 Hz. v4 emits `event_notes_v4.parquet` and
+  `event_note_contours_v4.parquet` (schemas identical to v3; the
+  `subharmonic_octave` column stores `chosen_divisor − 1` rather than
+  v3's octave-halving count). MIDI export auto-resolves to v4 when a
+  complete v4 row exists; no auto-backfill of v4 for completed v3 jobs.
 
 ## Frontend Shell
 
