@@ -109,7 +109,13 @@ For each ridge frame at log₂-frequency `L` and CQT column `c`:
 8. Frames where no candidate clears the harmonic-count gate fall back to `d = 1` (ridge stays as F0) so the smoothed stream is well-defined.
 9. Record `(frame_index, time_offset_s, log_frequency = L − log₂(d*), strength = ridge_strength, divisor = d*)`.
 
-After per-frame scoring, majority-smooth the integer `divisor` stream over `smoothing_frames = 5` (reuse `_majority_smooth`). Substitute each frame's `log_frequency` with `L_original − log₂(smoothed_divisor)`.
+After per-frame scoring, majority-smooth the integer `divisor` stream over `smoothing_frames = 5` (reuse `_majority_smooth`), then run a 3-point median filter pass on the smoothed stream (`_median3_smooth`). The majority pass alone can leave isolated single-frame divisor outliers when a window like `[d=4, d=6, d=1, d=6, d=1]` ties d=6 with d=1 and the existing tiebreak `(count, -value)` resolves to the smallest divisor (highest frequency) — visible as a one-frame upward pitch spike in the contour. The 3-point median replaces any isolated outlier between two matching neighbors with the neighbors' value while preserving multi-frame transitions. Edge frames replicate. Substitute each frame's `log_frequency` with `L_original − log₂(smoothed_divisor)` after both passes.
+
+### 4.2.1 Segmentation must not split on divisor changes (v4 regression fix)
+
+v3's :func:`_segment_f0_runs` splits the F0 contour on both amplitude gaps **and** changes in `subharmonic_octave` between adjacent frames, treating each octave-halving as a structural register jump. That logic does not transfer to v4: HPS legitimately selects different divisors at different frames within a single coherent contour (e.g., the ridge wanders across H2/H3/H4 of a glissando), and the smoothed `divisor` stream still has small step transitions at envelope crossings. Reusing v3's segmentation in v4 fragments every long contour into many short notes — production diagnosis on job `690580c5` showed v4 with the v3 segmenter produced 7,289 F0 notes (vs v3's 5,636), with the longest F0 contour at 53 frames (vs v3's 149) and ~96 % of the extra notes attributable to divisor-change splits. The visible regression on the Piano Roll page was "shorter notes, less per-note pitch bend" because each fragment's bend stream is computed relative to that fragment's own median pitch.
+
+v4 therefore uses `_segment_v4_runs`, a copy of `_segment_f0_runs` with the `subharmonic_octave`-change split removed. Only amplitude gaps (≥ `min_break_frames` below the per-event amplitude floor) close a note. The `subharmonic_octave` field is still recorded per contour frame for diagnostic / rendering use; it just no longer drives segmentation. v3's segmenter is unchanged.
 
 ### 4.3 Parameter table
 

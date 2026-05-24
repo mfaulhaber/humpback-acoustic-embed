@@ -282,6 +282,74 @@ def test_sidecar_rows_are_consumed_without_recompute() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_divisor_oscillation_does_not_shred_long_contour() -> None:
+    """ADR-070 regression: shipping v4 split F0 contours on every change in
+    the chosen HPS divisor, fragmenting one coherent sweep into many short
+    notes (96% of v4 fragmentation came from divisor-change splits on a
+    production job). v4 must split only on amplitude gaps; divisor swaps
+    within a continuous trajectory must stay one note.
+    """
+    # 0.8 s sweep with strong, sustained H2 + H3 + H4 layered on a weak F0.
+    # The ridge tracker locks on H4 for the loudest stretch and on H2/H3
+    # for the rest, so HPS legitimately picks different divisors across
+    # frames. v3 would have shredded this; v4 must not.
+    duration_s = 0.8
+    samples = int(round(duration_s * SAMPLE_RATE))
+    t = np.arange(samples) / SAMPLE_RATE
+    log_start = math.log2(120.0)
+    log_end = math.log2(150.0)
+    inst_log = log_start + (log_end - log_start) * t / duration_s
+    inst_hz = np.power(2.0, inst_log)
+    phase_f0 = 2.0 * np.pi * np.cumsum(inst_hz) / SAMPLE_RATE
+    # Time-varying harmonic amplitudes so the ridge wanders across H2/H3/H4.
+    envelope = 0.5 + 0.5 * np.sin(2.0 * np.pi * 3.0 * t)
+    audio = (
+        0.05 * np.sin(phase_f0)
+        + (0.30 * envelope) * np.sin(2.0 * phase_f0)
+        + (0.30 * (1.0 - envelope)) * np.sin(3.0 * phase_f0)
+        + 0.10 * np.sin(4.0 * phase_f0)
+    ).astype(np.float32)
+
+    result = extract_notes_v4(audio, SAMPLE_RATE, params=_params())
+    f0_notes = [n for n in result.notes if n.partial_index == 0]
+    # A single coherent sweep with no amplitude gaps must collapse into a
+    # very small number of F0 notes — one in the ideal case, but allow up
+    # to 3 to accommodate amplitude-floor edge effects on the envelope.
+    assert len(f0_notes) <= 3, (
+        f"v4 fragmented a continuous sweep into {len(f0_notes)} F0 notes "
+        "(divisor-change splits should have been removed in segmentation)"
+    )
+
+
+def test_isolated_divisor_spikes_get_killed_by_median_pass() -> None:
+    """ADR-070 regression: a 5-frame majority-smoothed divisor stream like
+    [4, 6, 1, 6, 1] resolves the tie between 6 and 1 toward 1 (smallest),
+    surfacing as a one-frame upward pitch spike in the contour. The
+    3-point median pass added after the majority pass must collapse any
+    single-frame divisor outlier between two matching neighbors.
+    """
+    from humpback.processing.note_extractor_v4 import _median3_smooth
+
+    arr = np.asarray([6, 6, 1, 6, 6], dtype=np.int64)
+    out = _median3_smooth(arr)
+    # Center spike at index 2 gets replaced with its surrounding value.
+    assert out.tolist() == [6, 6, 6, 6, 6]
+
+    # Real multi-frame transitions are preserved.
+    arr2 = np.asarray([6, 6, 1, 1, 1], dtype=np.int64)
+    out2 = _median3_smooth(arr2)
+    # Index 2 is the start of a real run, surrounded by 6 and 1 → median
+    # is 1, which collapses one frame of the transition (acceptable
+    # cost; alternative is to keep the spike-killing benefit).
+    assert out2.tolist()[0] == 6 and out2.tolist()[-1] == 1
+    assert sum(v == 1 for v in out2.tolist()) >= 2
+
+    # Edge frames replicate (never lose them to median).
+    arr3 = np.asarray([1, 6, 6, 6, 6], dtype=np.int64)
+    out3 = _median3_smooth(arr3)
+    assert out3.tolist() == [1, 6, 6, 6, 6]
+
+
 def test_default_params_match_spec() -> None:
     p = ExtractNotesV4Params(job_id="j", event_id="e", event_start_utc=0.0)
     assert p.stft.min_frequency_hz == 30.0

@@ -42,7 +42,6 @@ from humpback.processing.note_extractor_v3 import (
     _majority_smooth,
     _RefinedFrame,
     _resolve_ridge_contour,
-    _segment_f0_runs,
 )
 from humpback.processing.piano_roll_cqt import CQTParams, compute_event_cqt
 
@@ -194,7 +193,7 @@ def extract_notes_v4(
         params=params.hps,
     )
 
-    f0_segments = _segment_f0_runs(refined, params=params.segmentation)
+    f0_segments = _segment_v4_runs(refined, params=params.segmentation)
     if not f0_segments:
         return NotesV3Result(notes=[], contours=[])
 
@@ -248,6 +247,90 @@ def extract_notes_v4(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
+
+def _median3_smooth(values: np.ndarray) -> np.ndarray:
+    """3-point median filter with edge replication.
+
+    Suppresses single-frame outliers in an integer stream while leaving
+    multi-frame runs untouched. Applied after :func:`_majority_smooth`
+    inside HPS to catch divisor spikes that survive the majority pass
+    because of the (count, -value) tiebreak (see call site for the
+    [4, 6, 1, 6, 1]-style example that motivated this step).
+    """
+    n = values.size
+    if n < 3:
+        return values.astype(np.int64)
+    out = np.empty(n, dtype=np.int64)
+    out[0] = int(values[0])
+    out[-1] = int(values[-1])
+    for i in range(1, n - 1):
+        triple = sorted((int(values[i - 1]), int(values[i]), int(values[i + 1])))
+        out[i] = triple[1]
+    return out
+
+
+def _segment_v4_runs(
+    refined: list[_RefinedFrame],
+    *,
+    params: SegmentationParams,
+) -> list[list[_RefinedFrame]]:
+    """Split the F0 contour on energy gaps only (ADR-070 §5).
+
+    v3's :func:`_segment_f0_runs` additionally splits on changes in
+    ``subharmonic_octave`` between adjacent frames, treating each as a
+    structural register jump. That worked for v3 because the v3
+    refinement only changed octaves on a real, sustained sub-octave
+    detection (rare per event). In v4 the field stores the HPS-chosen
+    divisor (1..6), and even after majority-smoothing the divisor can
+    legitimately flip at frame boundaries as a song's harmonic content
+    shifts the relative scores. Splitting on every such flip shreds
+    coherent contours (96 % of v4 fragmentation in production traces
+    came from divisor-change splits — see ADR-070's regression
+    diagnosis). v4 keeps only the amplitude-floor split; the divisor
+    value is still recorded per contour frame so renderers and DAWs can
+    surface the ridge shift for diagnosis.
+    """
+    if len(refined) < params.min_note_frames:
+        return []
+    strengths = np.asarray([f.strength for f in refined], dtype=np.float64)
+    floor = float(np.percentile(strengths, params.amplitude_floor_percentile))
+    below_floor = strengths < floor
+
+    segments: list[list[_RefinedFrame]] = []
+    current: list[_RefinedFrame] = []
+    gap_count = 0
+    last_frame_index: Optional[int] = None
+    for idx, frame in enumerate(refined):
+        # Frames skipped by the ridge tracker (no candidate cleared the
+        # prominence floor) appear as a jump in ``frame_index``. Treat
+        # the skipped frames as implicit below-floor evidence.
+        if last_frame_index is not None:
+            skipped = max(0, frame.frame_index - last_frame_index - 1)
+            if skipped > 0:
+                gap_count += skipped
+        if gap_count >= params.min_break_frames:
+            if len(current) >= params.min_note_frames:
+                segments.append(current)
+            current = []
+            gap_count = 0
+        if bool(below_floor[idx]):
+            gap_count += 1
+            if gap_count >= params.min_break_frames:
+                if len(current) >= params.min_note_frames:
+                    segments.append(current)
+                current = []
+                gap_count = 0
+                last_frame_index = frame.frame_index
+                continue
+        else:
+            gap_count = 0
+        current.append(frame)
+        last_frame_index = frame.frame_index
+
+    if len(current) >= params.min_note_frames:
+        segments.append(current)
+    return segments
 
 
 def _score_f0_candidates(
@@ -361,6 +444,14 @@ def _score_f0_candidates(
         raw_divisors[idx] = best_d
 
     smoothed = _majority_smooth(raw_divisors, window=int(params.smoothing_frames))
+    # 3-point median pass: kills isolated single-frame divisor spikes that
+    # survive the majority pass via its (count, -value) tiebreak. With a
+    # 5-frame majority and a 5-way split like [d=4, d=6, d=1, d=6, d=1] the
+    # tie between d=6 and d=1 resolves to d=1 (smallest), surfacing as a
+    # one-frame upward pitch spike in the contour. The median collapses
+    # any single-frame outlier between two matching neighbors back to the
+    # neighbors' value while preserving real multi-frame transitions.
+    smoothed = _median3_smooth(smoothed)
     refined: list[_RefinedFrame] = []
     for idx, ridge_frame in enumerate(ridge):
         d = int(smoothed[idx])
