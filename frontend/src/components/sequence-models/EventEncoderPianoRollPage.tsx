@@ -121,6 +121,9 @@ const DEFAULT_FREQUENCY_MAX = 2000;
 const DEFAULT_RIDGE_FREQUENCY_MAX = 6000;
 const FREQUENCY_OPTIONS = [1500, 2000, 3000, 4000, 5000, 6000];
 const CONTOUR_BATCH_LIMIT = 2000;
+// Mirrors humpback.models.piano_roll_notes.DEFAULT_EXTRACTOR_VERSION
+// (ADR-070). Bump alongside the backend when a future extractor lands.
+const LATEST_NOTES_EXTRACTOR_VERSION = "v4";
 // Bound the per-page contour cache so a long pan across a job with
 // millions of v3 notes does not retain every contour for the page
 // lifetime. 50_000 covers ~25 full viewports at the batch cap and is
@@ -1481,19 +1484,23 @@ function NotesStatusControls({ jobId }: { jobId: string }) {
       >
         <PianoRollNotesStatusPill
           status={status}
-          onRequestV3Upgrade={async () => {
+          latestExtractorVersion={LATEST_NOTES_EXTRACTOR_VERSION}
+          onRequestUpgrade={async () => {
             try {
-              await mutation.mutateAsync({ extractor_version: "v3" });
+              await mutation.mutateAsync({
+                extractor_version: LATEST_NOTES_EXTRACTOR_VERSION,
+              });
             } catch (err) {
-              // The displayed status is the latest *complete* row, so the
-              // v3-available badge can render even when a v3 row is
-              // already queued or running. The backend then returns 409;
-              // surface the in-flight state with a non-blocking toast
-              // instead of letting the global error path raise.
+              // The displayed status is the latest *complete* row, so
+              // the upgrade-available badge can render even when an
+              // upgrade row is already queued or running. The backend
+              // then returns 409; surface the in-flight state with a
+              // non-blocking toast instead of letting the global error
+              // path raise.
               if (err instanceof ApiError && err.status === 409) {
                 toast({
                   title: "Already enqueued",
-                  description: "A v3 notes job is already queued or running for this encoder.",
+                  description: `A ${LATEST_NOTES_EXTRACTOR_VERSION} notes job is already queued or running for this encoder.`,
                 });
                 return;
               }

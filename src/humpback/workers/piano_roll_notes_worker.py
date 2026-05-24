@@ -51,6 +51,11 @@ from humpback.processing.note_extractor_v3 import (
     SubharmonicParams,
     extract_notes_v3,
 )
+from humpback.processing.note_extractor_v4 import (
+    ExtractNotesV4Params,
+    HPSParams,
+    extract_notes_v4,
+)
 from humpback.processing.piano_roll_cqt import (
     CQTParams,
     PeakParams,
@@ -127,6 +132,8 @@ NOTE_CONTOURS_V3_SCHEMA = pa.schema(
 _MAX_FAILURE_REPORT = 10
 _UNKNOWN_TOKEN = -1
 _V3_EXTRACTOR_VERSION = "v3"
+_V4_EXTRACTOR_VERSION = "v4"
+_RIDGE_AWARE_VERSIONS = frozenset({_V3_EXTRACTOR_VERSION, _V4_EXTRACTOR_VERSION})
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +164,7 @@ class _ResolvedParams:
     segmentation: SegmentationParams
     harmonic_v3: HarmonicSearchParams
     midi_v3: MidiRangeParams
+    hps: HPSParams
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -233,6 +241,21 @@ class _ResolvedParams:
                 "max_pitch": self.midi_v3.max_pitch,
                 "cents_clip": self.midi_v3.cents_clip,
             },
+            "hps": {
+                "n_harmonics": self.hps.n_harmonics,
+                "cents_tolerance": self.hps.cents_tolerance,
+                "k_noise": self.hps.k_noise,
+                "candidate_divisors": list(self.hps.candidate_divisors),
+                "smoothing_frames": self.hps.smoothing_frames,
+                "low_band_penalty": self.hps.low_band_penalty,
+                "low_band_threshold_hz": self.hps.low_band_threshold_hz,
+                "low_band_min_harmonics": self.hps.low_band_min_harmonics,
+                "high_band_min_harmonics": self.hps.high_band_min_harmonics,
+                "min_above_floor": self.hps.min_above_floor,
+                "max_harmonic_dynamic_range_log": (
+                    self.hps.max_harmonic_dynamic_range_log
+                ),
+            },
         }
 
 
@@ -290,17 +313,22 @@ async def run_piano_roll_notes_job(
                 f"(status={encoder.status!r})"
             )
 
-        params = _resolve_params(job.params_json)
+        params = _resolve_params(job.params_json, job.extractor_version)
         notes_path = event_encoder_notes_path(
             settings.storage_root, encoder.id, job.extractor_version
         )
         ensure_dir(event_encoder_dir(settings.storage_root, encoder.id))
 
-        is_v3 = job.extractor_version == _V3_EXTRACTOR_VERSION
+        is_ridge_aware = job.extractor_version in _RIDGE_AWARE_VERSIONS
         extra_meta: dict[str, Any] = {}
-        if is_v3:
+        if is_ridge_aware:
             contours_path = event_encoder_note_contours_path(
                 settings.storage_root, encoder.id, job.extractor_version
+            )
+            extractor = (
+                _extract_notes_v4
+                if job.extractor_version == _V4_EXTRACTOR_VERSION
+                else _extract_notes_v3
             )
             (
                 rows,
@@ -308,7 +336,9 @@ async def run_piano_roll_notes_job(
                 n_events,
                 failures,
                 ridges_status,
-            ) = await _extract_notes_v3(session, encoder, job.id, params, settings)
+            ) = await extractor(session, encoder, job.id, params, settings)
+            # v3 and v4 share schema; only ``subharmonic_octave`` semantics
+            # differ (v3 = octave halvings, v4 = divisor − 1 per ADR-070).
             notes_table = pa.Table.from_pylist(rows, schema=NOTES_V3_SCHEMA)
             contours_table = pa.Table.from_pylist(
                 contour_rows, schema=NOTE_CONTOURS_V3_SCHEMA
@@ -373,7 +403,7 @@ async def run_piano_roll_notes_job(
         await session.commit()
 
 
-def _resolve_params(params_json: str) -> _ResolvedParams:
+def _resolve_params(params_json: str, extractor_version: str = "") -> _ResolvedParams:
     raw: dict[str, Any] = {}
     if params_json:
         try:
@@ -395,6 +425,11 @@ def _resolve_params(params_json: str) -> _ResolvedParams:
     segmentation_raw = _section(raw, "segmentation")
     harmonic_v3_raw = _section(raw, "harmonic_v3")
     midi_v3_raw = _section(raw, "midi_v3")
+    hps_raw = _section(raw, "hps")
+    # v4 lowers the STFT ridge band floor to 30 Hz (ADR-070 §4.3); v3
+    # keeps the historical 100 Hz floor so re-running an old row
+    # reproduces v3's bytes.
+    default_min_freq = 30.0 if extractor_version == _V4_EXTRACTOR_VERSION else 100.0
 
     return _ResolvedParams(
         cqt=CQTParams(
@@ -439,7 +474,7 @@ def _resolve_params(params_json: str) -> _ResolvedParams:
         stft=STFTParams(
             n_fft=int(stft_raw.get("n_fft", 1024)),
             hop_length=int(stft_raw.get("hop_length", 512)),
-            min_frequency_hz=float(stft_raw.get("min_frequency_hz", 100.0)),
+            min_frequency_hz=float(stft_raw.get("min_frequency_hz", default_min_freq)),
             max_frequency_hz=float(stft_raw.get("max_frequency_hz", 6000.0)),
             candidate_count=int(stft_raw.get("candidate_count", 5)),
             smoothness_penalty=float(stft_raw.get("smoothness_penalty", 8.0)),
@@ -471,6 +506,23 @@ def _resolve_params(params_json: str) -> _ResolvedParams:
             min_pitch=int(midi_v3_raw.get("min_pitch", 12)),
             max_pitch=int(midi_v3_raw.get("max_pitch", 120)),
             cents_clip=float(midi_v3_raw.get("cents_clip", 9600.0)),
+        ),
+        hps=HPSParams(
+            n_harmonics=int(hps_raw.get("n_harmonics", 8)),
+            cents_tolerance=float(hps_raw.get("cents_tolerance", 50.0)),
+            k_noise=float(hps_raw.get("k_noise", 2.0)),
+            candidate_divisors=tuple(
+                int(d) for d in hps_raw.get("candidate_divisors", (1, 2, 3, 4, 5, 6))
+            ),
+            smoothing_frames=int(hps_raw.get("smoothing_frames", 5)),
+            low_band_penalty=float(hps_raw.get("low_band_penalty", 0.5)),
+            low_band_threshold_hz=float(hps_raw.get("low_band_threshold_hz", 100.0)),
+            low_band_min_harmonics=int(hps_raw.get("low_band_min_harmonics", 3)),
+            high_band_min_harmonics=int(hps_raw.get("high_band_min_harmonics", 2)),
+            min_above_floor=float(hps_raw.get("min_above_floor", 1.0)),
+            max_harmonic_dynamic_range_log=float(
+                hps_raw.get("max_harmonic_dynamic_range_log", 3.0)
+            ),
         ),
     )
 
@@ -748,6 +800,140 @@ async def _extract_notes_v3(
     if not pending and failures:
         raise RuntimeError(
             f"piano roll notes v3 had no successful events ({len(failures)} failures)"
+        )
+
+    velocity_map = _velocity_mapper(
+        [entry.raw_magnitude for entry in pending], params.velocity
+    )
+    for entry in pending:
+        entry.row["velocity"] = velocity_map(entry.raw_magnitude)
+
+    rows = [entry.row for entry in pending]
+    rows.sort(key=lambda r: (r["start_utc"], r["midi_pitch"]))
+    contour_rows.sort(key=lambda r: (r["note_uid"], r["frame_index"]))
+    return rows, contour_rows, len(events), failures, ridges_status
+
+
+async def _extract_notes_v4(
+    session: AsyncSession,
+    encoder: EventEncoderJob,
+    job_id: str,
+    params: _ResolvedParams,
+    settings: Settings,
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    int,
+    list[tuple[str, str]],
+    str,
+]:
+    """Run the v4 HPS extractor across an encoder job's events (ADR-070).
+
+    Mirrors :func:`_extract_notes_v3` end-to-end; the only differences
+    are the per-event ``extract_notes_v4`` call and the
+    ``ExtractNotesV4Params`` shape (``hps`` instead of ``subharmonic``).
+    """
+    seg_job = await session.get(EventSegmentationJob, encoder.event_segmentation_job_id)
+    if seg_job is None:
+        raise ValueError(
+            f"event_segmentation_job not found: {encoder.event_segmentation_job_id}"
+        )
+
+    region_job = await session.get(RegionDetectionJob, seg_job.region_detection_job_id)
+    if region_job is None:
+        raise ValueError(
+            f"region_detection_job not found: {seg_job.region_detection_job_id}"
+        )
+
+    events_path = (
+        segmentation_job_dir(settings.storage_root, encoder.event_segmentation_job_id)
+        / "events.parquet"
+    )
+    if not events_path.exists():
+        raise FileNotFoundError(
+            f"events.parquet not found for segmentation job {seg_job.id}"
+        )
+    events = read_events(events_path)
+    token_map = _load_event_token_map(settings, encoder.id)
+
+    audio_provider = await _build_audio_provider(
+        session, settings, region_job, events, params.cqt.target_sample_rate
+    )
+    region_offset = float(region_job.start_timestamp or 0.0)
+
+    ridges_path = event_encoder_ridges_path(
+        settings.storage_root, encoder.id, encoder.tokenizer_version
+    )
+    sidecar_by_event = _load_ridge_sidecar(ridges_path)
+    ridges_status = str(ridges_path) if sidecar_by_event is not None else "absent"
+
+    @dataclass
+    class _PendingNote:
+        row: dict[str, Any]
+        raw_magnitude: float
+
+    pending: list[_PendingNote] = []
+    contour_rows: list[dict[str, Any]] = []
+    failures: list[tuple[str, str]] = []
+
+    for event in events:
+        if event.end_sec - event.start_sec < params.audio.min_event_duration_s:
+            continue
+        try:
+            audio = _slice_event_audio(
+                event,
+                audio_provider,
+                target_sr=params.cqt.target_sample_rate,
+                pad_seconds=params.audio.pad_seconds,
+            )
+            if audio.size == 0:
+                continue
+            extract_params = ExtractNotesV4Params(
+                job_id=job_id,
+                event_id=event.event_id,
+                event_start_utc=region_offset + float(event.start_sec),
+                pad_seconds=params.audio.pad_seconds,
+                cqt=params.cqt,
+                stft=params.stft,
+                hps=params.hps,
+                segmentation=params.segmentation,
+                harmonic=params.harmonic_v3,
+                midi=params.midi_v3,
+            )
+            sidecar = (
+                sidecar_by_event.get(event.event_id)
+                if sidecar_by_event is not None
+                else None
+            )
+            result = extract_notes_v4(
+                audio,
+                params.cqt.target_sample_rate,
+                params=extract_params,
+                ridge_sidecar_rows=sidecar,
+            )
+            if not result.notes:
+                continue
+
+            token_id = int(token_map.get(event.event_id, _UNKNOWN_TOKEN))
+            for note in result.notes:
+                pending.append(
+                    _PendingNote(
+                        row=_note_v3_row(note, event.event_id, token_id),
+                        raw_magnitude=float(note.peak_magnitude),
+                    )
+                )
+            contour_rows.extend(_contour_v3_row(c) for c in result.contours)
+        except Exception as exc:  # noqa: BLE001
+            failures.append((event.event_id, _truncate(str(exc), limit=200)))
+            logger.warning(
+                "piano_roll_notes_v4 | event=%s failed",
+                event.event_id,
+                exc_info=True,
+            )
+
+    if not pending and failures:
+        raise RuntimeError(
+            f"piano roll notes v4 had no successful events ({len(failures)} failures)"
         )
 
     velocity_map = _velocity_mapper(

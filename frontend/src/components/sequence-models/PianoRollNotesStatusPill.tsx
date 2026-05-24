@@ -28,25 +28,36 @@ interface PianoRollNotesStatusPillProps {
   className?: string;
   prefix?: string;
   /**
-   * Optional click handler that enqueues a v3 notes job. Surfaced as a
-   * "v3 available" badge next to the main pill when the most-recent
-   * complete row is older than v3 (per ADR-069 §9.5).
+   * Optional click handler that enqueues an upgrade notes job at
+   * ``latestExtractorVersion``. Surfaced as an "<X> available" badge
+   * next to the main pill when the most-recent complete row is older
+   * than ``latestExtractorVersion`` (lexicographic comparison; the
+   * backend resolver uses the same ordering).
    */
-  onRequestV3Upgrade?: () => void;
+  onRequestUpgrade?: () => void;
+  /**
+   * The current default extractor version. The upgrade badge appears
+   * when the displayed status is a complete row at a version
+   * lexicographically less than this. Required for the badge to render.
+   * Mirrors ``humpback.models.piano_roll_notes.DEFAULT_EXTRACTOR_VERSION``.
+   */
+  latestExtractorVersion?: string;
 }
 
 export function PianoRollNotesStatusPill({
   status,
   className,
   prefix = "Notes",
-  onRequestV3Upgrade,
+  onRequestUpgrade,
+  latestExtractorVersion,
 }: PianoRollNotesStatusPillProps) {
   const value = status.status;
-  const showV3Badge =
-    onRequestV3Upgrade != null &&
+  const showUpgradeBadge =
+    onRequestUpgrade != null &&
+    latestExtractorVersion != null &&
     !isPianoRollNotesStatusAbsent(status) &&
     status.status === "complete" &&
-    status.extractor_version < "v3";
+    status.extractor_version < latestExtractorVersion;
   return (
     <span
       data-testid="piano-roll-notes-status-pill"
@@ -58,15 +69,15 @@ export function PianoRollNotesStatusPill({
       )}
     >
       <span>{prefix}: {STATUS_LABEL[value]}</span>
-      {showV3Badge ? (
+      {showUpgradeBadge ? (
         <button
           type="button"
-          onClick={onRequestV3Upgrade}
+          onClick={onRequestUpgrade}
           className="rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-emerald-500"
-          data-testid="piano-roll-notes-v3-upgrade-badge"
-          title="Re-extract Piano Roll Notes at v3 to enable MPE export and ribbon rendering."
+          data-testid="piano-roll-notes-upgrade-badge"
+          title={`Re-extract Piano Roll Notes at ${latestExtractorVersion}.`}
         >
-          v3 available
+          {latestExtractorVersion} available
         </button>
       ) : null}
     </span>

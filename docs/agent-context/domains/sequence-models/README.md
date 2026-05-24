@@ -14,7 +14,8 @@ helpers, or the retained Sequence Models UI.
 - `src/humpback/processing/piano_roll_cqt.py`
 - `src/humpback/processing/piano_roll_tracker.py` (legacy v1/v2 only; retired by ADR-069)
 - `src/humpback/processing/ridge_path.py` (shared STFT ridge tracker used by the encoder and the v3 notes extractor)
-- `src/humpback/processing/note_extractor_v3.py` (ridge-aware coherent-contour F0 + harmonics; ADR-069)
+- `src/humpback/processing/note_extractor_v3.py` (legacy v3 ridge-aware extractor; frozen after ADR-070)
+- `src/humpback/processing/note_extractor_v4.py` (HPS-based F0 + harmonics with 30 Hz STFT ridge floor; ADR-070; current default)
 - `src/humpback/workers/continuous_embedding_worker.py`
 - `src/humpback/workers/event_encoder_worker.py`
 - `src/humpback/workers/piano_roll_notes_worker.py`
@@ -146,9 +147,10 @@ helpers, or the retained Sequence Models UI.
 - `event_encoders/{job_id}/token_sequences.parquet`
 - `event_encoders/{job_id}/manifest.json`
 - `event_encoders/{job_id}/report.json`
-- `event_encoders/{job_id}/event_notes_{extractor_version}.parquet` (Piano Roll Notes sidecar; current default is `v3` — the ridge-aware coherent-contour extractor from ADR-069. Legacy `v1` and `v2` artifacts remain readable on disk until manually deleted)
+- `event_encoders/{job_id}/event_notes_{extractor_version}.parquet` (Piano Roll Notes sidecar; current default is `v4` — the HPS-based extractor from ADR-070. Legacy `v1`, `v2`, and `v3` artifacts remain readable on disk until manually deleted)
 - `event_encoders/{job_id}/event_ridges_{tokenizer_version}.parquet` (per-event STFT ridge contours produced by the encoder worker. One row per frame per event with `event_id`, `frame_index`, `frame_time_offset_s`, `log_frequency`, `strength`, `energy_ratio`. Consumed by the Piano Roll Notes v3 extractor; v3 falls back to in-process ridge recompute when this sidecar is absent — ADR-069)
 - `event_encoders/{job_id}/event_note_contours_v3.parquet` (per-frame note contour sidecar for v3 notes. One row per frame per note keyed on `note_uid` with `time_offset_s`, `cents_from_pitch`, `harmonic_strength`, `subharmonic_octave`. Consumed by the MPE MIDI synthesizer and the frontend ribbon renderer — ADR-069)
+- `event_encoders/{job_id}/event_note_contours_v4.parquet` (per-frame note contour sidecar for v4 notes. Schema identical to the v3 sidecar; the `subharmonic_octave` column stores `chosen_divisor − 1` (0..5) in v4 rather than the v3 octave-halving count (0..3) — ADR-070)
 - `exports/event_encoders/{job_id}/notes_{extractor_version}.mid` (Piano Roll Notes MIDI export artifact for the last-exported window. `v3` is MPE Lower Zone with per-voice pitch bend; legacy `v1`/`v2` remain on the slim seven-channel layout from ADR-067)
 - `exports/event_encoders/{job_id}/audio_{extractor_version}.flac` (co-exported 32 kHz mono FLAC clip for the same exported window)
 
@@ -178,6 +180,7 @@ concatenation.
 - ADR-067: Per-frame harmonic labeling and channelized MIDI export.
 - ADR-068: Piano Roll windowed bundled export (MIDI + FLAC).
 - ADR-069: Ridge-aligned F0 + harmonics extractor and MPE Piano Roll MIDI export.
+- ADR-070: Piano Roll Notes v4 — HPS F0 selection with extended low band.
 
 ## Likely Neighbors
 
