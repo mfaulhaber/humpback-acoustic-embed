@@ -93,6 +93,8 @@ class _CliArgs:
     pad_seconds: float
     width: int
     height: int
+    freq_min_hz: Optional[float]
+    freq_max_hz: Optional[float]
 
 
 def _parse_args(argv: Sequence[str]) -> _CliArgs:
@@ -114,6 +116,24 @@ def _parse_args(argv: Sequence[str]) -> _CliArgs:
     parser.add_argument("--pad-seconds", type=float, default=0.05)
     parser.add_argument("--width", type=int, default=1600)
     parser.add_argument("--height", type=int, default=900)
+    parser.add_argument(
+        "--freq-min",
+        type=float,
+        default=None,
+        help=(
+            "Lower bound (Hz) for the spectrogram and piano-roll y-axis. "
+            "When omitted, auto-fit from the ridge sidecar and extractor outputs."
+        ),
+    )
+    parser.add_argument(
+        "--freq-max",
+        type=float,
+        default=None,
+        help=(
+            "Upper bound (Hz) for the spectrogram and piano-roll y-axis. "
+            "When omitted, auto-fit from the ridge sidecar and extractor outputs."
+        ),
+    )
     ns = parser.parse_args(list(argv))
     variants = tuple(v.strip() for v in str(ns.variants).split(",") if v.strip())
     if not variants:
@@ -133,6 +153,8 @@ def _parse_args(argv: Sequence[str]) -> _CliArgs:
         pad_seconds=float(ns.pad_seconds),
         width=int(ns.width),
         height=int(ns.height),
+        freq_min_hz=float(ns.freq_min) if ns.freq_min is not None else None,
+        freq_max_hz=float(ns.freq_max) if ns.freq_max is not None else None,
     )
 
 
@@ -390,6 +412,70 @@ def _ridge_xy_from_rows(
     )
 
 
+def _compute_freq_range(
+    *,
+    args: _CliArgs,
+    resolved: _ResolvedEvent,
+    variants: Sequence[_VariantResult],
+) -> tuple[float, float]:
+    """Choose y-axis Hz range for both panels.
+
+    Priority order:
+
+    1. CLI overrides (``--freq-min`` / ``--freq-max``) win individually.
+    2. Anchor on the ridge sidecar (the spectral lines the user is
+       trying to approximate). Range is ``[ridge_min / sqrt(2),
+       ridge_max * 4]`` — half an octave below for low-F0 candidates,
+       two octaves above so the lower-order harmonics are visible.
+    3. Anchor on F0 notes (partial_index == 0) when there's no ridge
+       sidecar — same padding rule against the F0 pitch range.
+    4. Fall back to ``50 Hz .. 1500 Hz`` when nothing was observed.
+
+    Harmonic notes are intentionally NOT pulled into the range — they
+    can extend up to H16 and balloon the y-axis to the CQT ceiling,
+    defeating the point of zooming in on the ridge.
+    """
+    observed_log: list[float] = []
+    if resolved.ridge_rows:
+        for r in resolved.ridge_rows:
+            observed_log.append(float(r["log_frequency"]))
+    if not observed_log:
+        for v in variants:
+            contour_by_uid: dict[str, list[ContourFrame]] = defaultdict(list)
+            for c in v.result.contours:
+                contour_by_uid[c.note_uid].append(c)
+            for note in v.result.notes:
+                if note.partial_index != 0:
+                    continue
+                rows = contour_by_uid.get(note.note_uid, [])
+                if rows:
+                    for c in rows:
+                        midi = note.midi_pitch + c.cents_from_pitch / 100.0
+                        observed_log.append(math.log2(_midi_to_hz(midi)))
+                else:
+                    observed_log.append(math.log2(_midi_to_hz(note.midi_pitch)))
+
+    if not observed_log:
+        lo_hz, hi_hz = 50.0, 1500.0
+    else:
+        lo_log = min(observed_log) - 0.5  # half an octave below
+        hi_log = max(observed_log) + 2.0  # two octaves above for harmonics
+        lo_hz = max(30.0, 2.0**lo_log)
+        hi_hz = 2.0**hi_log
+    if args.freq_min_hz is not None:
+        lo_hz = float(args.freq_min_hz)
+    if args.freq_max_hz is not None:
+        hi_hz = float(args.freq_max_hz)
+    # Clamp upper bound to the CQT's natural ceiling so the spectrogram
+    # extent stays valid even if a stray harmonic note overshoots.
+    cqt = CQTParams()
+    cqt_max_hz = cqt.fmin * (2.0 ** ((cqt.n_bins - 1) / cqt.bins_per_octave))
+    hi_hz = min(hi_hz, cqt_max_hz)
+    if hi_hz <= lo_hz:
+        hi_hz = max(lo_hz * 4.0, lo_hz + 1.0)
+    return float(lo_hz), float(hi_hz)
+
+
 def _draw_spectrogram(
     ax: matplotlib.axes.Axes,
     audio: np.ndarray,
@@ -397,6 +483,7 @@ def _draw_spectrogram(
     duration_s: float,
     ridge_rows: Sequence[Mapping[str, Any]] | None,
     pad_seconds: float,
+    freq_range_hz: tuple[float, float],
 ) -> None:
     cqt_params = CQTParams()
     cqt_log = compute_event_cqt(audio, sample_rate, params=cqt_params)
@@ -440,18 +527,18 @@ def _draw_spectrogram(
             ridge_t,
             np.log2(np.maximum(ridge_hz, 1e-9)),
             color="#00ffd0",
-            linewidth=1.0,
-            alpha=0.85,
+            linewidth=1.2,
+            alpha=0.9,
             label="STFT ridge",
         )
         ax.legend(loc="upper right", fontsize=8)
     ax.set_xlim(0, duration_s)
-    ax.set_ylim(extent[2], extent[3])
+    lo_log = math.log2(max(freq_range_hz[0], 1e-9))
+    hi_log = math.log2(max(freq_range_hz[1], freq_range_hz[0] + 1e-9))
+    ax.set_ylim(lo_log, hi_log)
 
     # Frequency ticks (log Hz axis -> tick label in Hz).
-    tick_log = [
-        math.log2(f) for f in _HZ_TICKS if extent[2] <= math.log2(f) <= extent[3]
-    ]
+    tick_log = [math.log2(f) for f in _HZ_TICKS if lo_log <= math.log2(f) <= hi_log]
     tick_lbl = [
         f"{int(2.0**lf) if 2.0**lf >= 1.0 else f'{2.0**lf:.1f}'} Hz" for lf in tick_log
     ]
@@ -465,11 +552,20 @@ def _draw_piano_roll(
     ax: matplotlib.axes.Axes,
     variant: _VariantResult,
     duration_s: float,
+    freq_range_hz: tuple[float, float],
 ) -> None:
+    # Convert the chosen Hz range to a MIDI band, clamped to the
+    # piano-roll spec's [12, 120] window so the renderer's existing
+    # octave labels stay valid.
+    midi_lo = max(_PIANO_MIDI_MIN, int(math.floor(_hz_to_midi(freq_range_hz[0]))))
+    midi_hi = min(_PIANO_MIDI_MAX, int(math.ceil(_hz_to_midi(freq_range_hz[1]))))
+    if midi_hi <= midi_lo:
+        midi_hi = min(_PIANO_MIDI_MAX, midi_lo + 12)
+
     # Background: octave gridlines + black-key shading.
     ax.set_xlim(0, duration_s)
-    ax.set_ylim(_PIANO_MIDI_MIN, _PIANO_MIDI_MAX)
-    for midi in range(_PIANO_MIDI_MIN, _PIANO_MIDI_MAX + 1):
+    ax.set_ylim(midi_lo, midi_hi)
+    for midi in range(midi_lo, midi_hi + 1):
         if (midi % 12) in _BLACK_KEYS:
             ax.axhspan(midi - 0.5, midi + 0.5, color="#f1f1f1", zorder=0)
         if midi % 12 == 0:
@@ -565,6 +661,8 @@ def _render_png(
     )
     if n_panels == 1:
         axes = [axes]
+    freq_range_hz = _compute_freq_range(args=args, resolved=resolved, variants=variants)
+    logger.info("freq range | %.1f Hz .. %.1f Hz", freq_range_hz[0], freq_range_hz[1])
     _draw_spectrogram(
         axes[0],
         resolved.audio,
@@ -572,9 +670,10 @@ def _render_png(
         duration_s,
         resolved.ridge_rows,
         resolved.pad_seconds,
+        freq_range_hz,
     )
     for ax, variant in zip(axes[1:], variants):
-        _draw_piano_roll(ax, variant, duration_s)
+        _draw_piano_roll(ax, variant, duration_s, freq_range_hz)
     axes[-1].set_xlabel("Event time (s, since padded start)")
     token_label = (
         f"token={resolved.sequence_index}"
