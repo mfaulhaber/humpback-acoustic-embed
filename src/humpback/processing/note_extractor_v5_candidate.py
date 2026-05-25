@@ -92,7 +92,7 @@ class HarmonicViterbiParams:
     # invariant (CQT log-magnitudes are relative); empirically real
     # tonal signals sit at peakedness 5–12 and broadband noise at 1.5–2.
     tau_voicing: float = 3.0
-    transition_lambda: float = 2.0
+    transition_lambda: float = 6.0
     voicing_transition_cost: float = 1.0
     # Candidates with fewer than this many harmonics clearing the
     # noise-floor + local-peak gates score 0. Matches v4's
@@ -100,6 +100,46 @@ class HarmonicViterbiParams:
     # noise can clear single-bin energy gates by luck, but rarely aligns
     # at integer-ratio harmonic positions in two bins simultaneously.
     min_harmonics_present: int = 2
+    # H1 prominence gate (Phase-2 iteration: noise-fed sub-fundamental
+    # rejection). A candidate's own H1 bin must (a) be present in the
+    # accepted-harmonic set and (b) sit within
+    # ``max_h1_below_strongest`` log-units of the strongest accepted
+    # harmonic. Chronic low-frequency noise ridges (ship hum, hydrophone
+    # self-noise) put real peak energy at low CQT bins; a candidate at
+    # that bin scores by leakage at integer multiples even when its own
+    # fundamental is just a faint noise peak relative to a real call's
+    # strong upper harmonic. The gate forces the algorithm to choose
+    # the candidate whose fundamental and harmonic stack are at
+    # commensurate magnitude.
+    max_h1_below_strongest: float = 2.5
+    # Background subtraction for chronic-noise rejection in the voicing
+    # oracle. ``background[bin]`` is the ``background_percentile``-th
+    # percentile across a set of "noise-only" CQT frames; the result is
+    # subtracted from every column before voicing peakedness is
+    # computed. Stationary ridges (ship hum, hydrophone self-noise) get
+    # cleaned; transient call energy survives. Emission scoring is
+    # untouched (sees the raw CQT) so harmonic-sum magnitudes stay
+    # comparable to the noise-floor + dynamic-range gates.
+    #
+    # ``background_source`` chooses which frames are "noise":
+    #
+    # - ``"pad"`` (default): the first and last ``pad_seconds`` worth
+    #   of CQT frames at each end of the event audio. These frames are
+    #   outside the segmented event by construction and contain only
+    #   ambient noise / chronic ridges. Robust to calls of any length:
+    #   short calls in a long event work; calls that fill the entire
+    #   event also work because the pad lies outside the event itself.
+    #   Requires the worker to pad the event with enough margin —
+    #   skipped if fewer than ``background_min_pad_frames`` are
+    #   available per side.
+    # - ``"all"``: every frame of the buffer. Pollutes the estimate
+    #   when the call fills the event. Kept as an opt-in fallback for
+    #   cases where the pad cannot be trusted to be noise.
+    # - ``"none"``: skip subtraction entirely.
+    background_source: Literal["pad", "all", "none"] = "pad"
+    background_percentile: float = 25.0
+    background_min_frames: int = 20
+    background_min_pad_frames: int = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +161,16 @@ class ExtractNotesV5Params:
     harmonic_viterbi: HarmonicViterbiParams = field(
         default_factory=HarmonicViterbiParams
     )
-    segmentation: SegmentationParams = field(default_factory=SegmentationParams)
+    # v5 defaults a wider ``min_break_frames`` than v3/v4 (3 → 6). The
+    # Viterbi voicing oracle produces shorter, more frequent unvoiced
+    # gaps than the v3/v4 STFT-ridge prominence gate, so the v3/v4
+    # default fragments long tonal contours into many short notes for
+    # the same underlying call. 6 frames at the CQT hop (~11.6 ms each
+    # at 22050 Hz) is ~70 ms — long enough to bridge a single quiet
+    # syllable joint, short enough to still split distinct calls.
+    segmentation: SegmentationParams = field(
+        default_factory=lambda: SegmentationParams(min_break_frames=6)
+    )
     harmonic: HarmonicSearchParams = field(default_factory=HarmonicSearchParams)
     midi: MidiRangeParams = field(default_factory=MidiRangeParams)
 
@@ -176,6 +225,7 @@ def extract_notes_v5_candidate(
         cqt_log=cqt_log,
         cqt_bin_log_freqs=cqt_bin_log_freqs,
         cqt_seconds_per_frame=cqt_seconds_per_frame,
+        pad_seconds=params.pad_seconds,
         params=params.harmonic_viterbi,
         segmentation=params.segmentation,
     )
@@ -234,6 +284,7 @@ def _decode_f0(
     cqt_log: np.ndarray,
     cqt_bin_log_freqs: np.ndarray,
     cqt_seconds_per_frame: float,
+    pad_seconds: float,
     params: HarmonicViterbiParams,
     segmentation: SegmentationParams,
 ) -> list[list[_RefinedFrame]]:
@@ -259,7 +310,13 @@ def _decode_f0(
     if emission.size == 0:
         return []
 
-    voiced_frame = _voicing_mask_from_cqt(cqt_log, params=params)
+    cqt_for_voicing = _background_detrend(
+        cqt_log,
+        pad_seconds=pad_seconds,
+        cqt_seconds_per_frame=cqt_seconds_per_frame,
+        params=params,
+    )
+    voiced_frame = _voicing_mask_from_cqt(cqt_for_voicing, params=params)
 
     voiced_mask, f0_indices = _viterbi_decode(
         emission=emission,
@@ -363,8 +420,10 @@ def _compute_emission(
         mad = max(mad, _MIN_MAD)
         threshold = floor + float(params.k_noise) * mad
         for c, base_log in enumerate(candidate_log_freqs):
-            total = 0.0
-            count = 0
+            # Track per-harmonic above-floor magnitudes so we can apply
+            # the H1-prominence gate after the loop without redoing the
+            # CQT bin search.
+            kept: list[tuple[int, float]] = []  # (k_idx, above_floor)
             for k_idx, k in enumerate(range(1, weights.size + 1)):
                 target_log = float(base_log) + math.log2(float(k))
                 if target_log > max_cqt_log_freq:
@@ -387,16 +446,80 @@ def _compute_emission(
                     continue
                 if not bool(peaks_column[bin_idx]):
                     continue
-                contribution = max(0.0, m_n - floor)
-                total += float(weights[k_idx]) * contribution
-                count += 1
-            if count < int(params.min_harmonics_present):
+                above_floor = max(0.0, m_n - floor)
+                kept.append((k_idx, above_floor))
+            if len(kept) < int(params.min_harmonics_present):
                 # Insufficient harmonic alignment for a real F0; the
                 # contribution we found is more likely noise that happens
                 # to clear the per-bin gates.
                 continue
+            # H1-prominence gate: candidate's own H1 (k_idx == 0) must
+            # be present in the accepted set AND within
+            # ``max_h1_below_strongest`` log-units of the strongest
+            # accepted harmonic. Rejects low-frequency-noise-fed
+            # candidates that score by leakage at integer multiples of
+            # a faint sub-fundamental ridge while a real call's H_n
+            # towers above them.
+            h1_above = next((af for k_idx, af in kept if k_idx == 0), None)
+            if h1_above is None:
+                continue
+            strongest_above = max(af for _k_idx, af in kept)
+            if strongest_above - h1_above > float(params.max_h1_below_strongest):
+                continue
+            total = sum(float(weights[k_idx]) * af for k_idx, af in kept)
             emission[t, c] = total
     return emission
+
+
+def _background_detrend(
+    cqt_log: np.ndarray,
+    *,
+    pad_seconds: float,
+    cqt_seconds_per_frame: float,
+    params: HarmonicViterbiParams,
+) -> np.ndarray:
+    """Subtract a per-bin stationary background from the CQT.
+
+    Source frames depend on ``params.background_source``:
+
+    - ``"pad"``: only the first and last ``pad_seconds`` worth of CQT
+      frames feed the percentile. These frames sit outside the
+      segmented event and contain only ambient noise / chronic
+      ridges, so the estimate is never polluted by the call we're
+      tracking. Skipped when fewer than
+      ``background_min_pad_frames`` are available per side.
+    - ``"all"``: every frame contributes. Pollutes the estimate when
+      the call fills the event. Skipped if fewer than
+      ``background_min_frames`` frames exist.
+    - ``"none"``: no subtraction.
+    """
+    n_bins, n_frames = cqt_log.shape
+    source = params.background_source
+    if source == "none" or n_frames == 0:
+        return cqt_log
+    q = float(params.background_percentile)
+    if source == "pad":
+        if cqt_seconds_per_frame <= 0.0:
+            return cqt_log
+        n_pad_each = int(round(float(pad_seconds) / float(cqt_seconds_per_frame)))
+        if n_pad_each < int(params.background_min_pad_frames):
+            return cqt_log
+        if 2 * n_pad_each >= n_frames:
+            # Pad spans the whole buffer (very short event); the pad
+            # is effectively the whole buffer, so just use it all.
+            pad_frames = cqt_log
+        else:
+            pad_frames = np.concatenate(
+                [cqt_log[:, :n_pad_each], cqt_log[:, -n_pad_each:]], axis=1
+            )
+        background = np.percentile(pad_frames, q, axis=1).astype(cqt_log.dtype)
+    elif source == "all":
+        if n_frames < int(params.background_min_frames):
+            return cqt_log
+        background = np.percentile(cqt_log, q, axis=1).astype(cqt_log.dtype)
+    else:
+        return cqt_log
+    return cqt_log - background[:, np.newaxis]
 
 
 def _voicing_mask_from_cqt(
