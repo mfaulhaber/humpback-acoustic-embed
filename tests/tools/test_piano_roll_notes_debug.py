@@ -193,7 +193,7 @@ def _patch_for_cli(monkeypatch, buffer: np.ndarray, settings) -> None:
 
 
 def test_registry_has_expected_phase1_keys() -> None:
-    assert set(EXTRACTORS) == {"v3", "v4", "v5-candidate"}
+    assert set(EXTRACTORS) == {"v3", "v4", "v5"}
     assert all(callable(fn) for fn in EXTRACTORS.values())
 
 
@@ -212,7 +212,7 @@ async def test_cli_renders_png_for_token(
             "--token",
             "0",
             "--variants",
-            "v4,v5-candidate",
+            "v4,v5",
             "--out",
             str(out_path),
         ]

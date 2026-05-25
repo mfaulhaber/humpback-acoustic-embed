@@ -1,19 +1,27 @@
-"""Harmonic-Viterbi F0 + harmonics note extractor (v5 candidate).
+"""Harmonic-Viterbi F0 + harmonics note extractor (Piano Roll Notes v5).
 
-Phase-2 candidate for Piano Roll Notes v5. Replaces v4's ridge-locked
-HPS divisor selection with direct harmonic-sum F0 estimation over the
-CQT plus log-frequency Viterbi smoothing. Temporal smoothness is part
-of the cost function rather than a post-filter, so frame-to-frame F0
-hopping (the v4 failure mode on token #47 of job 690580c5) is penalised
-during decoding instead of being amplified by independent per-frame
-divisor selection.
+Replaces v4's ridge-locked HPS divisor selection with direct harmonic-sum
+F0 estimation over the CQT plus log-frequency Viterbi smoothing. Temporal
+smoothness is part of the cost function rather than a post-filter, so
+frame-to-frame F0 hopping (the v4 failure mode on token #47 of job
+690580c5) is penalised during decoding instead of being amplified by
+independent per-frame divisor selection. A per-event background-
+subtraction stage (sampled from the audio pad zones outside the
+segmented event) cleans chronic low-frequency noise from the voicing
+oracle so events with persistent ridges (ship hum, hydrophone
+self-noise) do not trigger false-positive F0 outside the call.
 
 See ``docs/specs/2026-05-24-piano-roll-notes-v5-test-bed-design.md``
-§4.3 for the algorithm specification and the design rationale.
+for the algorithm specification and ADR-071 for the design rationale.
 
-The starting candidate algorithm in this module is replaceable during
-Phase 2 iteration — Phase 3 promotes whatever the iteration converges
-on to ``note_extractor_v5.py`` under the same public interface.
+The pipeline shape (CQT computation -> per-frame harmonic-sum emission
+-> log-frequency Viterbi -> coherent-contour segmentation -> harmonic
+siblings) is independent of the v3/v4 ridge tracker. The ridge sidecar
+``ridge_sidecar_rows`` parameter is accepted for signature parity but
+unused in v5.
+
+Pure functions: the worker is responsible for loading audio and writing
+parquet.
 """
 
 from __future__ import annotations
@@ -53,7 +61,7 @@ __all__ = [
     "ContourFrame",
     "NoteV3",
     "NotesV3Result",
-    "extract_notes_v5_candidate",
+    "extract_notes_v5",
 ]
 
 
@@ -175,7 +183,7 @@ class ExtractNotesV5Params:
     midi: MidiRangeParams = field(default_factory=MidiRangeParams)
 
 
-def extract_notes_v5_candidate(
+def extract_notes_v5(
     audio: np.ndarray,
     sample_rate: int,
     *,

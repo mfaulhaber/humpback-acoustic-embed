@@ -8,8 +8,7 @@ variants by name.
 
 This module is for the test-bed only — the production worker dispatches
 on ``extractor_version`` strings directly and does not import this
-registry. Phase 3 adds ``"v5"`` to both the registry (replacing
-``"v5-candidate"``) and the worker's known-versions tuple.
+registry.
 """
 
 from __future__ import annotations
@@ -28,9 +27,9 @@ from humpback.processing.note_extractor_v4 import (
     ExtractNotesV4Params,
     extract_notes_v4,
 )
-from humpback.processing.note_extractor_v5_candidate import (
+from humpback.processing.note_extractor_v5 import (
     ExtractNotesV5Params,
-    extract_notes_v5_candidate,
+    extract_notes_v5,
 )
 
 __all__ = ["EXTRACTORS", "ExtractorFn"]
@@ -81,7 +80,7 @@ def _run_v4(
     )
 
 
-def _run_v5_candidate(
+def _run_v5(
     audio: np.ndarray,
     sample_rate: int,
     *,
@@ -90,7 +89,7 @@ def _run_v5_candidate(
     event_start_utc: float,
     ridge_sidecar_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> NotesV3Result:
-    return extract_notes_v5_candidate(
+    return extract_notes_v5(
         audio,
         sample_rate,
         params=ExtractNotesV5Params(
@@ -105,5 +104,5 @@ def _run_v5_candidate(
 EXTRACTORS: dict[str, ExtractorFn] = {
     "v3": _run_v3,
     "v4": _run_v4,
-    "v5-candidate": _run_v5_candidate,
+    "v5": _run_v5,
 }

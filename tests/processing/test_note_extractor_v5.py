@@ -1,14 +1,11 @@
-"""Tests for ``humpback.processing.note_extractor_v5_candidate``.
+"""Tests for ``humpback.processing.note_extractor_v5``.
 
-Exercises the harmonic-Viterbi F0 candidate against the same synthetic
+Exercises the harmonic-Viterbi F0 extractor against the same synthetic
 fixtures used for v4 plus a "no harmonic relationship between competing
 tones" case that the per-frame independent decoder in v4 cannot
-disambiguate without smoothing.
-
-The candidate algorithm may be replaced in Phase 2; tests assert
-fixture-level behaviour (F0 location, voicing, no spurious flapping)
-rather than internal algorithm state so they remain meaningful across
-parameter or algorithm revisions.
+disambiguate without smoothing. Tests assert fixture-level behaviour
+(F0 location, voicing, no spurious flapping) rather than internal
+algorithm state.
 """
 
 from __future__ import annotations
@@ -18,10 +15,10 @@ import math
 import numpy as np
 
 from humpback.processing.note_extractor_v3 import STFTParams
-from humpback.processing.note_extractor_v5_candidate import (
+from humpback.processing.note_extractor_v5 import (
     ExtractNotesV5Params,
     HarmonicViterbiParams,
-    extract_notes_v5_candidate,
+    extract_notes_v5,
 )
 from humpback.processing.piano_roll_cqt import CQTParams
 
@@ -82,7 +79,7 @@ def test_pure_tone_200hz_with_harmonics_picks_f0() -> None:
     audio = _harmonic_stack(
         200.0, duration_s=0.30, harmonics=[1, 2, 3, 4], amplitudes=[0.4, 0.3, 0.2, 0.15]
     )
-    result = extract_notes_v5_candidate(audio, SAMPLE_RATE, params=_params())
+    result = extract_notes_v5(audio, SAMPLE_RATE, params=_params())
     f0_notes = [n for n in result.notes if n.partial_index == 0]
     assert len(f0_notes) >= 1
     # 200 Hz ≈ MIDI 55 (G3); allow ±1 for CQT bin quantisation.
@@ -110,7 +107,7 @@ def test_strong_h2_does_not_lock_f0_to_h2() -> None:
         harmonics=[1, 2, 3, 4],
         amplitudes=[0.10, 0.40, 0.20, 0.20],
     )
-    result = extract_notes_v5_candidate(audio, SAMPLE_RATE, params=_params())
+    result = extract_notes_v5(audio, SAMPLE_RATE, params=_params())
     f0_notes = [n for n in result.notes if n.partial_index == 0]
     assert len(f0_notes) >= 1
     # 200 Hz → MIDI 55; absolutely should not land at MIDI 67 (400 Hz).
@@ -137,7 +134,7 @@ def test_linear_sweep_50_to_80_hz_tracks_endpoints() -> None:
         + 0.20 * np.sin(3.0 * phase_f0)
         + 0.15 * np.sin(4.0 * phase_f0)
     ).astype(np.float32)
-    result = extract_notes_v5_candidate(audio, SAMPLE_RATE, params=_params())
+    result = extract_notes_v5(audio, SAMPLE_RATE, params=_params())
     f0_notes = [n for n in result.notes if n.partial_index == 0]
     assert f0_notes
     # 50 Hz ≈ MIDI 32; 80 Hz ≈ MIDI 40. Collect contour frames across
@@ -167,7 +164,7 @@ def test_pure_broadband_noise_emits_no_notes() -> None:
     duration_s = 0.50
     samples = int(round(duration_s * SAMPLE_RATE))
     audio = (rng.standard_normal(samples) * 0.1).astype(np.float32)
-    result = extract_notes_v5_candidate(audio, SAMPLE_RATE, params=_params())
+    result = extract_notes_v5(audio, SAMPLE_RATE, params=_params())
     # No coherent harmonic content → voicing inactive → no notes.
     assert not [n for n in result.notes if n.partial_index == 0]
 
@@ -187,7 +184,7 @@ def test_two_pure_tones_no_harmonic_relation_does_not_flap() -> None:
     audio = (
         0.50 * np.sin(2.0 * np.pi * 200.0 * t) + 0.20 * np.sin(2.0 * np.pi * 470.0 * t)
     ).astype(np.float32)
-    result = extract_notes_v5_candidate(audio, SAMPLE_RATE, params=_params())
+    result = extract_notes_v5(audio, SAMPLE_RATE, params=_params())
     f0_notes = [n for n in result.notes if n.partial_index == 0]
     assert f0_notes
     # Median pitch should sit at 200 Hz (MIDI 55), not 470 Hz (MIDI ~71).
@@ -201,7 +198,7 @@ def test_two_pure_tones_no_harmonic_relation_does_not_flap() -> None:
 
 
 def test_empty_audio_returns_empty_result() -> None:
-    result = extract_notes_v5_candidate(
+    result = extract_notes_v5(
         np.zeros(0, dtype=np.float32), SAMPLE_RATE, params=_params()
     )
     assert result.notes == []
@@ -211,7 +208,7 @@ def test_empty_audio_returns_empty_result() -> None:
 def test_very_short_audio_returns_empty_result() -> None:
     # ~5 ms → fewer than min_note_frames after CQT.
     samples = int(round(0.005 * SAMPLE_RATE))
-    result = extract_notes_v5_candidate(
+    result = extract_notes_v5(
         _sine(200.0, duration_s=0.005)[:samples], SAMPLE_RATE, params=_params()
     )
     assert result.notes == []
@@ -235,10 +232,10 @@ def test_ridge_sidecar_argument_is_accepted_and_ignored() -> None:
             "energy_ratio": 0.0,
         }
     ]
-    result_with = extract_notes_v5_candidate(
+    result_with = extract_notes_v5(
         audio, SAMPLE_RATE, params=_params(), ridge_sidecar_rows=fake_sidecar
     )
-    result_without = extract_notes_v5_candidate(audio, SAMPLE_RATE, params=_params())
+    result_without = extract_notes_v5(audio, SAMPLE_RATE, params=_params())
     pitches_with = sorted(
         n.midi_pitch for n in result_with.notes if n.partial_index == 0
     )

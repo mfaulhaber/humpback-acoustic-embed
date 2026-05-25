@@ -854,14 +854,16 @@ async def test_create_notes_job_enqueues_and_returns_201(client, app_settings):
     body = response.json()
     assert body["event_encoder_job_id"] == job_id
     assert body["status"] == "queued"
-    # ADR-070: default extractor version is now v4.
-    assert body["extractor_version"] == "v4"
+    # ADR-071: default extractor version is now v5.
+    assert body["extractor_version"] == "v5"
 
 
 async def test_create_notes_job_conflicts_with_running_row(client, app_settings):
     job_id = await _seed_event_encoder_timeline_job(app_settings)
+    # Seed with the current default extractor version so the POST below
+    # collides on the (encoder, default) key.
     await _seed_notes_job(
-        app_settings, job_id, status=JobStatus.running.value, extractor_version="v4"
+        app_settings, job_id, status=JobStatus.running.value, extractor_version="v5"
     )
 
     response = await client.post(

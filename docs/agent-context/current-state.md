@@ -90,14 +90,26 @@ full. Read the relevant domain section when planning or implementing.
   and the Notes view defaults to curved-ribbon rendering on a MIDI
   12–120 Y axis. Legacy v1/v2/v3 sidecars remain readable; the export
   resolver picks the highest complete version per string comparison.
-- `DEFAULT_EXTRACTOR_VERSION = "v4"` (ADR-070): the v4 extractor
-  replaces v3's octave-halving subharmonic refinement with HPS-style
-  harmonic-stack F0 scoring and lowers the STFT ridge band floor to
-  30 Hz. v4 emits `event_notes_v4.parquet` and
-  `event_note_contours_v4.parquet` (schemas identical to v3; the
-  `subharmonic_octave` column stores `chosen_divisor − 1` rather than
-  v3's octave-halving count). MIDI export auto-resolves to v4 when a
-  complete v4 row exists; no auto-backfill of v4 for completed v3 jobs.
+- `DEFAULT_EXTRACTOR_VERSION = "v5"` (ADR-071): the v5 extractor
+  replaces v4's ridge-locked HPS divisor selection with direct
+  harmonic-sum F0 estimation over the CQT plus log-frequency Viterbi
+  smoothing — temporal smoothness is part of the cost function rather
+  than a post-filter. A pad-only background-subtraction stage cleans
+  chronic low-frequency noise (ship hum, hydrophone self-noise) from
+  the voicing oracle by sampling per-bin CQT magnitudes from the pad
+  zones outside the segmented event. v5 emits `event_notes_v5.parquet`
+  and `event_note_contours_v5.parquet` (schemas identical to v3/v4;
+  the `subharmonic_octave` column is reserved / unused in v5 and
+  always written as 0). Worker `pad_seconds` default for v5 is 0.25 s
+  (was 0.05 s in v3/v4) so background subtraction has noise frames
+  to sample. MIDI export auto-resolves to v5 when a complete v5 row
+  exists; no auto-backfill of v5 for completed v4 jobs.
+- `tools/piano_roll_notes_debug.py` is the permanent debug surface
+  for Piano Roll Notes investigations established during ADR-071's
+  v5 iteration: it loads any event of any encoder job and renders a
+  CQT spectrogram + ridge overlay alongside a stacked piano-roll
+  panel per registered algorithm variant. Use it as the first stop
+  for any rendering / pitch / F0 issue.
 
 ## Frontend Shell
 

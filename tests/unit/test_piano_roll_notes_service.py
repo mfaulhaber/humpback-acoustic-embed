@@ -239,9 +239,10 @@ async def test_auto_enqueue_after_encoder_complete_creates_row(session) -> None:
     assert job is not None
     assert job.event_encoder_job_id == encoder_id
     assert job.status == JobStatus.queued.value
-    # ADR-070 made v4 the default extractor; auto-enqueue must use it
-    # so newly-completing encoders flow into the HPS-based pipeline.
-    assert job.extractor_version == "v4"
+    # ADR-071 made v5 the default extractor; auto-enqueue must use it
+    # so newly-completing encoders flow into the harmonic-Viterbi
+    # pipeline.
+    assert job.extractor_version == "v5"
     assert job.extractor_version == DEFAULT_EXTRACTOR_VERSION
 
 

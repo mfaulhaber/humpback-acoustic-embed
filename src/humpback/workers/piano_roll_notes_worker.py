@@ -56,6 +56,11 @@ from humpback.processing.note_extractor_v4 import (
     HPSParams,
     extract_notes_v4,
 )
+from humpback.processing.note_extractor_v5 import (
+    ExtractNotesV5Params,
+    HarmonicViterbiParams,
+    extract_notes_v5,
+)
 from humpback.processing.piano_roll_cqt import (
     CQTParams,
     PeakParams,
@@ -133,7 +138,14 @@ _MAX_FAILURE_REPORT = 10
 _UNKNOWN_TOKEN = -1
 _V3_EXTRACTOR_VERSION = "v3"
 _V4_EXTRACTOR_VERSION = "v4"
-_RIDGE_AWARE_VERSIONS = frozenset({_V3_EXTRACTOR_VERSION, _V4_EXTRACTOR_VERSION})
+_V5_EXTRACTOR_VERSION = "v5"
+# Versions that produce per-frame contour sidecars + MPE-compatible
+# parquet rows (note_uid + f0_track_id + contour_frame_count). v3-v5
+# share the same parquet schemas; only the underlying F0 algorithm
+# differs.
+_RIDGE_AWARE_VERSIONS = frozenset(
+    {_V3_EXTRACTOR_VERSION, _V4_EXTRACTOR_VERSION, _V5_EXTRACTOR_VERSION}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +177,7 @@ class _ResolvedParams:
     harmonic_v3: HarmonicSearchParams
     midi_v3: MidiRangeParams
     hps: HPSParams
+    harmonic_viterbi: HarmonicViterbiParams
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -256,6 +269,29 @@ class _ResolvedParams:
                     self.hps.max_harmonic_dynamic_range_log
                 ),
             },
+            "harmonic_viterbi": {
+                "n_harmonics": self.harmonic_viterbi.n_harmonics,
+                "harmonic_weight": self.harmonic_viterbi.harmonic_weight,
+                "f0_min_hz": self.harmonic_viterbi.f0_min_hz,
+                "f0_max_hz": self.harmonic_viterbi.f0_max_hz,
+                "cents_tolerance": self.harmonic_viterbi.cents_tolerance,
+                "k_noise": self.harmonic_viterbi.k_noise,
+                "tau_voicing": self.harmonic_viterbi.tau_voicing,
+                "transition_lambda": self.harmonic_viterbi.transition_lambda,
+                "voicing_transition_cost": (
+                    self.harmonic_viterbi.voicing_transition_cost
+                ),
+                "min_harmonics_present": self.harmonic_viterbi.min_harmonics_present,
+                "max_h1_below_strongest": (
+                    self.harmonic_viterbi.max_h1_below_strongest
+                ),
+                "background_source": self.harmonic_viterbi.background_source,
+                "background_percentile": (self.harmonic_viterbi.background_percentile),
+                "background_min_frames": (self.harmonic_viterbi.background_min_frames),
+                "background_min_pad_frames": (
+                    self.harmonic_viterbi.background_min_pad_frames
+                ),
+            },
         }
 
 
@@ -325,11 +361,7 @@ async def run_piano_roll_notes_job(
             contours_path = event_encoder_note_contours_path(
                 settings.storage_root, encoder.id, job.extractor_version
             )
-            extractor = (
-                _extract_notes_v4
-                if job.extractor_version == _V4_EXTRACTOR_VERSION
-                else _extract_notes_v3
-            )
+            extractor = _RIDGE_AWARE_EXTRACTORS[job.extractor_version]
             (
                 rows,
                 contour_rows,
@@ -337,8 +369,9 @@ async def run_piano_roll_notes_job(
                 failures,
                 ridges_status,
             ) = await extractor(session, encoder, job.id, params, settings)
-            # v3 and v4 share schema; only ``subharmonic_octave`` semantics
-            # differ (v3 = octave halvings, v4 = divisor − 1 per ADR-070).
+            # v3, v4, and v5 share schema; only ``subharmonic_octave``
+            # semantics differ (v3 = octave halvings per ADR-069,
+            # v4 = divisor − 1 per ADR-070, v5 = always 0 per ADR-071).
             notes_table = pa.Table.from_pylist(rows, schema=NOTES_V3_SCHEMA)
             contours_table = pa.Table.from_pylist(
                 contour_rows, schema=NOTE_CONTOURS_V3_SCHEMA
@@ -426,10 +459,24 @@ def _resolve_params(params_json: str, extractor_version: str = "") -> _ResolvedP
     harmonic_v3_raw = _section(raw, "harmonic_v3")
     midi_v3_raw = _section(raw, "midi_v3")
     hps_raw = _section(raw, "hps")
-    # v4 lowers the STFT ridge band floor to 30 Hz (ADR-070 §4.3); v3
-    # keeps the historical 100 Hz floor so re-running an old row
-    # reproduces v3's bytes.
-    default_min_freq = 30.0 if extractor_version == _V4_EXTRACTOR_VERSION else 100.0
+    harmonic_viterbi_raw = _section(raw, "harmonic_viterbi")
+    # v4 and v5 lower the STFT ridge band floor to 30 Hz (ADR-070 §4.3,
+    # ADR-071 §5.1). v3 keeps the historical 100 Hz floor so re-running
+    # an old row reproduces v3's bytes.
+    default_min_freq = (
+        30.0
+        if extractor_version in (_V4_EXTRACTOR_VERSION, _V5_EXTRACTOR_VERSION)
+        else 100.0
+    )
+    # v5's harmonic-Viterbi voicing oracle produces shorter, more
+    # frequent unvoiced gaps than v3/v4's STFT-ridge prominence gate,
+    # so the v3/v4 default fragments coherent contours. ADR-071 raises
+    # the gap-bridging threshold for v5 only.
+    default_min_break_frames = 6 if extractor_version == _V5_EXTRACTOR_VERSION else 3
+    # v5 bumps the worker audio pad to 0.25 s so the harmonic-Viterbi
+    # background subtractor has enough pad frames to estimate the
+    # per-bin chronic-noise baseline (ADR-071 §6).
+    default_pad_seconds = 0.25 if extractor_version == _V5_EXTRACTOR_VERSION else 0.05
 
     return _ResolvedParams(
         cqt=CQTParams(
@@ -468,7 +515,7 @@ def _resolve_params(params_json: str, extractor_version: str = "") -> _ResolvedP
             ceiling=int(velocity_raw.get("ceiling", 127)),
         ),
         audio=_AudioParams(
-            pad_seconds=float(audio_raw.get("pad_seconds", 0.05)),
+            pad_seconds=float(audio_raw.get("pad_seconds", default_pad_seconds)),
             min_event_duration_s=float(audio_raw.get("min_event_duration_s", 0.03)),
         ),
         stft=STFTParams(
@@ -492,7 +539,9 @@ def _resolve_params(params_json: str, extractor_version: str = "") -> _ResolvedP
             amplitude_floor_percentile=float(
                 segmentation_raw.get("amplitude_floor_percentile", 5.0)
             ),
-            min_break_frames=int(segmentation_raw.get("min_break_frames", 3)),
+            min_break_frames=int(
+                segmentation_raw.get("min_break_frames", default_min_break_frames)
+            ),
             min_note_frames=int(segmentation_raw.get("min_note_frames", 3)),
         ),
         harmonic_v3=HarmonicSearchParams(
@@ -522,6 +571,37 @@ def _resolve_params(params_json: str, extractor_version: str = "") -> _ResolvedP
             min_above_floor=float(hps_raw.get("min_above_floor", 1.0)),
             max_harmonic_dynamic_range_log=float(
                 hps_raw.get("max_harmonic_dynamic_range_log", 3.0)
+            ),
+        ),
+        harmonic_viterbi=HarmonicViterbiParams(
+            n_harmonics=int(harmonic_viterbi_raw.get("n_harmonics", 4)),
+            harmonic_weight=str(
+                harmonic_viterbi_raw.get("harmonic_weight", "inv_sqrt_k")
+            ),  # type: ignore[arg-type]
+            f0_min_hz=float(harmonic_viterbi_raw.get("f0_min_hz", 30.0)),
+            f0_max_hz=float(harmonic_viterbi_raw.get("f0_max_hz", 600.0)),
+            cents_tolerance=float(harmonic_viterbi_raw.get("cents_tolerance", 50.0)),
+            k_noise=float(harmonic_viterbi_raw.get("k_noise", 2.0)),
+            tau_voicing=float(harmonic_viterbi_raw.get("tau_voicing", 3.0)),
+            transition_lambda=float(harmonic_viterbi_raw.get("transition_lambda", 6.0)),
+            voicing_transition_cost=float(
+                harmonic_viterbi_raw.get("voicing_transition_cost", 1.0)
+            ),
+            min_harmonics_present=int(
+                harmonic_viterbi_raw.get("min_harmonics_present", 2)
+            ),
+            max_h1_below_strongest=float(
+                harmonic_viterbi_raw.get("max_h1_below_strongest", 2.5)
+            ),
+            background_source=str(harmonic_viterbi_raw.get("background_source", "pad")),  # type: ignore[arg-type]
+            background_percentile=float(
+                harmonic_viterbi_raw.get("background_percentile", 25.0)
+            ),
+            background_min_frames=int(
+                harmonic_viterbi_raw.get("background_min_frames", 20)
+            ),
+            background_min_pad_frames=int(
+                harmonic_viterbi_raw.get("background_min_pad_frames", 8)
             ),
         ),
     )
@@ -946,6 +1026,149 @@ async def _extract_notes_v4(
     rows.sort(key=lambda r: (r["start_utc"], r["midi_pitch"]))
     contour_rows.sort(key=lambda r: (r["note_uid"], r["frame_index"]))
     return rows, contour_rows, len(events), failures, ridges_status
+
+
+async def _extract_notes_v5(
+    session: AsyncSession,
+    encoder: EventEncoderJob,
+    job_id: str,
+    params: _ResolvedParams,
+    settings: Settings,
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    int,
+    list[tuple[str, str]],
+    str,
+]:
+    """Run the v5 harmonic-Viterbi extractor across an encoder job's events (ADR-071).
+
+    Mirrors :func:`_extract_notes_v4` end-to-end; the only differences
+    are the per-event ``extract_notes_v5`` call and the
+    ``ExtractNotesV5Params`` shape (``harmonic_viterbi`` instead of
+    ``hps``). The ridge sidecar is loaded for parity with v3/v4 but
+    not consumed by the v5 extractor.
+    """
+    seg_job = await session.get(EventSegmentationJob, encoder.event_segmentation_job_id)
+    if seg_job is None:
+        raise ValueError(
+            f"event_segmentation_job not found: {encoder.event_segmentation_job_id}"
+        )
+
+    region_job = await session.get(RegionDetectionJob, seg_job.region_detection_job_id)
+    if region_job is None:
+        raise ValueError(
+            f"region_detection_job not found: {seg_job.region_detection_job_id}"
+        )
+
+    events_path = (
+        segmentation_job_dir(settings.storage_root, encoder.event_segmentation_job_id)
+        / "events.parquet"
+    )
+    if not events_path.exists():
+        raise FileNotFoundError(
+            f"events.parquet not found for segmentation job {seg_job.id}"
+        )
+    events = read_events(events_path)
+    token_map = _load_event_token_map(settings, encoder.id)
+
+    audio_provider = await _build_audio_provider(
+        session, settings, region_job, events, params.cqt.target_sample_rate
+    )
+    region_offset = float(region_job.start_timestamp or 0.0)
+
+    ridges_path = event_encoder_ridges_path(
+        settings.storage_root, encoder.id, encoder.tokenizer_version
+    )
+    sidecar_by_event = _load_ridge_sidecar(ridges_path)
+    ridges_status = str(ridges_path) if sidecar_by_event is not None else "absent"
+
+    @dataclass
+    class _PendingNote:
+        row: dict[str, Any]
+        raw_magnitude: float
+
+    pending: list[_PendingNote] = []
+    contour_rows: list[dict[str, Any]] = []
+    failures: list[tuple[str, str]] = []
+
+    for event in events:
+        if event.end_sec - event.start_sec < params.audio.min_event_duration_s:
+            continue
+        try:
+            audio = _slice_event_audio(
+                event,
+                audio_provider,
+                target_sr=params.cqt.target_sample_rate,
+                pad_seconds=params.audio.pad_seconds,
+            )
+            if audio.size == 0:
+                continue
+            extract_params = ExtractNotesV5Params(
+                job_id=job_id,
+                event_id=event.event_id,
+                event_start_utc=region_offset + float(event.start_sec),
+                pad_seconds=params.audio.pad_seconds,
+                cqt=params.cqt,
+                stft=params.stft,
+                harmonic_viterbi=params.harmonic_viterbi,
+                segmentation=params.segmentation,
+                harmonic=params.harmonic_v3,
+                midi=params.midi_v3,
+            )
+            sidecar = (
+                sidecar_by_event.get(event.event_id)
+                if sidecar_by_event is not None
+                else None
+            )
+            result = extract_notes_v5(
+                audio,
+                params.cqt.target_sample_rate,
+                params=extract_params,
+                ridge_sidecar_rows=sidecar,
+            )
+            if not result.notes:
+                continue
+
+            token_id = int(token_map.get(event.event_id, _UNKNOWN_TOKEN))
+            for note in result.notes:
+                pending.append(
+                    _PendingNote(
+                        row=_note_v3_row(note, event.event_id, token_id),
+                        raw_magnitude=float(note.peak_magnitude),
+                    )
+                )
+            contour_rows.extend(_contour_v3_row(c) for c in result.contours)
+        except Exception as exc:  # noqa: BLE001
+            failures.append((event.event_id, _truncate(str(exc), limit=200)))
+            logger.warning(
+                "piano_roll_notes_v5 | event=%s failed",
+                event.event_id,
+                exc_info=True,
+            )
+
+    if not pending and failures:
+        raise RuntimeError(
+            f"piano roll notes v5 had no successful events ({len(failures)} failures)"
+        )
+
+    velocity_map = _velocity_mapper(
+        [entry.raw_magnitude for entry in pending], params.velocity
+    )
+    for entry in pending:
+        entry.row["velocity"] = velocity_map(entry.raw_magnitude)
+
+    rows = [entry.row for entry in pending]
+    rows.sort(key=lambda r: (r["start_utc"], r["midi_pitch"]))
+    contour_rows.sort(key=lambda r: (r["note_uid"], r["frame_index"]))
+    return rows, contour_rows, len(events), failures, ridges_status
+
+
+_RIDGE_AWARE_EXTRACTORS = {
+    _V3_EXTRACTOR_VERSION: _extract_notes_v3,
+    _V4_EXTRACTOR_VERSION: _extract_notes_v4,
+    _V5_EXTRACTOR_VERSION: _extract_notes_v5,
+}
 
 
 def _note_v3_row(note: NoteV3, event_id: str, token_id: int) -> dict[str, Any]:

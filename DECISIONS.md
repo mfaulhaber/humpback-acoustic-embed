@@ -1072,3 +1072,123 @@ Alternatives considered:
   downstream code interpreting the field as "octave halvings" needs to
   switch to "divisor − 1" for v4. Today only the renderer's diagnostic
   tooltip touches the field, and it treats it as opaque.
+
+## ADR-071: Piano Roll Notes v5 — Harmonic-Viterbi F0 with pad-based background subtraction
+
+**Status**: Accepted (2026-05-24)
+**Context**: ADR-070 / v4
+
+User-reported regression on encoder job `690580c5-7804-43c9-bd8d-690691b5d6d4`
+token #47 (and most other events in the same job): the rendered piano-roll
+contour shows major frame-to-frame pitch spikes that do not match the
+smooth, gently-sloping spectral ridges visible in the spectrogram. A
+diagnostic across the five longest events in the job confirmed it is not
+an outlier: F0 MIDI span exceeds raw STFT ridge span on four of five
+events (e.g. event `21d13e3c…`: ridge span 28 ST, F0 span 56 ST), and the
+HPS divisor stream flips between integer divisors at random frames as
+the ridge tracker hops across H2/H3/H4/H5/H6 of the true F0.
+
+Root cause is structural: v4 selects an integer divisor independently
+per frame from a ridge that is itself not temporally consistent in which
+harmonic it sits on. Dividing a hopping ridge by varying divisors
+amplifies the hopping rather than canceling it; majority + median
+smoothing of *divisors* cannot recover a smooth *frequency* track,
+because adjacent frames' ridge frequencies don't sit on a common
+integer-multiple grid.
+
+A test-bed-driven iteration (Phase 2 of the spec) explored the
+parameter space empirically on the user-reported event and four others
+until the visual fidelity was acceptable.
+
+**Decision**:
+
+1. **Direct harmonic-sum F0 emission over the CQT with log-frequency
+   Viterbi smoothing.** Per frame, score every candidate F0 on a dense
+   log-Hz grid (every CQT bin between `f0_min_hz` and `f0_max_hz`) by
+   `H_t(f₀) = Σ_{k=1..K} w_k · max(0, CQT_log[bin(f₀·k), t] − floor_t)`
+   with the same noise-floor + 3-bin local-peak gates as v4. `K = 4`
+   (deliberately small per user direction: "sacrifice higher harmonics
+   for better F0 fidelity"), `w_k = 1 / √k`. Viterbi over candidate
+   F0 bins + a rest state, with transition cost
+   `λ · (Δlog₂f)²` (default `λ = 6.0`). Smoothness is part of the cost
+   function, not a post-filter, so frame-to-frame F0 hopping is
+   penalized at decode time.
+2. **CQT-peakedness voicing oracle.** Frame is voiced when
+   `cqt[:, t].max() − noise_floor(cqt[:, t]) > tau_voicing`
+   (default `3.0`). Scale-invariant (CQT log magnitudes are relative);
+   real tonal signals sit at peakedness 5–12, broadband noise at
+   1.5–2.
+3. **Pad-only background subtraction for chronic noise rejection.**
+   Per-bin background is the 25th percentile across CQT frames in the
+   *pad zones* at each end of the buffer (frames outside the
+   segmented event), subtracted from every column before voicing.
+   Stationary ridges (ship hum, hydrophone self-noise) cancel;
+   transient call energy survives. Robust to calls of any length:
+   short calls work; calls that fill the entire event also work
+   because the pad lies outside the event itself. Skipped when fewer
+   than `background_min_pad_frames` (default 8) are available per
+   side. `background_source` parameter also supports `"all"`
+   (event-wide percentile) and `"none"` as opt-in alternatives.
+4. **H1 prominence gate.** A candidate's own H1 must be present in
+   the accepted-harmonic set and within `max_h1_below_strongest`
+   (default 2.5 log units) of the strongest accepted harmonic.
+   Rejects some sub-fundamental noise-fed cases where H1 is at the
+   noise floor while a real call's H_n stands tall.
+5. **STFT ridge band floor stays at 30 Hz** (inherited from v4).
+   The ridge sidecar argument is accepted for v3/v4 signature parity
+   but unused — v5 derives F0 entirely from the CQT.
+6. **v5-specific worker defaults**: `pad_seconds = 0.25` (was 0.05)
+   so the background subtractor has enough pad frames to estimate
+   per-bin baseline. `segmentation.min_break_frames = 6` (was 3)
+   because the CQT-peakedness voicing oracle produces shorter, more
+   frequent unvoiced gaps than v3/v4's STFT-ridge prominence gate,
+   so the v3/v4 default fragments coherent contours.
+7. **Sidecars and contracts.** Outputs land at
+   `event_encoders/{job_id}/event_notes_v5.parquet` and
+   `event_note_contours_v5.parquet`. Schemas match v3/v4 exactly. The
+   `subharmonic_octave` column is repurposed as "reserved / unused";
+   v5 writes `0` for every contour row. Renderers using the field as
+   a diagnostic display work unchanged.
+8. **`DEFAULT_EXTRACTOR_VERSION = "v5"`.** New encoder jobs auto-enqueue
+   v5. The MIDI export resolver's lex-sorted `extractor_version desc`
+   picks v5 over v4 automatically; the MPE Lower Zone synthesizer
+   detects MPE by the presence of `note_uid` (unchanged in v5), so
+   the windowed bundled export path needs no changes.
+9. **No auto-backfill of v5 for completed v4 jobs.** Mirrors the v3 →
+   v4 launch pattern. Users delete legacy rows via the existing
+   job-admin UI when they want to free space and regenerate.
+
+Alternatives considered:
+
+- *Post-filter v4's F0 in frequency space (median + Kalman).* Cheaper
+  but cannot recover from a wrong divisor selection that already
+  produced a wildly off-pitch F0 in a given frame; the bad frames just
+  become smoothed bad frames. Rejected.
+- *Region-level background sidecar* (computed once per Pass 1 region,
+  reused across events). The most elegant for production but requires
+  a worker-level architectural change and a sidecar. Deferred — may
+  follow in a future ADR once the per-event pad-based approach
+  reveals limits.
+- *librosa.pyin as the v5 algorithm.* Tested, simple integration,
+  comes with Viterbi for free. Held in reserve. Not chosen because
+  YIN is time-domain autocorrelation-based and our CQT/ridge
+  pipeline already produces the spectral evidence we need.
+
+**Consequences**:
+
+- No DB migration. The `piano_roll_notes_jobs` table already supports
+  arbitrary `extractor_version` strings.
+- v3 and v4 sidecars on disk stay readable; nothing is deleted.
+- Renderer, MPE synthesizer, MIDI export worker, and the frontend
+  Notes view need no changes — v5 emits the same `note_uid`-keyed
+  contour shape as v3/v4.
+- The `subharmonic_octave` column semantics shift for v5 rows to
+  "reserved / unused (always 0)". Documented in
+  `docs/reference/storage-layout.md`.
+- Worker `pad_seconds` default for v5 is 0.25 s (was 0.05 s in
+  v3/v4) so background subtraction has noise frames to sample. Adds
+  ~400 ms of audio per event to the worker, negligible compute.
+- `tools/piano_roll_notes_debug.py` is the permanent debug surface
+  established during v5 iteration. Future Piano Roll Notes work
+  should render before/after PNGs through this CLI for the same
+  problem-event set.
