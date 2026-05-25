@@ -103,3 +103,76 @@ flowchart TD
     M --> N["Metrics<br/>Silhouette / DB / CH / ARI / NMI"]
     M --> O["Outputs<br/>clusters.json, assignments.parquet,<br/>umap_coords.parquet, parameter_sweep.json"]
 ```
+
+## Piano Roll Notes — Harmonic-Viterbi v5
+
+`note_extractor_v5` is the current default Piano Roll Notes extractor (ADR-071,
+selected by `extractor_version = "v5"` in `piano_roll_notes_worker`). It
+replaces v4's ridge-locked HPS divisor selection with direct harmonic-sum F0
+estimation over the CQT plus log-frequency Viterbi smoothing. Temporal
+smoothness is part of the cost function rather than a post-filter, so frame-to-
+frame F0 hopping is penalised during decoding instead of being amplified by
+independent per-frame divisor selection.
+
+**Pipeline:**
+
+```
+event audio (with pad)
+  -> CQT (humpback.processing.piano_roll_cqt.compute_event_cqt)
+  -> per-frame background subtraction (pad-zone percentile, voicing-only)
+  -> per-frame harmonic-sum emission H_t(f0) over candidate F0 grid
+  -> per-frame voicing oracle (CQT peak minus noise floor > tau_voicing)
+  -> log-frequency Viterbi over candidates + rest state
+  -> contour segmentation (run splitting at unvoiced gaps)
+  -> harmonic-sibling note synthesis
+  -> NotesV3Result (notes + per-frame contour rows)
+```
+
+**Inputs:**
+
+- `audio: np.ndarray` (mono float32) and `sample_rate: int` for one segmented event,
+  pre-padded by `params.pad_seconds` on each side. The pad zones double as the
+  background-subtraction reference frames.
+- `params: ExtractNotesV5Params` with sub-dataclasses: `cqt`, `stft`, `harmonic_viterbi`,
+  `segmentation`, `harmonic`, `midi`.
+- `ridge_sidecar_rows`: accepted for signature parity with v3/v4 but unused; v5 derives F0 directly from the CQT.
+
+**Outputs:** `NotesV3Result` — list of `NoteV3` (one per F0 note + harmonic siblings) and
+list of per-frame `ContourFrame` rows. The worker writes `event_notes_v5.parquet`
+and `event_note_contours_v5.parquet`. Contour rows write `subharmonic_octave = 0`
+(field is reserved and unused in v5).
+
+**Worker default `pad_seconds`:** 0.25 s for v5 (vs. 0.05 s for v3/v4). The
+wider pad is required for the pad-zone background subtraction to gather enough
+"noise-only" frames (default `background_min_pad_frames = 8`). When the pad is
+too short, background subtraction silently no-ops and chronic low-frequency
+ridges (ship hum, hydrophone self-noise) re-enter the voicing oracle.
+
+**Key `HarmonicViterbiParams` defaults (see source for full set):**
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `n_harmonics` | 4 | Candidates summed across harmonic stack |
+| `harmonic_weight` | `"inv_sqrt_k"` | Weighting by harmonic index k |
+| `f0_min_hz` / `f0_max_hz` | 30 / 600 Hz | Candidate F0 search range |
+| `cents_tolerance` | 50 ¢ | Bin tolerance around k·f0 |
+| `tau_voicing` | 3.0 | CQT peak minus noise-floor threshold for voicing |
+| `transition_lambda` | 6.0 | Squared log-frequency Viterbi step cost |
+| `voicing_transition_cost` | 1.0 | Voiced ↔ rest hysteresis |
+| `min_harmonics_present` | 2 | Per-candidate harmonic gate |
+| `max_h1_below_strongest` | 2.5 | H1 prominence gate (sub-fundamental rejection) |
+| `background_source` | `"pad"` | Background frames from pad zones |
+| `background_percentile` | 25.0 | Per-bin percentile across background frames |
+| `background_min_pad_frames` | 8 | Skip subtraction if too few pad frames per side |
+
+**Why v5 replaces v4:** v4's ridge-locked HPS divisor selection independently
+picked a divisor per frame, so frame-to-frame divisor flapping fragmented
+otherwise-coherent F0 traces (the failure mode documented on token #47 of job
+`690580c5…`). v5 bakes log-frequency smoothness into the cost function, so the
+smoothed F0 trace is the global minimum-cost path through the harmonic-sum
+emission, not an artifact of post-filtering.
+
+v3 (`extractor_version = "v3"`) and v4 (`extractor_version = "v4"`) remain
+reachable for backfill / comparison; their on-disk parquet sidecars are
+byte-identical to pre-v5 outputs at their respective defaults.
+

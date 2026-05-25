@@ -234,11 +234,13 @@ async def test_worker_extracts_expected_notes(
     assert keys == sorted(keys)
 
     # First event's notes start near region_offset + event.start_sec (1000.10),
-    # second event's near 1001.00.
+    # second event's near 1001.00. Lower bound allows for the
+    # version-dependent ``pad_seconds`` shift (v5 defaults to 0.25 s
+    # versus v3/v4's 0.05 s).
     starts_ev1 = [row["start_utc"] for row in by_event["ev-1"]]
     starts_ev2 = [row["start_utc"] for row in by_event["ev-2"]]
-    assert all(999.9 < s < 1000.6 for s in starts_ev1)
-    assert all(1000.9 < s < 1001.6 for s in starts_ev2)
+    assert all(999.7 < s < 1000.6 for s in starts_ev1)
+    assert all(1000.7 < s < 1001.6 for s in starts_ev2)
 
 
 @pytest.mark.asyncio

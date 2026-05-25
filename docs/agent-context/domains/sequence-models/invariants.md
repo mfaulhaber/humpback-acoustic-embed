@@ -56,8 +56,8 @@
   outputs. A complete Event Encoder job auto-enqueues a Piano Roll Notes job at
   the current default `extractor_version`; the auto-enqueue hook swallows
   conflicts so an in-flight or completed sidecar never blocks the encoder
-  completion. `DEFAULT_EXTRACTOR_VERSION = "v4"` (ADR-070). Legacy
-  `v1`, `v2`, and `v3` rows remain queryable through the existing API
+  completion. `DEFAULT_EXTRACTOR_VERSION = "v5"` (ADR-071). Legacy
+  `v1`, `v2`, `v3`, and `v4` rows remain queryable through the existing API
   and pinned exports.
 - Piano Roll Notes v4 (ADR-070) drops the STFT ridge band floor from
   100 Hz to 30 Hz and replaces the v3 octave-halving subharmonic
@@ -72,13 +72,31 @@
   `SubharmonicParams` stays in the v3 module for `params_json`
   round-trip parsing on historical rows.
 - The `subharmonic_octave` column in `event_note_contours_*.parquet`
-  records different quantities for v3 and v4: v3 stores the octave
-  halving count (0..3) chosen by `_refine_subharmonic`; v4 stores
-  `chosen_divisor − 1` (0..5) chosen by `_score_f0_candidates`. The
-  column name is preserved across versions because both encodings
-  answer the same diagnostic question ("how far did we shift the ridge
-  to get F0?"). Renderers using it for diagnostic display work
-  unchanged.
+  records different quantities for v3, v4, and v5: v3 stores the
+  octave halving count (0..3) chosen by `_refine_subharmonic`; v4
+  stores `chosen_divisor − 1` (0..5) chosen by `_score_f0_candidates`;
+  v5 reserves the column and always writes 0 (the harmonic-Viterbi
+  algorithm has no divisor concept — ADR-071). The column name is
+  preserved across versions because all three encodings answer the
+  same diagnostic question ("how far did we shift the ridge to get
+  F0?"). Renderers using it for diagnostic display work unchanged.
+- Piano Roll Notes v5 (ADR-071) estimates F0 directly from the CQT
+  via per-frame harmonic-sum emission plus log-frequency Viterbi
+  smoothing. Per-frame `H_t(f₀) = Σ_{k=1..K} w_k · max(0, CQT_log[bin
+  (f₀·k), t] − floor_t)` with K=4 (sacrifices higher harmonics for
+  F0 fidelity per ADR-071 §4.1), `w_k = 1/√k`, and the v4
+  noise-floor + 3-bin local-peak gates plus a `min_harmonics_present`
+  gate and an `max_h1_below_strongest` H1-prominence gate. Voicing
+  is a CQT-peakedness oracle (`column.max - noise_floor > tau_voicing`);
+  background subtraction in `"pad"` mode samples per-bin chronic noise
+  from the pad-zone CQT frames (frames outside the segmented event)
+  and removes it before peakedness. STFT ridge band floor of 30 Hz
+  is inherited from v4 but the v5 extractor does not consume the
+  ridge sidecar — `ridge_sidecar_rows` is accepted for signature
+  parity and ignored. Worker `pad_seconds` default for v5 is 0.25 s
+  (was 0.05 s in v3/v4) so background subtraction has noise frames
+  to sample. v3 and v4 sidecars on disk remain reachable via explicit
+  `extractor_version` pinning.
 - The MIDI export resolver picks the highest `complete` notes-job
   version by lexicographic ordering on `extractor_version`
   (`desc(extractor_version)`), so `"v4" > "v3" > "v2" > "v1"`. A
