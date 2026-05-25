@@ -113,7 +113,17 @@ def _parse_args(argv: Sequence[str]) -> _CliArgs:
         help="Comma-separated registry keys to render (default: 'v4').",
     )
     parser.add_argument("--out", required=True, type=Path, help="Output PNG path.")
-    parser.add_argument("--pad-seconds", type=float, default=0.05)
+    parser.add_argument(
+        "--pad-seconds",
+        type=float,
+        default=0.25,
+        help=(
+            "Audio pad (s) on each side of the event before extraction. "
+            "Default 0.25 matches the v5 worker; pass 0.05 to mirror v3/v4. "
+            "v5's background-subtraction stage silently no-ops when the pad "
+            "yields fewer than ``background_min_pad_frames`` of CQT frames."
+        ),
+    )
     parser.add_argument("--width", type=int, default=1600)
     parser.add_argument("--height", type=int, default=900)
     parser.add_argument(
@@ -326,6 +336,7 @@ def _run_variants(
             job_id=resolved.encoder.id,
             event_id=resolved.event.event_id,
             event_start_utc=event_start_utc,
+            pad_seconds=resolved.pad_seconds,
             ridge_sidecar_rows=resolved.ridge_rows,
         )
         elapsed = time.monotonic() - started
