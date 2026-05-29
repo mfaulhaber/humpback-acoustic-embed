@@ -90,7 +90,7 @@ full. Read the relevant domain section when planning or implementing.
   and the Notes view defaults to curved-ribbon rendering on a MIDI
   12–120 Y axis. Legacy v1/v2/v3 sidecars remain readable; the export
   resolver picks the highest complete version per string comparison.
-- `DEFAULT_EXTRACTOR_VERSION = "v5"` (ADR-071): the v5 extractor
+- v5 (ADR-071), superseded as default by v6 (ADR-072): the v5 extractor
   replaces v4's ridge-locked HPS divisor selection with direct
   harmonic-sum F0 estimation over the CQT plus log-frequency Viterbi
   smoothing — temporal smoothness is part of the cost function rather
@@ -110,6 +110,23 @@ full. Read the relevant domain section when planning or implementing.
   CQT spectrogram + ridge overlay alongside a stacked piano-roll
   panel per registered algorithm variant. Use it as the first stop
   for any rendering / pitch / F0 issue.
+- `DEFAULT_EXTRACTOR_VERSION = "v6"` (ADR-072): v6 is v5's decode plus a
+  slope-based F0 contour de-spike pass that runs before note building.
+  v5 occasionally leaves a surviving spike (a short out-and-back F0
+  excursion such as the ~15-semitone plunge at t≈1.2 s on event
+  `669849340bff411390e5eaaf1ec9b9e9`); v6 excises the spike frames and
+  linearly bridges log-frequency across the gap so the note stays one
+  continuous contour, and harmonic ribbons are corrected automatically
+  via cents conservation. Detection is a pure slope threshold
+  (`DespikeParams`: `max_slope_oct_per_s = 6.0`, `max_spike_frames = 12`,
+  `enabled = True`); `enabled = False` is byte-identical to v5. v6 emits
+  `event_notes_v6.parquet` / `event_note_contours_v6.parquet` (schemas
+  identical to v3–v5; `subharmonic_octave` reserved / written as 0) and
+  inherits v5's worker defaults (30 Hz STFT floor,
+  `min_break_frames = 6`, `pad_seconds = 0.25`). MIDI export auto-resolves
+  to v6 by lexicographic version ordering; no auto-backfill of v6 for
+  completed v5 jobs. `tools/piano_roll_notes_debug.py` gains a `"v6"`
+  variant for v5-vs-v6 before/after rendering.
 
 ## Frontend Shell
 

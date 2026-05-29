@@ -106,8 +106,8 @@ flowchart TD
 
 ## Piano Roll Notes — Harmonic-Viterbi v5
 
-`note_extractor_v5` is the current default Piano Roll Notes extractor (ADR-071,
-selected by `extractor_version = "v5"` in `piano_roll_notes_worker`). It
+`note_extractor_v5` (ADR-071, `extractor_version = "v5"`) was the default
+Piano Roll Notes extractor before v6 (ADR-072), and remains v6's decode stage. It
 replaces v4's ridge-locked HPS divisor selection with direct harmonic-sum F0
 estimation over the CQT plus log-frequency Viterbi smoothing. Temporal
 smoothness is part of the cost function rather than a post-filter, so frame-to-
@@ -175,4 +175,57 @@ emission, not an artifact of post-filtering.
 v3 (`extractor_version = "v3"`) and v4 (`extractor_version = "v4"`) remain
 reachable for backfill / comparison; their on-disk parquet sidecars are
 byte-identical to pre-v5 outputs at their respective defaults.
+
+## Piano Roll Notes — Slope De-spike v6
+
+`note_extractor_v6` is the current default Piano Roll Notes extractor (ADR-072,
+`extractor_version = "v6"`). It is v5's decode plus a slope-based F0 contour
+de-spike pass applied to each decoded F0 segment *before* note building. v5's
+Viterbi contour is usually smooth, but a strong-enough wrong-octave /
+wrong-harmonic emission over a short run of frames can still leave a surviving
+spike — a brief F0 excursion that jumps off the local trajectory and returns
+(e.g. the ~15-semitone plunge at t≈1.2 s on event
+`669849340bff411390e5eaaf1ec9b9e9` of job `690580c5…`).
+
+**Pipeline:**
+
+```
+v5 decode (CQT -> emission -> voicing -> Viterbi -> contour segmentation)
+  -> despike_f0_segments (slew-rate anchor walk per segment)
+  -> harmonic-sibling note synthesis (n·f0 over the cleaned contour)
+  -> NotesV3Result
+```
+
+**De-spike (slew-rate anchor walk):** per segment, with per-frame budget
+`max_step_log = max_slope_oct_per_s · dt` (where `dt = cqt.hop_length /
+cqt.target_sample_rate`), walk frames left→right holding a trusted anchor.
+A frame is accepted when `|log2 f[i] − log2 f[anchor]| ≤ (i − anchor) ·
+max_step_log`; otherwise it is excised and scanning continues. When a later
+frame re-enters the envelope, the excised interior frames have their
+log-frequency replaced by linear interpolation between the anchor and that
+frame. Spike frames are *retained* (timing, `frame_index`, `strength`, and
+`subharmonic_octave = 0` unchanged) — only their log-frequency is rewritten, so
+the note stays one continuous contour. A `max_spike_frames` guard accepts the
+far frame as a new anchor rather than excising a genuine level change
+indefinitely; leading/trailing spikes (no anchor on one side) are held by
+constant extrapolation. Detection is a pure slope threshold ("steep is always
+an error") — there is no return-to-baseline guard.
+
+**Harmonic correction is free:** harmonic presence is searched at `n · (cleaned
+f0)` and harmonic bends reuse the cleaned F0 cents (cents conservation), so the
+harmonic ribbons inherit the de-spiked contour with no separate pass.
+
+**`DespikeParams` defaults:**
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `enabled` | `True` | `False` makes v6 byte-identical to v5 |
+| `max_slope_oct_per_s` | 6.0 | Slope threshold (~72 semitones/s); ~4× above any real glide |
+| `max_spike_frames` | 12 | Excursion-width guard (~140 ms) |
+
+**Outputs:** `NotesV3Result`; the worker writes `event_notes_v6.parquet` and
+`event_note_contours_v6.parquet` (schemas identical to v3–v5). v6 inherits v5's
+worker defaults (30 Hz STFT floor, `segmentation.min_break_frames = 6`,
+`pad_seconds = 0.25`). v3–v5 sidecars remain reachable by explicit
+`extractor_version` pinning; there is no auto-backfill of v6.
 

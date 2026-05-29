@@ -61,6 +61,11 @@ from humpback.processing.note_extractor_v5 import (
     HarmonicViterbiParams,
     extract_notes_v5,
 )
+from humpback.processing.note_extractor_v6 import (
+    DespikeParams,
+    ExtractNotesV6Params,
+    extract_notes_v6,
+)
 from humpback.processing.piano_roll_cqt import (
     CQTParams,
     PeakParams,
@@ -139,12 +144,18 @@ _UNKNOWN_TOKEN = -1
 _V3_EXTRACTOR_VERSION = "v3"
 _V4_EXTRACTOR_VERSION = "v4"
 _V5_EXTRACTOR_VERSION = "v5"
+_V6_EXTRACTOR_VERSION = "v6"
 # Versions that produce per-frame contour sidecars + MPE-compatible
-# parquet rows (note_uid + f0_track_id + contour_frame_count). v3-v5
+# parquet rows (note_uid + f0_track_id + contour_frame_count). v3-v6
 # share the same parquet schemas; only the underlying F0 algorithm
 # differs.
 _RIDGE_AWARE_VERSIONS = frozenset(
-    {_V3_EXTRACTOR_VERSION, _V4_EXTRACTOR_VERSION, _V5_EXTRACTOR_VERSION}
+    {
+        _V3_EXTRACTOR_VERSION,
+        _V4_EXTRACTOR_VERSION,
+        _V5_EXTRACTOR_VERSION,
+        _V6_EXTRACTOR_VERSION,
+    }
 )
 
 
@@ -178,6 +189,7 @@ class _ResolvedParams:
     midi_v3: MidiRangeParams
     hps: HPSParams
     harmonic_viterbi: HarmonicViterbiParams
+    despike: DespikeParams
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -291,6 +303,11 @@ class _ResolvedParams:
                 "background_min_pad_frames": (
                     self.harmonic_viterbi.background_min_pad_frames
                 ),
+            },
+            "despike": {
+                "enabled": self.despike.enabled,
+                "max_slope_oct_per_s": self.despike.max_slope_oct_per_s,
+                "max_spike_frames": self.despike.max_spike_frames,
             },
         }
 
@@ -460,23 +477,26 @@ def _resolve_params(params_json: str, extractor_version: str = "") -> _ResolvedP
     midi_v3_raw = _section(raw, "midi_v3")
     hps_raw = _section(raw, "hps")
     harmonic_viterbi_raw = _section(raw, "harmonic_viterbi")
-    # v4 and v5 lower the STFT ridge band floor to 30 Hz (ADR-070 §4.3,
+    despike_raw = _section(raw, "despike")
+    # v4-v6 lower the STFT ridge band floor to 30 Hz (ADR-070 §4.3,
     # ADR-071 §5.1). v3 keeps the historical 100 Hz floor so re-running
     # an old row reproduces v3's bytes.
     default_min_freq = (
         30.0
-        if extractor_version in (_V4_EXTRACTOR_VERSION, _V5_EXTRACTOR_VERSION)
+        if extractor_version
+        in (_V4_EXTRACTOR_VERSION, _V5_EXTRACTOR_VERSION, _V6_EXTRACTOR_VERSION)
         else 100.0
     )
-    # v5's harmonic-Viterbi voicing oracle produces shorter, more
+    # The harmonic-Viterbi voicing oracle (v5/v6) produces shorter, more
     # frequent unvoiced gaps than v3/v4's STFT-ridge prominence gate,
     # so the v3/v4 default fragments coherent contours. ADR-071 raises
-    # the gap-bridging threshold for v5 only.
-    default_min_break_frames = 6 if extractor_version == _V5_EXTRACTOR_VERSION else 3
-    # v5 bumps the worker audio pad to 0.25 s so the harmonic-Viterbi
+    # the gap-bridging threshold; v6 inherits the v5 decode unchanged.
+    _viterbi_versions = (_V5_EXTRACTOR_VERSION, _V6_EXTRACTOR_VERSION)
+    default_min_break_frames = 6 if extractor_version in _viterbi_versions else 3
+    # v5/v6 bump the worker audio pad to 0.25 s so the harmonic-Viterbi
     # background subtractor has enough pad frames to estimate the
     # per-bin chronic-noise baseline (ADR-071 §6).
-    default_pad_seconds = 0.25 if extractor_version == _V5_EXTRACTOR_VERSION else 0.05
+    default_pad_seconds = 0.25 if extractor_version in _viterbi_versions else 0.05
 
     return _ResolvedParams(
         cqt=CQTParams(
@@ -603,6 +623,11 @@ def _resolve_params(params_json: str, extractor_version: str = "") -> _ResolvedP
             background_min_pad_frames=int(
                 harmonic_viterbi_raw.get("background_min_pad_frames", 8)
             ),
+        ),
+        despike=DespikeParams(
+            enabled=bool(despike_raw.get("enabled", True)),
+            max_slope_oct_per_s=float(despike_raw.get("max_slope_oct_per_s", 6.0)),
+            max_spike_frames=int(despike_raw.get("max_spike_frames", 12)),
         ),
     )
 
@@ -1164,10 +1189,147 @@ async def _extract_notes_v5(
     return rows, contour_rows, len(events), failures, ridges_status
 
 
+async def _extract_notes_v6(
+    session: AsyncSession,
+    encoder: EventEncoderJob,
+    job_id: str,
+    params: _ResolvedParams,
+    settings: Settings,
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    int,
+    list[tuple[str, str]],
+    str,
+]:
+    """Run the v6 de-spiked harmonic-Viterbi extractor across a job's events (ADR-072).
+
+    Mirrors :func:`_extract_notes_v5` end-to-end; the only differences are
+    the per-event ``extract_notes_v6`` call and the ``ExtractNotesV6Params``
+    shape (a ``despike`` sub-param on top of the v5 fields). The ridge
+    sidecar is loaded for parity but not consumed.
+    """
+    seg_job = await session.get(EventSegmentationJob, encoder.event_segmentation_job_id)
+    if seg_job is None:
+        raise ValueError(
+            f"event_segmentation_job not found: {encoder.event_segmentation_job_id}"
+        )
+
+    region_job = await session.get(RegionDetectionJob, seg_job.region_detection_job_id)
+    if region_job is None:
+        raise ValueError(
+            f"region_detection_job not found: {seg_job.region_detection_job_id}"
+        )
+
+    events_path = (
+        segmentation_job_dir(settings.storage_root, encoder.event_segmentation_job_id)
+        / "events.parquet"
+    )
+    if not events_path.exists():
+        raise FileNotFoundError(
+            f"events.parquet not found for segmentation job {seg_job.id}"
+        )
+    events = read_events(events_path)
+    token_map = _load_event_token_map(settings, encoder.id)
+
+    audio_provider = await _build_audio_provider(
+        session, settings, region_job, events, params.cqt.target_sample_rate
+    )
+    region_offset = float(region_job.start_timestamp or 0.0)
+
+    ridges_path = event_encoder_ridges_path(
+        settings.storage_root, encoder.id, encoder.tokenizer_version
+    )
+    sidecar_by_event = _load_ridge_sidecar(ridges_path)
+    ridges_status = str(ridges_path) if sidecar_by_event is not None else "absent"
+
+    @dataclass
+    class _PendingNote:
+        row: dict[str, Any]
+        raw_magnitude: float
+
+    pending: list[_PendingNote] = []
+    contour_rows: list[dict[str, Any]] = []
+    failures: list[tuple[str, str]] = []
+
+    for event in events:
+        if event.end_sec - event.start_sec < params.audio.min_event_duration_s:
+            continue
+        try:
+            audio = _slice_event_audio(
+                event,
+                audio_provider,
+                target_sr=params.cqt.target_sample_rate,
+                pad_seconds=params.audio.pad_seconds,
+            )
+            if audio.size == 0:
+                continue
+            extract_params = ExtractNotesV6Params(
+                job_id=job_id,
+                event_id=event.event_id,
+                event_start_utc=region_offset + float(event.start_sec),
+                pad_seconds=params.audio.pad_seconds,
+                cqt=params.cqt,
+                stft=params.stft,
+                harmonic_viterbi=params.harmonic_viterbi,
+                segmentation=params.segmentation,
+                harmonic=params.harmonic_v3,
+                midi=params.midi_v3,
+                despike=params.despike,
+            )
+            sidecar = (
+                sidecar_by_event.get(event.event_id)
+                if sidecar_by_event is not None
+                else None
+            )
+            result = extract_notes_v6(
+                audio,
+                params.cqt.target_sample_rate,
+                params=extract_params,
+                ridge_sidecar_rows=sidecar,
+            )
+            if not result.notes:
+                continue
+
+            token_id = int(token_map.get(event.event_id, _UNKNOWN_TOKEN))
+            for note in result.notes:
+                pending.append(
+                    _PendingNote(
+                        row=_note_v3_row(note, event.event_id, token_id),
+                        raw_magnitude=float(note.peak_magnitude),
+                    )
+                )
+            contour_rows.extend(_contour_v3_row(c) for c in result.contours)
+        except Exception as exc:  # noqa: BLE001
+            failures.append((event.event_id, _truncate(str(exc), limit=200)))
+            logger.warning(
+                "piano_roll_notes_v6 | event=%s failed",
+                event.event_id,
+                exc_info=True,
+            )
+
+    if not pending and failures:
+        raise RuntimeError(
+            f"piano roll notes v6 had no successful events ({len(failures)} failures)"
+        )
+
+    velocity_map = _velocity_mapper(
+        [entry.raw_magnitude for entry in pending], params.velocity
+    )
+    for entry in pending:
+        entry.row["velocity"] = velocity_map(entry.raw_magnitude)
+
+    rows = [entry.row for entry in pending]
+    rows.sort(key=lambda r: (r["start_utc"], r["midi_pitch"]))
+    contour_rows.sort(key=lambda r: (r["note_uid"], r["frame_index"]))
+    return rows, contour_rows, len(events), failures, ridges_status
+
+
 _RIDGE_AWARE_EXTRACTORS = {
     _V3_EXTRACTOR_VERSION: _extract_notes_v3,
     _V4_EXTRACTOR_VERSION: _extract_notes_v4,
     _V5_EXTRACTOR_VERSION: _extract_notes_v5,
+    _V6_EXTRACTOR_VERSION: _extract_notes_v6,
 }
 
 

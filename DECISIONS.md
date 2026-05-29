@@ -1192,3 +1192,85 @@ Alternatives considered:
   established during v5 iteration. Future Piano Roll Notes work
   should render before/after PNGs through this CLI for the same
   problem-event set.
+
+## ADR-072: Piano Roll Notes v6 — slope-based F0 contour de-spike
+
+**Status**: Accepted (2026-05-29)
+**Context**: ADR-071 / v5
+
+User-reported residual artifact on encoder job
+`690580c5-7804-43c9-bd8d-690691b5d6d4` (events
+`669849340bff411390e5eaaf1ec9b9e9` and
+`0be3d3520789414cb1f494eec50ba641`): the v5 harmonic-Viterbi contour is
+usually smooth, but a strong-enough wrong-octave / wrong-harmonic
+emission over a short run of frames still produces a surviving spike —
+the F0 jumps far off the local trajectory and immediately returns. On
+event `669849…` the F0 glides gently around MIDI 73 for ~1.1 s, then
+plunges ~15 semitones and recovers over ~0.1 s near t≈1.2 s. Harmonic
+siblings inherit the dip by cents conservation, and the exported MPE
+bends carry the artifact.
+
+ADR-071 rejected a frequency-space post-filter for v4 because v4's whole
+contour was wrong (a divisor-selection failure) and smoothing bad frames
+only yields smoothed bad frames. That reasoning does not apply to v5:
+the v5 contour is mostly correct with isolated residual spikes, so an
+*excise + bridge* post-filter does not need to recover a value — it
+removes the bad frames and interpolates across the gap.
+
+**Decision**:
+
+1. **v6 = v5 decode + a slope-based de-spike pass.** `extract_notes_v6`
+   reuses v5's `_decode_f0` and v3's note builders unchanged, inserting
+   one step between decode and build: a de-spike pass over each decoded
+   F0 segment.
+2. **Excise + bridge.** Spike frames are retained (timing, `frame_index`,
+   per-frame `strength`, and `subharmonic_octave = 0` unchanged); only
+   their log-frequency is overwritten by linear interpolation across the
+   excised span. The note stays one continuous contour — no splitting,
+   no time gaps. Harmonic ribbons are corrected for free because harmonic
+   presence is searched at `n · (cleaned f0)` and bends reuse the cleaned
+   F0 cents.
+3. **Detection is a pure slope threshold ("steep is always an error").**
+   No return-to-baseline guard; the data has no genuine pitch motion
+   faster than the threshold. The reference spike's slope (~25 oct/s) is
+   ~60× the legitimate glide's (~0.4 oct/s).
+4. **Slew-rate anchor walk.** Walk frames left→right holding a trusted
+   anchor; accept a frame when `|Δlog₂f|` from the anchor is within
+   `max_slope_oct_per_s · dt · (frames since anchor)`, otherwise excise
+   and scan onward. A `max_spike_frames` guard accepts the far frame as a
+   new anchor so a genuine level change is not excised indefinitely.
+   Leading/trailing spikes (no anchor on one side) are held by constant
+   extrapolation.
+5. **`DespikeParams`**: `enabled = True`, `max_slope_oct_per_s = 6.0`
+   (≈72 semitones/s), `max_spike_frames = 12` (~140 ms). `enabled = False`
+   makes v6 byte-identical to v5.
+6. **v6 inherits v5's worker defaults** (30 Hz STFT floor,
+   `segmentation.min_break_frames = 6`, `pad_seconds = 0.25`) because the
+   decode is v5's.
+7. **`DEFAULT_EXTRACTOR_VERSION = "v6"`.** New encoder jobs auto-enqueue
+   v6; the MIDI export resolver's lex-sorted `extractor_version desc`
+   picks v6 over v5 automatically; the MPE synth detects MPE by `note_uid`
+   (unchanged), so the export path needs no changes. No auto-backfill of
+   v6 for completed v5 jobs.
+
+Alternatives considered:
+
+- *Slew-rate clamp (no removal)* — cap the per-frame step rather than
+  excise. Flattens the spike but bends the contour rather than restoring
+  the true trajectory. Rejected in favour of excise + bridge.
+- *Hampel/median outlier rejection* — robust but abandons the slope
+  vocabulary and adds window/deviation knobs. Rejected.
+- *Tightening the Viterbi `transition_lambda`* — penalises legitimate
+  fast glides as much as spikes and re-tunes the whole decode. The
+  post-filter is surgical and leaves the validated v5 decode intact.
+
+**Consequences**:
+
+- No DB migration. v6 reuses the v3–v5 parquet schemas and the existing
+  tables; output lands at `event_notes_v6.parquet` /
+  `event_note_contours_v6.parquet`.
+- v3–v5 sidecars on disk stay readable; nothing is deleted.
+- Renderer, MPE synthesizer, MIDI export worker, and the frontend Notes
+  view need no changes — v6 emits the same `note_uid`-keyed contour shape.
+- `tools/piano_roll_notes_debug.py` gains a `"v6"` variant for v5-vs-v6
+  before/after rendering.

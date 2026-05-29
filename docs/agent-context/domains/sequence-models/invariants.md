@@ -56,9 +56,9 @@
   outputs. A complete Event Encoder job auto-enqueues a Piano Roll Notes job at
   the current default `extractor_version`; the auto-enqueue hook swallows
   conflicts so an in-flight or completed sidecar never blocks the encoder
-  completion. `DEFAULT_EXTRACTOR_VERSION = "v5"` (ADR-071). Legacy
-  `v1`, `v2`, `v3`, and `v4` rows remain queryable through the existing API
-  and pinned exports.
+  completion. `DEFAULT_EXTRACTOR_VERSION = "v6"` (ADR-072). Legacy
+  `v1`, `v2`, `v3`, `v4`, and `v5` rows remain queryable through the existing
+  API and pinned exports.
 - Piano Roll Notes v4 (ADR-070) drops the STFT ridge band floor from
   100 Hz to 30 Hz and replaces the v3 octave-halving subharmonic
   refinement (`SubharmonicParams`) with HPS-style harmonic-stack F0
@@ -97,6 +97,28 @@
   (was 0.05 s in v3/v4) so background subtraction has noise frames
   to sample. v3 and v4 sidecars on disk remain reachable via explicit
   `extractor_version` pinning.
+- Piano Roll Notes v6 (ADR-072) is v5's decode plus a slope-based F0
+  contour de-spike pass applied to each decoded F0 segment before note
+  building. `extract_notes_v6` reuses v5's `_decode_f0` and v3's note
+  builders unchanged. The de-spike is a slew-rate anchor walk: walk
+  frames left→right holding a trusted anchor, accept a frame when
+  `|Δlog₂f|` from the anchor is within `max_slope_oct_per_s · dt ·
+  (frames since anchor)`, and excise + linearly bridge log-frequency
+  across out-of-envelope frames so the note stays one continuous
+  contour. A `max_spike_frames` guard accepts the far frame as a new
+  anchor rather than excising a genuine level change indefinitely;
+  leading/trailing spikes are held by constant extrapolation. Detection
+  is a pure slope threshold ("steep is always an error") with no
+  return-to-baseline guard. `DespikeParams` defaults:
+  `enabled = True`, `max_slope_oct_per_s = 6.0`, `max_spike_frames = 12`;
+  `enabled = False` makes v6 byte-identical to v5. Harmonic ribbons are
+  corrected for free because harmonic presence is searched at
+  `n · (cleaned f0)` and bends reuse the cleaned F0 cents. v6 inherits
+  v5's worker defaults (30 Hz STFT floor, `min_break_frames = 6`,
+  `pad_seconds = 0.25`) and emits `event_notes_v6.parquet` /
+  `event_note_contours_v6.parquet` (schemas identical to v3–v5;
+  `subharmonic_octave` reserved / written as 0). No auto-backfill of v6
+  for completed v5 jobs.
 - The MIDI export resolver picks the highest `complete` notes-job
   version by lexicographic ordering on `extractor_version`
   (`desc(extractor_version)`), so `"v4" > "v3" > "v2" > "v1"`. A
