@@ -1230,17 +1230,22 @@ removes the bad frames and interpolates across the gap.
    no time gaps. Harmonic ribbons are corrected for free because harmonic
    presence is searched at `n · (cleaned f0)` and bends reuse the cleaned
    F0 cents.
-3. **Detection is a pure slope threshold ("steep is always an error").**
-   No return-to-baseline guard; the data has no genuine pitch motion
-   faster than the threshold. The reference spike's slope (~25 oct/s) is
-   ~60× the legitimate glide's (~0.4 oct/s).
+3. **Only out-and-back excursions are bridged (return-to-baseline).** A
+   spike is bridged only when the contour returns to the anchor's slope
+   envelope. An excursion that never returns within `max_spike_frames` is
+   a genuine level change (a register jump, or a signal drop that resumes
+   at a different pitch), not a spike — the walk re-anchors past it
+   **without** bridging and the real contour is left intact. (Amended
+   2026-05-29 — see the amendment below; the original draft used a pure
+   "steep-is-always-an-error" rule with no return-to-baseline guard.)
 4. **Slew-rate anchor walk.** Walk frames left→right holding a trusted
-   anchor; accept a frame when `|Δlog₂f|` from the anchor is within
-   `max_slope_oct_per_s · dt · (frames since anchor)`, otherwise excise
-   and scan onward. A `max_spike_frames` guard accepts the far frame as a
-   new anchor so a genuine level change is not excised indefinitely.
-   Leading/trailing spikes (no anchor on one side) are held by constant
-   extrapolation.
+   anchor; accept a frame as a new anchor (bridging the intervening
+   out-of-envelope frames) when `|Δlog₂f|` from the anchor is within
+   `max_slope_oct_per_s · dt · (frames since anchor)`. If an excursion
+   has not returned after `max_spike_frames`, re-anchor at that point
+   without bridging (level change, per #3). Edge excursions that never
+   return (a non-returning lead-in or tail) are left untouched rather
+   than flattened.
 5. **`DespikeParams`**: `enabled = True`, `max_slope_oct_per_s = 6.0`
    (≈72 semitones/s), `max_spike_frames = 12` (~140 ms). `enabled = False`
    makes v6 byte-identical to v5.
@@ -1274,3 +1279,26 @@ Alternatives considered:
   view need no changes — v6 emits the same `note_uid`-keyed contour shape.
 - `tools/piano_roll_notes_debug.py` gains a `"v6"` variant for v5-vs-v6
   before/after rendering.
+
+**Amendment (2026-05-29) — return-to-baseline guard**:
+
+Manual testing on event `cb23dfcdc7c64d4bbf495f835feb770d` of the same
+job revealed the original "steep-is-always-an-error" rule over-bridged.
+That event's F0 tracks ~60 Hz, then steps up to a sustained ~565 Hz
+region (11 frames, healthy emission ~6.0–6.6), with the right anchor also
+high (~533 Hz). Because the high region was just under `max_spike_frames`
+and never returned to the 60 Hz anchor, the guard fired and **ramped the
+correct high region down into a 60→533 Hz diagonal** — destroying real
+pitch content. The 60 Hz lead-in was itself an upstream Viterbi
+subharmonic error, but the de-spike made it worse by joining across the
+register jump.
+
+Fix: a spike is bridged only if the contour **returns to the anchor's
+slope envelope** (a true out-and-back). A non-returning excursion is a
+level change — re-anchor past it without bridging, leaving the real
+contour intact. This preserves the v6 wins (the `669849…` plunge and the
+single-frame `cb23…` blip at frame 344 are genuine out-and-back spikes
+and stay bridged) while no longer joining across genuine register jumps
+or signal drops. The leading-reseed and trailing-hold edge handlers
+(which flattened non-returning edge excursions) are removed for the same
+reason. Decisions #3 and #4 above reflect the amended algorithm.

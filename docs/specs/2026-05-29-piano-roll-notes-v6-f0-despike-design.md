@@ -44,13 +44,18 @@ ridge, the parquet schema, the MPE synth, or any frontend behaviour.
    overwritten by linear interpolation across the excised span. The note
    remains one continuous, smoothed contour with the excursion gone. No
    note splitting, no time gaps.
-2. **Detection — steep is always an error.** A pure slope threshold; no
-   return-to-baseline guard. Any transition steeper than the threshold is
-   treated as an artifact. (The data has no genuine pitch motion faster
-   than the threshold.)
+2. **Detection — out-and-back only (return-to-baseline).** A steep step
+   marks a candidate spike, but it is bridged only if the contour
+   **returns** to the anchor's slope envelope. An excursion that never
+   returns within `max_spike_frames` is a genuine level change (a register
+   jump, or a signal drop that resumes at a different pitch) and is left
+   untouched — we do not join across a discontinuity the contour never
+   came back from. (Amended 2026-05-29: the original draft used a pure
+   "steep-is-always-an-error" rule, which over-bridged a real 60→530 Hz
+   register jump on event `cb23dfcd…`; see §9.)
 3. **Algorithm — slew-rate anchor walk (Approach A).** A single-pass
-   anchor walk, the robust generalisation of "find the steep jump out,
-   find the steep jump back, remove between."
+   anchor walk that bridges confirmed out-and-back spikes and re-anchors
+   past non-returning level changes.
 
 ## 4. Algorithm
 
@@ -75,14 +80,14 @@ Walk left → right holding a trusted `anchor` index (starts at 0):
    excised frame `k` with `anchor < k < j` has its log frequency replaced
    by linear interpolation between `lf[anchor]` and `lf[j]`:
    `lf[k] = lf[anchor] + (lf[j] - lf[anchor]) * (k - anchor) / (j - anchor)`.
-5. **Max-spike-frames guard.** If an excursion runs longer than
-   `max_spike_frames` without re-entering the envelope, accept the frame
-   at `anchor + max_spike_frames` as a new anchor (treat it as a genuine
-   level change rather than excising the remainder of the segment). This
-   bounds worst-case behaviour; in practice spikes are far shorter.
-6. **Edges.** A spike that begins at frame 0 (no left anchor) or runs to
-   the final frame (no right anchor to bridge to) is filled by holding
-   the nearest legal value — constant extrapolation, not interpolation.
+5. **Max-spike-frames guard (level change — no bridge).** If an excursion
+   runs `max_spike_frames` frames without re-entering the envelope, it is
+   a genuine level change, not a spike. Re-anchor at `anchor +
+   max_spike_frames` **without** bridging the intervening frames, so the
+   real contour is preserved. This is the key difference from a pure
+   slope filter: only excursions that *return* (step 4) are erased.
+6. **Edges.** A non-returning excursion at the start or end of the segment
+   has no confirming return, so it is left untouched (not flattened).
 
 The pass returns a new `list[_RefinedFrame]` (the dataclass is frozen);
 `strength` and `subharmonic_octave` (always 0 in v5/v6) are carried
@@ -174,5 +179,35 @@ render v5-vs-v6 side by side on any event.
   with the t≈1.2 s plunge erased and the rest of the contour visually
   unchanged from v5.
 - `enabled=False` makes v6 output byte-identical to v5 for the same event.
+- On event `cb23dfcdc7c64d4bbf495f835feb770d`, v6 does **not** over-bridge
+  the ~60 Hz→530 Hz register jump near t≈2.66 s; the sustained high region
+  is preserved (see §9).
 - All standard gates pass (`ruff format --check`, `ruff check`,
   `pyright`, `pytest tests/`).
+
+## 9. Amendment — over-bridging finding (2026-05-29)
+
+Manual testing on event `cb23dfcdc7c64d4bbf495f835feb770d` (same job)
+exposed a flaw in the original "steep-is-always-an-error" rule.
+
+Decode diagnostic (one voiced segment, frames 28–346):
+
+- The F0 tracks ~60 Hz through ~2.6 s (an upstream Viterbi subharmonic
+  error), then steps up to a **sustained ~565 Hz region** (frames 229–239,
+  t≈2.66–2.78 s, healthy emission ~6.0–6.6), and the right anchor is also
+  high (~533 Hz).
+- Because that high region was 11 frames (just under `max_spike_frames =
+  12`) and never returned to the 60 Hz anchor, the original guard fired
+  and **ramped the correct high region down into a 60→533 Hz diagonal**,
+  destroying real pitch content.
+
+Root cause: the guard bridged a *non-returning* excursion (a register
+jump), which is a level change, not an out-and-back spike.
+
+Fix (reflected in §3–§4): bridge only excursions that return to the
+anchor's slope envelope; re-anchor past non-returning excursions without
+bridging. After the fix, the diagnostic shows the de-spike no longer
+touches frames 229–239 (only the genuine single-frame out-and-back blip
+at frame 344 is still bridged), and the v5-vs-v6 render shows v6's F0
+stepping up cleanly like v5. The `669849…` plunge — a true out-and-back —
+remains correctly de-spiked.

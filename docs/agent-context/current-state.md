@@ -117,9 +117,14 @@ full. Read the relevant domain section when planning or implementing.
   `669849340bff411390e5eaaf1ec9b9e9`); v6 excises the spike frames and
   linearly bridges log-frequency across the gap so the note stays one
   continuous contour, and harmonic ribbons are corrected automatically
-  via cents conservation. Detection is a pure slope threshold
-  (`DespikeParams`: `max_slope_oct_per_s = 6.0`, `max_spike_frames = 12`,
-  `enabled = True`); `enabled = False` is byte-identical to v5. v6 emits
+  via cents conservation. Only out-and-back excursions that return to the
+  anchor's slope envelope are bridged; an excursion that never returns
+  within `max_spike_frames` is a genuine level change (register jump /
+  signal drop) and is left untouched, not joined (return-to-baseline
+  guard added after the `cb23dfcd…` over-bridging finding — ADR-072
+  amendment). `DespikeParams`: `max_slope_oct_per_s = 6.0`,
+  `max_spike_frames = 12`, `enabled = True`; `enabled = False` is
+  byte-identical to v5. v6 emits
   `event_notes_v6.parquet` / `event_note_contours_v6.parquet` (schemas
   identical to v3–v5; `subharmonic_octave` reserved / written as 0) and
   inherits v5's worker defaults (30 Hz STFT floor,

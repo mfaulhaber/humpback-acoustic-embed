@@ -199,17 +199,21 @@ v5 decode (CQT -> emission -> voicing -> Viterbi -> contour segmentation)
 **De-spike (slew-rate anchor walk):** per segment, with per-frame budget
 `max_step_log = max_slope_oct_per_s · dt` (where `dt = cqt.hop_length /
 cqt.target_sample_rate`), walk frames left→right holding a trusted anchor.
-A frame is accepted when `|log2 f[i] − log2 f[anchor]| ≤ (i − anchor) ·
-max_step_log`; otherwise it is excised and scanning continues. When a later
-frame re-enters the envelope, the excised interior frames have their
-log-frequency replaced by linear interpolation between the anchor and that
-frame. Spike frames are *retained* (timing, `frame_index`, `strength`, and
-`subharmonic_octave = 0` unchanged) — only their log-frequency is rewritten, so
-the note stays one continuous contour. A `max_spike_frames` guard accepts the
-far frame as a new anchor rather than excising a genuine level change
-indefinitely; leading/trailing spikes (no anchor on one side) are held by
-constant extrapolation. Detection is a pure slope threshold ("steep is always
-an error") — there is no return-to-baseline guard.
+A frame is accepted as a new anchor when `|log2 f[i] − log2 f[anchor]| ≤
+(i − anchor) · max_step_log`; otherwise scanning continues. When a later frame
+re-enters the envelope, the intervening out-of-envelope frames were an
+out-and-back spike: their log-frequency is replaced by linear interpolation
+between the anchor and that frame. Spike frames are *retained* (timing,
+`frame_index`, `strength`, and `subharmonic_octave = 0` unchanged) — only their
+log-frequency is rewritten, so the note stays one continuous contour. **Only
+out-and-back excursions are bridged (return-to-baseline):** if an excursion
+never returns within `max_spike_frames`, it is a genuine level change (a
+register jump, or a signal drop that resumes at a different pitch), so the walk
+re-anchors past it WITHOUT bridging and the real contour is left intact —
+including non-returning excursions at the segment edges. (This guard was added
+after event `cb23dfcd…` showed a pure "steep-is-always-an-error" rule
+over-bridging a real 60→530 Hz register jump into a garbage ramp — ADR-072
+amendment.)
 
 **Harmonic correction is free:** harmonic presence is searched at `n · (cleaned
 f0)` and harmonic bends reuse the cleaned F0 cents (cents conservation), so the

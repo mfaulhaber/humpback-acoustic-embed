@@ -101,15 +101,17 @@
   contour de-spike pass applied to each decoded F0 segment before note
   building. `extract_notes_v6` reuses v5's `_decode_f0` and v3's note
   builders unchanged. The de-spike is a slew-rate anchor walk: walk
-  frames left→right holding a trusted anchor, accept a frame when
-  `|Δlog₂f|` from the anchor is within `max_slope_oct_per_s · dt ·
-  (frames since anchor)`, and excise + linearly bridge log-frequency
-  across out-of-envelope frames so the note stays one continuous
-  contour. A `max_spike_frames` guard accepts the far frame as a new
-  anchor rather than excising a genuine level change indefinitely;
-  leading/trailing spikes are held by constant extrapolation. Detection
-  is a pure slope threshold ("steep is always an error") with no
-  return-to-baseline guard. `DespikeParams` defaults:
+  frames left→right holding a trusted anchor; when a later frame returns
+  to within the anchor's slope envelope (`|Δlog₂f|` ≤ `max_slope_oct_per_s
+  · dt · (frames since anchor)`), the intervening out-of-envelope frames
+  were an out-and-back spike and are excised + linearly bridged so the
+  note stays one continuous contour. Only out-and-back excursions are
+  bridged (return-to-baseline): an excursion that never returns within
+  `max_spike_frames` is a genuine level change (register jump, or a
+  signal drop that resumes at a different pitch) — the walk re-anchors
+  past it WITHOUT bridging and the real contour is left intact (added
+  after the `cb23dfcd…` over-bridging finding, ADR-072 amendment).
+  `DespikeParams` defaults:
   `enabled = True`, `max_slope_oct_per_s = 6.0`, `max_spike_frames = 12`;
   `enabled = False` makes v6 byte-identical to v5. Harmonic ribbons are
   corrected for free because harmonic presence is searched at

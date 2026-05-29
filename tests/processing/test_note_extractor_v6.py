@@ -88,32 +88,45 @@ def test_sustained_legal_glide_is_unchanged() -> None:
     assert [f.log_frequency for f in out[0]] == glide
 
 
-def test_trailing_spike_is_held() -> None:
+def test_trailing_excursion_left_untouched() -> None:
+    # A trailing excursion that never returns to the trajectory is a
+    # level change, not an out-and-back spike: leave it untouched rather
+    # than flattening (joining) it back to the prior level.
     result = _despike([6.0] * 8 + [7.0, 7.0])
-    # The tail never returns to the trajectory; held at the last good value.
-    assert result[8] == 6.0
-    assert result[9] == 6.0
+    assert result[8] == 7.0
+    assert result[9] == 7.0
+    assert all(abs(v - 6.0) < 1e-9 for v in result[:8])
 
 
-def test_leading_spike_is_held() -> None:
+def test_leading_excursion_left_untouched() -> None:
+    # Frame 0 sits a register away and the contour never returns to it:
+    # it is not a confirmed out-and-back spike, so the real low contour
+    # is preserved and the lone leading frame is left as-is.
     result = _despike([7.0] + [6.0] * 9)
-    # Frame 0 is an isolated leading excursion; held at the post-spike level.
-    assert result[0] == 6.0
-    assert all(abs(v - 6.0) < 1e-9 for v in result)
+    assert result[0] == 7.0
+    assert all(abs(v - 6.0) < 1e-9 for v in result[1:])
 
 
-def test_excursion_wider_than_guard_accepts_level_change() -> None:
-    # A genuine sustained jump (not an out-and-back) must not excise the
-    # whole tail: the guard accepts the new level after max_spike_frames.
-    result = _despike(
-        [6.0, 6.0, 6.0] + [7.0] * 7,
-        max_spike_frames=3,
-    )
-    # Tail keeps the new level rather than being held at 6.0.
-    assert result[-1] == 7.0
-    assert result[5] == 7.0
-    # The transition is ramped, not a vertical step held at the old level.
-    assert 6.0 < result[3] < 7.0
+def test_register_jump_is_not_bridged() -> None:
+    # Regression for event cb23dfcd: a low anchor (left), a sustained high
+    # region, and a high right anchor. The earlier "steep-is-always-error"
+    # guard ramped the high region down from the low anchor. It must now be
+    # left intact — a non-returning excursion is a level change, not a spike.
+    contour = [3.0, 3.0, 3.0] + [9.0] * 11 + [8.9, 8.9, 8.9]
+    result = _despike(contour, max_spike_frames=12)
+    # The high region is preserved (NOT ramped down toward the low anchor).
+    assert all(abs(v - 9.0) < 1e-9 for v in result[3:14])
+    # The low lead-in and high tail are preserved too.
+    assert all(abs(v - 3.0) < 1e-9 for v in result[:3])
+    assert all(abs(v - 8.9) < 1e-9 for v in result[14:])
+
+
+def test_sustained_step_is_left_unchanged() -> None:
+    # A clean step up that never returns is a level change: despike is a
+    # no-op (no ramp, no flattening).
+    contour = [6.0, 6.0, 6.0] + [7.0] * 7
+    result = _despike(contour, max_spike_frames=3)
+    assert result == contour
 
 
 def test_multiple_spikes_all_bridged() -> None:

@@ -10,13 +10,20 @@ siblings inherit the F0 bend by cents conservation, every harmonic ribbon
 mirrors the same excursion.
 
 The de-spike pass is a slew-rate anchor walk (spec §4): walk frames
-left → right holding a trusted anchor, accept frames within a per-frame
-log-frequency budget of the anchor, and excise + linearly bridge the
-log-frequency of any frames that fall outside the budget. Detection is a
-pure slope threshold ("steep is always an error" — no return-to-baseline
-guard). The note stays one continuous contour: spike frames are retained
-(timing, ``frame_index``, ``strength``, ``subharmonic_octave`` unchanged)
-and only their log-frequency is rewritten.
+left → right holding a trusted anchor. When a later frame returns to
+within the anchor's slope envelope, the intervening out-of-envelope frames
+were an out-and-back spike — they are excised and their log-frequency is
+linearly bridged across the gap. Only out-and-back excursions are bridged:
+if an excursion never returns within ``max_spike_frames`` it is a genuine
+level change (a register jump, or a signal drop that resumes at a
+different pitch), so the walk re-anchors WITHOUT bridging and the real
+contour is left intact — we do not join across a discontinuity the contour
+never came back from. (This return-to-baseline guard was added after a
+real-data finding on event ``cb23dfcd…`` where the original
+"steep-is-always-an-error" rule over-bridged a 60 Hz→530 Hz register jump
+into a garbage ramp — ADR-072.) Bridged frames keep their timing,
+``frame_index``, ``strength``, and ``subharmonic_octave``; only their
+log-frequency is rewritten, so the note stays one continuous contour.
 
 See ``docs/specs/2026-05-29-piano-roll-notes-v6-f0-despike-design.md`` for
 the algorithm specification and ADR-072 for the design rationale.
@@ -82,11 +89,12 @@ class DespikeParams:
 
     ``enabled=False`` skips the pass entirely, making v6 byte-identical to
     v5 for the same audio/params. ``max_slope_oct_per_s`` is the slope
-    threshold in octaves per second; a frame-to-frame motion steeper than
-    this is treated as an artifact. ``max_spike_frames`` bounds the
-    worst-case excursion width: an excursion that never returns within
-    this many frames is accepted as a genuine level change rather than
-    excised indefinitely.
+    threshold in octaves per second; an excursion reached by a steeper step
+    is a candidate spike. ``max_spike_frames`` is the maximum out-and-back
+    spike width: an excursion that returns to the anchor's slope envelope
+    within this many frames is bridged, while one that does not return is
+    treated as a genuine level change and left untouched (the walk
+    re-anchors past it without bridging).
     """
 
     enabled: bool = True
@@ -259,34 +267,23 @@ def _despike_segment(
         return frames
     max_spike = max(int(params.max_spike_frames), 1)
 
-    # Leading-spike re-seed: a steep first transition means frame 0 may be
-    # an isolated leading excursion. Scan to the first frame with an
-    # in-envelope right neighbour and hold the leading frames at that
-    # value (constant extrapolation), then start the walk there.
-    start = 0
-    if abs(lf[1] - lf[0]) > max_step_log + _SLOPE_EPS:
-        s = 1
-        while s < n - 1 and abs(lf[s + 1] - lf[s]) > max_step_log + _SLOPE_EPS:
-            s += 1
-        if s > 0:
-            new_lf[:s] = lf[s]
-            start = s
-
-    anchor = start
-    i = anchor + 1
+    anchor = 0
+    i = 1
     while i < n:
         reach = float(i - anchor) * max_step_log + _SLOPE_EPS
-        in_envelope = abs(lf[i] - lf[anchor]) <= reach
-        force_anchor = (i - anchor) >= max_spike
-        if in_envelope or force_anchor:
+        if abs(lf[i] - lf[anchor]) <= reach:
+            # The contour returned to the anchor's slope envelope: the
+            # intervening frames are an out-and-back spike -> excise + bridge.
             _bridge(new_lf, anchor, i, lf)
             anchor = i
+        elif (i - anchor) >= max_spike:
+            # The excursion never returned within max_spike_frames. Treat it
+            # as a genuine level change (register jump, or a signal drop that
+            # resumes at a different pitch), NOT a spike: re-anchor WITHOUT
+            # bridging so the real contour is preserved. Do not join across a
+            # discontinuity the contour never came back from.
+            anchor = i
         i += 1
-
-    # Trailing spike: frames after the last anchor never re-entered the
-    # envelope; hold the last good value (constant extrapolation).
-    if anchor < n - 1:
-        new_lf[anchor + 1 :] = lf[anchor]
 
     if np.array_equal(new_lf, lf):
         return frames
