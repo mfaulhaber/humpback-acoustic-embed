@@ -41,6 +41,21 @@ describe("PianoRollNotesStatusPill upgrade badge", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it("renders the v6-available badge when a v5 row is complete and v6 is the latest", () => {
+    const handler = vi.fn();
+    render(
+      <PianoRollNotesStatusPill
+        status={makeStatus({ extractor_version: "v5" })}
+        latestExtractorVersion="v6"
+        onRequestUpgrade={handler}
+      />,
+    );
+    const badge = screen.getByTestId("piano-roll-notes-upgrade-badge");
+    expect(badge.textContent).toBe("v6 available");
+    fireEvent.click(badge);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it("does not render the upgrade badge when the row is already at the latest version", () => {
     render(
       <PianoRollNotesStatusPill

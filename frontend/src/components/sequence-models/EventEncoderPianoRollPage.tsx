@@ -122,8 +122,10 @@ const DEFAULT_RIDGE_FREQUENCY_MAX = 6000;
 const FREQUENCY_OPTIONS = [1500, 2000, 3000, 4000, 5000, 6000];
 const CONTOUR_BATCH_LIMIT = 2000;
 // Mirrors humpback.models.piano_roll_notes.DEFAULT_EXTRACTOR_VERSION
-// (ADR-071). Bump alongside the backend when a future extractor lands.
-const LATEST_NOTES_EXTRACTOR_VERSION = "v5";
+// (ADR-072). Bump alongside the backend when a future extractor lands —
+// this drives the "<version> available" upgrade button in the piano roll
+// toolbar, which re-enqueues notes at this version.
+const LATEST_NOTES_EXTRACTOR_VERSION = "v6";
 // Bound the per-page contour cache so a long pan across a job with
 // millions of v3 notes does not retain every contour for the page
 // lifetime. 50_000 covers ~25 full viewports at the batch cap and is
