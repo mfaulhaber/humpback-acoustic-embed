@@ -51,7 +51,7 @@ async def test_persist_and_read_back_defaults(session) -> None:
 
     assert row.id is not None
     assert row.event_encoder_job_id == encoder_id
-    assert row.extractor_version == "v6"
+    assert row.extractor_version == "v7"
     assert row.status == JobStatus.queued.value
     assert row.started_at is None
     assert row.finished_at is None

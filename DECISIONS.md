@@ -1389,3 +1389,71 @@ conservation.
   segmentation, and the de-spike are unaffected.
 - Regression covered by
   `tests/processing/test_note_extractor_v6.py::test_harmonic_cents_track_f0_when_segment_starts_after_silence`.
+
+## ADR-074: Piano Roll Notes v7 — residual discontinuity split and ridge rescue
+
+**Status**: Accepted (2026-06-02)
+**Context**: ADR-071 / ADR-072; Event Encoder job
+`690580c5-7804-43c9-bd8d-690691b5d6d4`
+
+Manual review of v6 renders on job `690580c5...` showed two remaining
+failure modes:
+
+- false-positive pitch bends on acoustic events
+  `5a50b01f7a014ceaaf5ca52e81e6ad42`,
+  `dad6357550ba4a9cadcf05e103f923ee`, and
+  `0d698411766142ee908fa6a4c2ac81ec`: v6 correctly avoids bridging
+  non-returning level changes, but the note builder still receives one
+  decoded segment and the MPE renderer connects the retained branch jump
+  as a violent pitch bend.
+- false-negative pitch change on
+  `f470e42f95974358885c9392dffd83ee`: the harmonic-Viterbi F0 is nearly
+  flat, while the persisted STFT ridge sidecar carries a smooth upsweep.
+
+The known-good pitch-change event
+`e3e8e9c4b5c0403a91ef3f50e965fdf0` stays below the slope budget and must
+remain one continuous bend.
+
+**Decision**:
+
+1. **v7 = v6 decode/de-spike plus two post-decode passes.** The extractor
+   reuses v5 `_decode_f0`, v6 `despike_f0_segments`, and the shared v3
+   note builders. The v7-only passes run after despike and before F0 note
+   construction.
+2. **Residual discontinuity split.** Adjacent retained F0 frames whose
+   actual slope exceeds `max_continuous_slope_oct_per_s` (default 6.0
+   octaves/s) become note boundaries. Post-split fragments shorter than
+   `segmentation.min_note_frames` are dropped. This preserves v6's
+   return-to-baseline guard while preventing a non-returning branch jump
+   from becoming a continuous MPE bend.
+3. **Ridge-guided flat-segment rescue.** When a decoded F0 segment is flat
+   (`max_decoded_span_semitones <= 2.0`) and the overlapping persisted
+   Event Encoder ridge moves enough (`min_ridge_span_semitones >= 5.0`
+   over at least `min_overlap_frames = 8`), v7 can rewrite the segment's
+   log-frequency from the ridge divided by a median carrier harmonic
+   (`min_carrier_harmonic = 1`, `max_carrier_harmonic = 32`). The ridge
+   path must be smooth after a linear trend fit
+   (`max_ratio_mad_semitones = 2.0`), so jagged/noisy ridges are ignored.
+   Rewritten frames preserve `frame_index`, timing, strength, and
+   `subharmonic_octave = 0`.
+4. **Same artifact and synthesis contract.** v7 emits `NotesV3Result`,
+   `event_notes_v7.parquet`, and `event_note_contours_v7.parquet` with
+   the v3-v6 schemas. Harmonic siblings are still built by
+   `_build_harmonic_notes`, so harmonic bends inherit the final F0 cents.
+5. **`DEFAULT_EXTRACTOR_VERSION = "v7"`.** New Piano Roll Notes jobs and
+   default MIDI exports now target v7. Existing v3-v6 sidecars remain
+   readable and explicitly selectable. The latest-complete resolver still
+   uses lexicographic version ordering, so a complete v7 row wins over v6.
+
+**Consequences**:
+
+- No DB migration, schema change, frontend change, or MIDI synthesizer
+  change. v7 adds only a new extractor version and sidecar filenames.
+- The worker treats v7 as ridge-aware and passes the persisted Event
+  Encoder ridge sidecar to `extract_notes_v7`; v5/v6 still ignore that
+  sidecar for F0 decode/rescue.
+- Debug tooling exposes a `"v7"` variant for v5/v6/v7 comparisons.
+- Regression coverage:
+  `tests/processing/test_note_extractor_v7.py`,
+  `tests/unit/test_piano_roll_notes_worker_v7.py`, and
+  `tests/tools/test_piano_roll_notes_debug.py`.

@@ -66,6 +66,12 @@ from humpback.processing.note_extractor_v6 import (
     ExtractNotesV6Params,
     extract_notes_v6,
 )
+from humpback.processing.note_extractor_v7 import (
+    DiscontinuityParams,
+    ExtractNotesV7Params,
+    RidgeRescueParams,
+    extract_notes_v7,
+)
 from humpback.processing.piano_roll_cqt import (
     CQTParams,
     PeakParams,
@@ -145,8 +151,9 @@ _V3_EXTRACTOR_VERSION = "v3"
 _V4_EXTRACTOR_VERSION = "v4"
 _V5_EXTRACTOR_VERSION = "v5"
 _V6_EXTRACTOR_VERSION = "v6"
+_V7_EXTRACTOR_VERSION = "v7"
 # Versions that produce per-frame contour sidecars + MPE-compatible
-# parquet rows (note_uid + f0_track_id + contour_frame_count). v3-v6
+# parquet rows (note_uid + f0_track_id + contour_frame_count). v3-v7
 # share the same parquet schemas; only the underlying F0 algorithm
 # differs.
 _RIDGE_AWARE_VERSIONS = frozenset(
@@ -155,6 +162,7 @@ _RIDGE_AWARE_VERSIONS = frozenset(
         _V4_EXTRACTOR_VERSION,
         _V5_EXTRACTOR_VERSION,
         _V6_EXTRACTOR_VERSION,
+        _V7_EXTRACTOR_VERSION,
     }
 )
 
@@ -190,6 +198,8 @@ class _ResolvedParams:
     hps: HPSParams
     harmonic_viterbi: HarmonicViterbiParams
     despike: DespikeParams
+    discontinuity: DiscontinuityParams
+    ridge_rescue: RidgeRescueParams
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -309,6 +319,25 @@ class _ResolvedParams:
                 "max_slope_oct_per_s": self.despike.max_slope_oct_per_s,
                 "max_spike_frames": self.despike.max_spike_frames,
                 "max_trailing_trim_frames": self.despike.max_trailing_trim_frames,
+            },
+            "discontinuity": {
+                "enabled": self.discontinuity.enabled,
+                "max_continuous_slope_oct_per_s": (
+                    self.discontinuity.max_continuous_slope_oct_per_s
+                ),
+            },
+            "ridge_rescue": {
+                "enabled": self.ridge_rescue.enabled,
+                "max_decoded_span_semitones": (
+                    self.ridge_rescue.max_decoded_span_semitones
+                ),
+                "min_ridge_span_semitones": (
+                    self.ridge_rescue.min_ridge_span_semitones
+                ),
+                "min_overlap_frames": self.ridge_rescue.min_overlap_frames,
+                "max_ratio_mad_semitones": (self.ridge_rescue.max_ratio_mad_semitones),
+                "min_carrier_harmonic": self.ridge_rescue.min_carrier_harmonic,
+                "max_carrier_harmonic": self.ridge_rescue.max_carrier_harmonic,
             },
         }
 
@@ -479,22 +508,33 @@ def _resolve_params(params_json: str, extractor_version: str = "") -> _ResolvedP
     hps_raw = _section(raw, "hps")
     harmonic_viterbi_raw = _section(raw, "harmonic_viterbi")
     despike_raw = _section(raw, "despike")
-    # v4-v6 lower the STFT ridge band floor to 30 Hz (ADR-070 §4.3,
+    discontinuity_raw = _section(raw, "discontinuity")
+    ridge_rescue_raw = _section(raw, "ridge_rescue")
+    # v4-v7 lower the STFT ridge band floor to 30 Hz (ADR-070 §4.3,
     # ADR-071 §5.1). v3 keeps the historical 100 Hz floor so re-running
     # an old row reproduces v3's bytes.
     default_min_freq = (
         30.0
         if extractor_version
-        in (_V4_EXTRACTOR_VERSION, _V5_EXTRACTOR_VERSION, _V6_EXTRACTOR_VERSION)
+        in (
+            _V4_EXTRACTOR_VERSION,
+            _V5_EXTRACTOR_VERSION,
+            _V6_EXTRACTOR_VERSION,
+            _V7_EXTRACTOR_VERSION,
+        )
         else 100.0
     )
-    # The harmonic-Viterbi voicing oracle (v5/v6) produces shorter, more
+    # The harmonic-Viterbi voicing oracle (v5-v7) produces shorter, more
     # frequent unvoiced gaps than v3/v4's STFT-ridge prominence gate,
     # so the v3/v4 default fragments coherent contours. ADR-071 raises
-    # the gap-bridging threshold; v6 inherits the v5 decode unchanged.
-    _viterbi_versions = (_V5_EXTRACTOR_VERSION, _V6_EXTRACTOR_VERSION)
+    # the gap-bridging threshold; v6/v7 inherit the v5 decode unchanged.
+    _viterbi_versions = (
+        _V5_EXTRACTOR_VERSION,
+        _V6_EXTRACTOR_VERSION,
+        _V7_EXTRACTOR_VERSION,
+    )
     default_min_break_frames = 6 if extractor_version in _viterbi_versions else 3
-    # v5/v6 bump the worker audio pad to 0.25 s so the harmonic-Viterbi
+    # v5-v7 bump the worker audio pad to 0.25 s so the harmonic-Viterbi
     # background subtractor has enough pad frames to estimate the
     # per-bin chronic-noise baseline (ADR-071 §6).
     default_pad_seconds = 0.25 if extractor_version in _viterbi_versions else 0.05
@@ -632,6 +672,27 @@ def _resolve_params(params_json: str, extractor_version: str = "") -> _ResolvedP
             max_trailing_trim_frames=int(
                 despike_raw.get("max_trailing_trim_frames", 4)
             ),
+        ),
+        discontinuity=DiscontinuityParams(
+            enabled=bool(discontinuity_raw.get("enabled", True)),
+            max_continuous_slope_oct_per_s=float(
+                discontinuity_raw.get("max_continuous_slope_oct_per_s", 6.0)
+            ),
+        ),
+        ridge_rescue=RidgeRescueParams(
+            enabled=bool(ridge_rescue_raw.get("enabled", True)),
+            max_decoded_span_semitones=float(
+                ridge_rescue_raw.get("max_decoded_span_semitones", 2.0)
+            ),
+            min_ridge_span_semitones=float(
+                ridge_rescue_raw.get("min_ridge_span_semitones", 5.0)
+            ),
+            min_overlap_frames=int(ridge_rescue_raw.get("min_overlap_frames", 8)),
+            max_ratio_mad_semitones=float(
+                ridge_rescue_raw.get("max_ratio_mad_semitones", 2.0)
+            ),
+            min_carrier_harmonic=int(ridge_rescue_raw.get("min_carrier_harmonic", 1)),
+            max_carrier_harmonic=int(ridge_rescue_raw.get("max_carrier_harmonic", 32)),
         ),
     )
 
@@ -1329,11 +1390,145 @@ async def _extract_notes_v6(
     return rows, contour_rows, len(events), failures, ridges_status
 
 
+async def _extract_notes_v7(
+    session: AsyncSession,
+    encoder: EventEncoderJob,
+    job_id: str,
+    params: _ResolvedParams,
+    settings: Settings,
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    int,
+    list[tuple[str, str]],
+    str,
+]:
+    """Run the v7 residual-discontinuity extractor across a job's events."""
+
+    seg_job = await session.get(EventSegmentationJob, encoder.event_segmentation_job_id)
+    if seg_job is None:
+        raise ValueError(
+            f"event_segmentation_job not found: {encoder.event_segmentation_job_id}"
+        )
+
+    region_job = await session.get(RegionDetectionJob, seg_job.region_detection_job_id)
+    if region_job is None:
+        raise ValueError(
+            f"region_detection_job not found: {seg_job.region_detection_job_id}"
+        )
+
+    events_path = (
+        segmentation_job_dir(settings.storage_root, encoder.event_segmentation_job_id)
+        / "events.parquet"
+    )
+    if not events_path.exists():
+        raise FileNotFoundError(
+            f"events.parquet not found for segmentation job {seg_job.id}"
+        )
+    events = read_events(events_path)
+    token_map = _load_event_token_map(settings, encoder.id)
+
+    audio_provider = await _build_audio_provider(
+        session, settings, region_job, events, params.cqt.target_sample_rate
+    )
+    region_offset = float(region_job.start_timestamp or 0.0)
+
+    ridges_path = event_encoder_ridges_path(
+        settings.storage_root, encoder.id, encoder.tokenizer_version
+    )
+    sidecar_by_event = _load_ridge_sidecar(ridges_path)
+    ridges_status = str(ridges_path) if sidecar_by_event is not None else "absent"
+
+    @dataclass
+    class _PendingNote:
+        row: dict[str, Any]
+        raw_magnitude: float
+
+    pending: list[_PendingNote] = []
+    contour_rows: list[dict[str, Any]] = []
+    failures: list[tuple[str, str]] = []
+
+    for event in events:
+        if event.end_sec - event.start_sec < params.audio.min_event_duration_s:
+            continue
+        try:
+            audio = _slice_event_audio(
+                event,
+                audio_provider,
+                target_sr=params.cqt.target_sample_rate,
+                pad_seconds=params.audio.pad_seconds,
+            )
+            if audio.size == 0:
+                continue
+            extract_params = ExtractNotesV7Params(
+                job_id=job_id,
+                event_id=event.event_id,
+                event_start_utc=region_offset + float(event.start_sec),
+                pad_seconds=params.audio.pad_seconds,
+                cqt=params.cqt,
+                stft=params.stft,
+                harmonic_viterbi=params.harmonic_viterbi,
+                segmentation=params.segmentation,
+                harmonic=params.harmonic_v3,
+                midi=params.midi_v3,
+                despike=params.despike,
+                discontinuity=params.discontinuity,
+                ridge_rescue=params.ridge_rescue,
+            )
+            sidecar = (
+                sidecar_by_event.get(event.event_id)
+                if sidecar_by_event is not None
+                else None
+            )
+            result = extract_notes_v7(
+                audio,
+                params.cqt.target_sample_rate,
+                params=extract_params,
+                ridge_sidecar_rows=sidecar,
+            )
+            if not result.notes:
+                continue
+
+            token_id = int(token_map.get(event.event_id, _UNKNOWN_TOKEN))
+            for note in result.notes:
+                pending.append(
+                    _PendingNote(
+                        row=_note_v3_row(note, event.event_id, token_id),
+                        raw_magnitude=float(note.peak_magnitude),
+                    )
+                )
+            contour_rows.extend(_contour_v3_row(c) for c in result.contours)
+        except Exception as exc:  # noqa: BLE001
+            failures.append((event.event_id, _truncate(str(exc), limit=200)))
+            logger.warning(
+                "piano_roll_notes_v7 | event=%s failed",
+                event.event_id,
+                exc_info=True,
+            )
+
+    if not pending and failures:
+        raise RuntimeError(
+            f"piano roll notes v7 had no successful events ({len(failures)} failures)"
+        )
+
+    velocity_map = _velocity_mapper(
+        [entry.raw_magnitude for entry in pending], params.velocity
+    )
+    for entry in pending:
+        entry.row["velocity"] = velocity_map(entry.raw_magnitude)
+
+    rows = [entry.row for entry in pending]
+    rows.sort(key=lambda r: (r["start_utc"], r["midi_pitch"]))
+    contour_rows.sort(key=lambda r: (r["note_uid"], r["frame_index"]))
+    return rows, contour_rows, len(events), failures, ridges_status
+
+
 _RIDGE_AWARE_EXTRACTORS = {
     _V3_EXTRACTOR_VERSION: _extract_notes_v3,
     _V4_EXTRACTOR_VERSION: _extract_notes_v4,
     _V5_EXTRACTOR_VERSION: _extract_notes_v5,
     _V6_EXTRACTOR_VERSION: _extract_notes_v6,
+    _V7_EXTRACTOR_VERSION: _extract_notes_v7,
 }
 
 

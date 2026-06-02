@@ -39,6 +39,10 @@ from humpback.processing.note_extractor_v6 import (
     ExtractNotesV6Params,
     extract_notes_v6,
 )
+from humpback.processing.note_extractor_v7 import (
+    ExtractNotesV7Params,
+    extract_notes_v7,
+)
 
 __all__ = ["EXTRACTORS", "ExtractorFn"]
 
@@ -146,9 +150,35 @@ def _run_v6(
     )
 
 
+def _run_v7(
+    audio: np.ndarray,
+    sample_rate: int,
+    *,
+    job_id: str,
+    event_id: str,
+    event_start_utc: float,
+    pad_seconds: float | None = None,
+    ridge_sidecar_rows: Sequence[Mapping[str, Any]] | None = None,
+) -> NotesV3Result:
+    kwargs: dict[str, Any] = {
+        "job_id": job_id,
+        "event_id": event_id,
+        "event_start_utc": event_start_utc,
+    }
+    if pad_seconds is not None:
+        kwargs["pad_seconds"] = pad_seconds
+    return extract_notes_v7(
+        audio,
+        sample_rate,
+        params=ExtractNotesV7Params(**kwargs),
+        ridge_sidecar_rows=ridge_sidecar_rows,
+    )
+
+
 EXTRACTORS: dict[str, ExtractorFn] = {
     "v3": _run_v3,
     "v4": _run_v4,
     "v5": _run_v5,
     "v6": _run_v6,
+    "v7": _run_v7,
 }

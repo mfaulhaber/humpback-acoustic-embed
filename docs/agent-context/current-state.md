@@ -110,7 +110,7 @@ full. Read the relevant domain section when planning or implementing.
   CQT spectrogram + ridge overlay alongside a stacked piano-roll
   panel per registered algorithm variant. Use it as the first stop
   for any rendering / pitch / F0 issue.
-- `DEFAULT_EXTRACTOR_VERSION = "v6"` (ADR-072): v6 is v5's decode plus a
+- v6 (ADR-072), superseded as default by v7 (ADR-074): v6 is v5's decode plus a
   slope-based F0 contour de-spike pass that runs before note building.
   v5 occasionally leaves a surviving spike (a short out-and-back F0
   excursion such as the ~15-semitone plunge at t≈1.2 s on event
@@ -137,6 +137,20 @@ full. Read the relevant domain section when planning or implementing.
   to v6 by lexicographic version ordering; no auto-backfill of v6 for
   completed v5 jobs. `tools/piano_roll_notes_debug.py` gains a `"v6"`
   variant for v5-vs-v6 before/after rendering.
+- `DEFAULT_EXTRACTOR_VERSION = "v7"` (ADR-074): v7 keeps the v6
+  harmonic-Viterbi decode and de-spike, then adds two post-decode passes
+  before note building. Residual discontinuity splitting cuts adjacent
+  retained F0 frames whose actual slope exceeds
+  `max_continuous_slope_oct_per_s = 6.0`, so non-returning branch jumps
+  become note boundaries rather than continuous MPE bends. Ridge-guided
+  rescue rewrites flat decoded segments when the persisted Event Encoder
+  STFT ridge overlaps sufficiently, moves at least 5 semitones, and is
+  smooth enough after a linear trend fit; the rescued F0 is the ridge
+  divided by a median carrier harmonic. v7 emits `event_notes_v7.parquet`
+  / `event_note_contours_v7.parquet` with the v3-v6 schemas, inherits
+  v5/v6 worker defaults (30 Hz STFT floor, `min_break_frames = 6`,
+  `pad_seconds = 0.25`), consumes the ridge sidecar when present, and
+  remains explicitly comparable through the debug tool's `"v7"` variant.
 
 ## Frontend Shell
 
