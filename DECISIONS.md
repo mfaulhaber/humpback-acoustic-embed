@@ -1302,3 +1302,58 @@ and stay bridged) while no longer joining across genuine register jumps
 or signal drops. The leading-reseed and trailing-hold edge handlers
 (which flattened non-returning edge excursions) are removed for the same
 reason. Decisions #3 and #4 above reflect the amended algorithm.
+
+## ADR-073: Piano Roll Notes — harmonic contour cents key alignment
+
+**Status**: Accepted (2026-05-29)
+**Context**: ADR-069 (cents conservation) / shared `_build_harmonic_notes`
+
+Manual review of event `d988c5069e664eab857ee0bd12b06eba` showed the
+upper harmonic ribbons making a sharp vertical down-then-up "slope spike"
+ladder around t≈1.1 s while the F0 ridge itself followed the call
+cleanly. The de-spike (ADR-072) operates on the F0 contour and did not
+touch it, and it appears in v5 too, so it is not a v6 regression.
+
+Root cause is a key-space mismatch in the shared
+`_build_harmonic_notes` (used by v3–v6). `_build_f0_note` writes the F0
+`ContourFrame.frame_index` as the **0-based row position** `i` (the
+parquet schema's per-note frame index). `_build_harmonic_notes` then
+built `cents_by_frame = {row.frame_index: row.cents_from_pitch …}` from
+those rows (keyed 0…n−1) but looked them up with `frame.frame_index` —
+the **original CQT frame index** of the F0 segment (e.g. 47…173 for an
+event whose voiced segment starts after ~0.25 s of pad + leading
+silence). The two index spaces only coincide when the segment starts at
+CQT frame 0. Otherwise each harmonic frame borrowed the F0 cents from a
+time-shifted frame, and frames past the contour length fell back to the
+`0.0` default. A deterministic regression test (gliding harmonic stack
+with leading silence, de-spike disabled) measured up to **3400 cents**
+(~34 semitones) of divergence between the harmonic and F0 cents at the
+same frame.
+
+**Decision**: Key the F0 cents map by the original segment frame index,
+recovered from the 1:1 alignment between `f0.contour[i]` and
+`f0.segment_frames[i]`:
+
+```
+cents_by_frame = {
+    seg_frame.frame_index: contour_row.cents_from_pitch
+    for seg_frame, contour_row in zip(f0.segment_frames, f0.contour)
+}
+```
+
+The harmonic-presence loop and the magnitude map already use
+`frame.frame_index` (original CQT index), so the lookup now aligns.
+Harmonics inherit the F0 cents at the correct frame, restoring cents
+conservation.
+
+**Consequences**:
+
+- The fix is in shared code, so v3–v6 harmonic contours are all
+  corrected. On-disk parquet sidecars are untouched; re-running v3/v4/v5
+  now produces corrected harmonic rows, so the "byte-identical on re-run"
+  property no longer holds for harmonic contour rows (F0 rows are
+  unaffected).
+- No schema, API, worker, or frontend change. F0 contours, note
+  segmentation, and the de-spike are unaffected.
+- Regression covered by
+  `tests/processing/test_note_extractor_v6.py::test_harmonic_cents_track_f0_when_segment_starts_after_silence`.

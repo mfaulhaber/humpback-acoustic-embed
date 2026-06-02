@@ -22,6 +22,7 @@ from humpback.processing.note_extractor_v5 import (
     extract_notes_v5,
 )
 from humpback.processing.note_extractor_v6 import (
+    ContourFrame,
     DespikeParams,
     ExtractNotesV6Params,
     despike_f0_segments,
@@ -263,3 +264,64 @@ def test_empty_audio_returns_empty_result() -> None:
     )
     assert result.notes == []
     assert result.contours == []
+
+
+def test_harmonic_cents_track_f0_when_segment_starts_after_silence() -> None:
+    """Harmonic contour cents must equal the F0 cents at the same frame.
+
+    Regression for the upper-harmonic "slope spike" ladder: leading
+    silence forces the F0 segment to begin at a CQT frame_index > 0, and a
+    pitch glide makes the cents time-varying. Harmonic notes inherit the
+    F0 bend by cents conservation, so at each shared event-time the
+    harmonic's ``cents_from_pitch`` must match the F0's. A frame-index
+    key mismatch in the harmonic contour lookup borrows F0 cents from a
+    time-shifted frame, which this test detects. De-spike is disabled so
+    the F0 cents are the raw glide.
+    """
+    sr = SAMPLE_RATE
+    silence = np.zeros(int(0.30 * sr), dtype=np.float32)
+    duration_s = 0.60
+    t = np.arange(int(duration_s * sr)) / sr
+    f_start, f_end = 200.0, 250.0
+    inst_hz = f_start * (f_end / f_start) ** (t / duration_s)  # log-linear glide
+    phase = 2.0 * np.pi * np.cumsum(inst_hz) / sr
+    tone = (
+        0.40 * np.sin(phase)
+        + 0.30 * np.sin(2.0 * phase)
+        + 0.20 * np.sin(3.0 * phase)
+        + 0.15 * np.sin(4.0 * phase)
+    ).astype(np.float32)
+    audio = np.concatenate([silence, tone, silence])
+
+    result = extract_notes_v6(
+        audio, sr, params=_v6_params(despike=DespikeParams(enabled=False))
+    )
+    f0_notes = [n for n in result.notes if n.partial_index == 0]
+    assert f0_notes
+    f0 = max(f0_notes, key=lambda n: n.duration_s)
+    h_notes = [
+        n
+        for n in result.notes
+        if n.partial_index == 1 and abs(n.start_offset_s - f0.start_offset_s) < 0.05
+    ]
+    assert h_notes, "no H2 note overlapping the F0 onset"
+    h2 = max(h_notes, key=lambda n: n.duration_s)
+
+    by_uid: dict[str, list[ContourFrame]] = {}
+    for c in result.contours:
+        by_uid.setdefault(c.note_uid, []).append(c)
+    f0_by_t = {
+        round(f0.start_offset_s + c.time_offset_s, 4): c.cents_from_pitch
+        for c in by_uid[f0.note_uid]
+    }
+    h2_by_t = {
+        round(h2.start_offset_s + c.time_offset_s, 4): c.cents_from_pitch
+        for c in by_uid[h2.note_uid]
+    }
+    shared = sorted(set(f0_by_t) & set(h2_by_t))
+    assert len(shared) > 10
+    max_diff = max(abs(f0_by_t[t] - h2_by_t[t]) for t in shared)
+    assert max_diff < 5.0, (
+        "harmonic cents diverge from F0 cents (key mismatch); "
+        f"max |Δcents| = {max_diff:.1f}"
+    )

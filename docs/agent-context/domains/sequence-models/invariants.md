@@ -156,7 +156,16 @@
 - Harmonic notes inherit their parent F0's bend trajectory in cents
   (cents conservation): `1200 · log₂(n·f / n·f_nominal) =
   1200 · log₂(f / f_nominal)`. The CQT peak is used to validate harmonic
-  presence only and never drives the bend stream.
+  presence only and never drives the bend stream. The harmonic contour
+  reads the F0 cents keyed by the **original segment frame index**, not
+  the 0-based `ContourFrame.frame_index` row position (ADR-073). The
+  earlier key mismatch made harmonics of any event whose segment started
+  after leading silence/pad borrow F0 cents from a time-shifted frame
+  (or fall back to 0), producing an upper-harmonic "slope spike" ladder
+  while the F0 itself was fine. The fix lives in the shared
+  `_build_harmonic_notes`, so it corrects v3–v6 alike; on-disk parquet is
+  untouched, but re-running v3/v4/v5 now yields corrected harmonics (the
+  "byte-identical on re-run" property no longer holds for harmonic rows).
 - Piano Roll Notes v3 rows carry a deterministic `note_uid` (UUID v5 of
   `(job_id, event_id, partial_index, track_id, start_utc_rounded_ms)`)
   plus `f0_track_id` and `contour_frame_count`. The MIDI pitch range
