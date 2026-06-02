@@ -1192,3 +1192,200 @@ Alternatives considered:
   established during v5 iteration. Future Piano Roll Notes work
   should render before/after PNGs through this CLI for the same
   problem-event set.
+
+## ADR-072: Piano Roll Notes v6 — slope-based F0 contour de-spike
+
+**Status**: Accepted (2026-05-29)
+**Context**: ADR-071 / v5
+
+User-reported residual artifact on encoder job
+`690580c5-7804-43c9-bd8d-690691b5d6d4` (events
+`669849340bff411390e5eaaf1ec9b9e9` and
+`0be3d3520789414cb1f494eec50ba641`): the v5 harmonic-Viterbi contour is
+usually smooth, but a strong-enough wrong-octave / wrong-harmonic
+emission over a short run of frames still produces a surviving spike —
+the F0 jumps far off the local trajectory and immediately returns. On
+event `669849…` the F0 glides gently around MIDI 73 for ~1.1 s, then
+plunges ~15 semitones and recovers over ~0.1 s near t≈1.2 s. Harmonic
+siblings inherit the dip by cents conservation, and the exported MPE
+bends carry the artifact.
+
+ADR-071 rejected a frequency-space post-filter for v4 because v4's whole
+contour was wrong (a divisor-selection failure) and smoothing bad frames
+only yields smoothed bad frames. That reasoning does not apply to v5:
+the v5 contour is mostly correct with isolated residual spikes, so an
+*excise + bridge* post-filter does not need to recover a value — it
+removes the bad frames and interpolates across the gap.
+
+**Decision**:
+
+1. **v6 = v5 decode + a slope-based de-spike pass.** `extract_notes_v6`
+   reuses v5's `_decode_f0` and v3's note builders unchanged, inserting
+   one step between decode and build: a de-spike pass over each decoded
+   F0 segment.
+2. **Excise + bridge.** Spike frames are retained (timing, `frame_index`,
+   per-frame `strength`, and `subharmonic_octave = 0` unchanged); only
+   their log-frequency is overwritten by linear interpolation across the
+   excised span. The note stays one continuous contour — no splitting,
+   no time gaps. Harmonic ribbons are corrected for free because harmonic
+   presence is searched at `n · (cleaned f0)` and bends reuse the cleaned
+   F0 cents.
+3. **Only out-and-back excursions are bridged (return-to-baseline).** A
+   spike is bridged only when the contour returns to the anchor's slope
+   envelope. An excursion that never returns within `max_spike_frames` is
+   a genuine level change (a register jump, or a signal drop that resumes
+   at a different pitch), not a spike — the walk re-anchors past it
+   **without** bridging and the real contour is left intact. (Amended
+   2026-05-29 — see the amendment below; the original draft used a pure
+   "steep-is-always-an-error" rule with no return-to-baseline guard.)
+4. **Slew-rate anchor walk.** Walk frames left→right holding a trusted
+   anchor; accept a frame as a new anchor (bridging the intervening
+   out-of-envelope frames) when `|Δlog₂f|` from the anchor is within
+   `max_slope_oct_per_s · dt · (frames since anchor)`. If an excursion
+   has not returned after `max_spike_frames`, re-anchor at that point
+   without bridging (level change, per #3). A non-returning lead-in is
+   left untouched; a short non-returning *tail* is trimmed (see the
+   trailing-trim amendment below).
+5. **`DespikeParams`**: `enabled = True`, `max_slope_oct_per_s = 6.0`
+   (≈72 semitones/s), `max_spike_frames = 12` (~140 ms). `enabled = False`
+   makes v6 byte-identical to v5.
+6. **v6 inherits v5's worker defaults** (30 Hz STFT floor,
+   `segmentation.min_break_frames = 6`, `pad_seconds = 0.25`) because the
+   decode is v5's.
+7. **`DEFAULT_EXTRACTOR_VERSION = "v6"`.** New encoder jobs auto-enqueue
+   v6; the MIDI export resolver's lex-sorted `extractor_version desc`
+   picks v6 over v5 automatically; the MPE synth detects MPE by `note_uid`
+   (unchanged), so the export path needs no changes. No auto-backfill of
+   v6 for completed v5 jobs.
+
+Alternatives considered:
+
+- *Slew-rate clamp (no removal)* — cap the per-frame step rather than
+  excise. Flattens the spike but bends the contour rather than restoring
+  the true trajectory. Rejected in favour of excise + bridge.
+- *Hampel/median outlier rejection* — robust but abandons the slope
+  vocabulary and adds window/deviation knobs. Rejected.
+- *Tightening the Viterbi `transition_lambda`* — penalises legitimate
+  fast glides as much as spikes and re-tunes the whole decode. The
+  post-filter is surgical and leaves the validated v5 decode intact.
+
+**Consequences**:
+
+- No DB migration. v6 reuses the v3–v5 parquet schemas and the existing
+  tables; output lands at `event_notes_v6.parquet` /
+  `event_note_contours_v6.parquet`.
+- v3–v5 sidecars on disk stay readable; nothing is deleted.
+- Renderer, MPE synthesizer, MIDI export worker, and the frontend Notes
+  view need no changes — v6 emits the same `note_uid`-keyed contour shape.
+- `tools/piano_roll_notes_debug.py` gains a `"v6"` variant for v5-vs-v6
+  before/after rendering.
+
+**Amendment (2026-05-29) — return-to-baseline guard**:
+
+Manual testing on event `cb23dfcdc7c64d4bbf495f835feb770d` of the same
+job revealed the original "steep-is-always-an-error" rule over-bridged.
+That event's F0 tracks ~60 Hz, then steps up to a sustained ~565 Hz
+region (11 frames, healthy emission ~6.0–6.6), with the right anchor also
+high (~533 Hz). Because the high region was just under `max_spike_frames`
+and never returned to the 60 Hz anchor, the guard fired and **ramped the
+correct high region down into a 60→533 Hz diagonal** — destroying real
+pitch content. The 60 Hz lead-in was itself an upstream Viterbi
+subharmonic error, but the de-spike made it worse by joining across the
+register jump.
+
+Fix: a spike is bridged only if the contour **returns to the anchor's
+slope envelope** (a true out-and-back). A non-returning excursion is a
+level change — re-anchor past it without bridging, leaving the real
+contour intact. This preserves the v6 wins (the `669849…` plunge and the
+single-frame `cb23…` blip at frame 344 are genuine out-and-back spikes
+and stay bridged) while no longer joining across genuine register jumps
+or signal drops. The leading-reseed and trailing-hold edge handlers
+(which flattened non-returning edge excursions) are removed for the same
+reason. Decisions #3 and #4 above reflect the amended algorithm.
+
+**Amendment 2 (2026-06-02) — trailing trim**:
+
+Manual review of events `2054e6de171b4a99a50914a1201a8d67` and
+`c82fa1fc451547d3b4f4528a3c5e1137` showed a downward slope drop at the
+very end of the call. In both, the body is healthy (~270 Hz / ~220 Hz,
+emission ~8–10), then the last 1–2 voiced frames plunge ~2 octaves to a
+sub-fundamental (~59–60 Hz) at low, fading energy (~5–6), after a short
+unvoiced gap. As the call's energy fades the tracker drops to a
+sub-fundamental / noise, and Amendment 1's "leave non-returning
+excursions" rule left that spurious tail in the contour (and the
+harmonics inherit it).
+
+Fix: a **trailing trim**. A non-returning excursion at the very end of a
+segment (no frames accepted after it) that is no longer than
+`max_trailing_trim_frames` (default 4) is dropped, so the note ends at
+the call. Guards keep it safe:
+
+- `anchor > 0`: the walk must have established a body anchor. If the
+  anchor never advanced past frame 0 (a *leading* spike makes the body
+  out-of-envelope of frame 0), trimming would delete the body — so leave
+  it untouched.
+- length cap: a *sustained* end-of-call level change is longer than the
+  cap (and is re-anchored by the `max_spike_frames` guard during the
+  walk, so the anchor reaches the final frame and nothing is trimmed).
+
+This trims only the short spurious tail; a real sustained ending and the
+cb23 mid-segment register jump are preserved. `despike_f0_segments` may
+now return a shorter segment; the F0 note and its harmonics end at the
+trimmed length. Regression:
+`tests/processing/test_note_extractor_v6.py::test_trailing_drop_regression_2054`
+and `::test_long_trailing_run_not_trimmed`.
+
+## ADR-073: Piano Roll Notes — harmonic contour cents key alignment
+
+**Status**: Accepted (2026-05-29)
+**Context**: ADR-069 (cents conservation) / shared `_build_harmonic_notes`
+
+Manual review of event `d988c5069e664eab857ee0bd12b06eba` showed the
+upper harmonic ribbons making a sharp vertical down-then-up "slope spike"
+ladder around t≈1.1 s while the F0 ridge itself followed the call
+cleanly. The de-spike (ADR-072) operates on the F0 contour and did not
+touch it, and it appears in v5 too, so it is not a v6 regression.
+
+Root cause is a key-space mismatch in the shared
+`_build_harmonic_notes` (used by v3–v6). `_build_f0_note` writes the F0
+`ContourFrame.frame_index` as the **0-based row position** `i` (the
+parquet schema's per-note frame index). `_build_harmonic_notes` then
+built `cents_by_frame = {row.frame_index: row.cents_from_pitch …}` from
+those rows (keyed 0…n−1) but looked them up with `frame.frame_index` —
+the **original CQT frame index** of the F0 segment (e.g. 47…173 for an
+event whose voiced segment starts after ~0.25 s of pad + leading
+silence). The two index spaces only coincide when the segment starts at
+CQT frame 0. Otherwise each harmonic frame borrowed the F0 cents from a
+time-shifted frame, and frames past the contour length fell back to the
+`0.0` default. A deterministic regression test (gliding harmonic stack
+with leading silence, de-spike disabled) measured up to **3400 cents**
+(~34 semitones) of divergence between the harmonic and F0 cents at the
+same frame.
+
+**Decision**: Key the F0 cents map by the original segment frame index,
+recovered from the 1:1 alignment between `f0.contour[i]` and
+`f0.segment_frames[i]`:
+
+```
+cents_by_frame = {
+    seg_frame.frame_index: contour_row.cents_from_pitch
+    for seg_frame, contour_row in zip(f0.segment_frames, f0.contour)
+}
+```
+
+The harmonic-presence loop and the magnitude map already use
+`frame.frame_index` (original CQT index), so the lookup now aligns.
+Harmonics inherit the F0 cents at the correct frame, restoring cents
+conservation.
+
+**Consequences**:
+
+- The fix is in shared code, so v3–v6 harmonic contours are all
+  corrected. On-disk parquet sidecars are untouched; re-running v3/v4/v5
+  now produces corrected harmonic rows, so the "byte-identical on re-run"
+  property no longer holds for harmonic contour rows (F0 rows are
+  unaffected).
+- No schema, API, worker, or frontend change. F0 contours, note
+  segmentation, and the de-spike are unaffected.
+- Regression covered by
+  `tests/processing/test_note_extractor_v6.py::test_harmonic_cents_track_f0_when_segment_starts_after_silence`.

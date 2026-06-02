@@ -634,7 +634,20 @@ def _build_harmonic_notes(
     if not f0_segment:
         return harmonic_notes, harmonic_contours, next_track_id
 
-    cents_by_frame = {row.frame_index: row.cents_from_pitch for row in f0.contour}
+    # Key the F0 cents by the *original* segment frame_index, not the
+    # ContourFrame.frame_index (which is the 0-based row position the
+    # parquet schema uses). The harmonic-presence loop below looks these
+    # up with ``frame.frame_index`` from ``f0_segment`` (the original CQT
+    # frame index). ``f0.contour[i]`` is built 1:1 from
+    # ``f0.segment_frames[i]`` in ``_build_f0_note``, so zip recovers the
+    # original-index keying. Without this, harmonics whose segment starts
+    # after leading silence/pad borrow F0 cents from a time-shifted frame
+    # (or fall back to 0), producing the upper-harmonic "slope spike"
+    # ladder while the F0 itself follows the ridge fine.
+    cents_by_frame = {
+        seg_frame.frame_index: contour_row.cents_from_pitch
+        for seg_frame, contour_row in zip(f0.segment_frames, f0.contour)
+    }
 
     cents_tolerance = float(params.harmonic.cents_tolerance)
     cents_window_log = cents_tolerance / _CENTS_PER_OCTAVE

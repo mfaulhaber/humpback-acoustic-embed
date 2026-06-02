@@ -56,9 +56,9 @@
   outputs. A complete Event Encoder job auto-enqueues a Piano Roll Notes job at
   the current default `extractor_version`; the auto-enqueue hook swallows
   conflicts so an in-flight or completed sidecar never blocks the encoder
-  completion. `DEFAULT_EXTRACTOR_VERSION = "v5"` (ADR-071). Legacy
-  `v1`, `v2`, `v3`, and `v4` rows remain queryable through the existing API
-  and pinned exports.
+  completion. `DEFAULT_EXTRACTOR_VERSION = "v6"` (ADR-072). Legacy
+  `v1`, `v2`, `v3`, `v4`, and `v5` rows remain queryable through the existing
+  API and pinned exports.
 - Piano Roll Notes v4 (ADR-070) drops the STFT ridge band floor from
   100 Hz to 30 Hz and replaces the v3 octave-halving subharmonic
   refinement (`SubharmonicParams`) with HPS-style harmonic-stack F0
@@ -97,6 +97,37 @@
   (was 0.05 s in v3/v4) so background subtraction has noise frames
   to sample. v3 and v4 sidecars on disk remain reachable via explicit
   `extractor_version` pinning.
+- Piano Roll Notes v6 (ADR-072) is v5's decode plus a slope-based F0
+  contour de-spike pass applied to each decoded F0 segment before note
+  building. `extract_notes_v6` reuses v5's `_decode_f0` and v3's note
+  builders unchanged. The de-spike is a slew-rate anchor walk: walk
+  frames left→right holding a trusted anchor; when a later frame returns
+  to within the anchor's slope envelope (`|Δlog₂f|` ≤ `max_slope_oct_per_s
+  · dt · (frames since anchor)`), the intervening out-of-envelope frames
+  were an out-and-back spike and are excised + linearly bridged so the
+  note stays one continuous contour. Only out-and-back excursions are
+  bridged (return-to-baseline): an excursion that never returns within
+  `max_spike_frames` is a genuine level change (register jump, or a
+  signal drop that resumes at a different pitch) — the walk re-anchors
+  past it WITHOUT bridging and the real contour is left intact (added
+  after the `cb23dfcd…` over-bridging finding, ADR-072 amendment). The
+  one exception is a short non-returning excursion at the very end of a
+  segment (≤ `max_trailing_trim_frames`): as a call's energy fades the
+  tracker drops to a sub-fundamental, so that spurious tail is trimmed
+  and the note (and its harmonics) end at the call (ADR-072 Amendment 2,
+  events `2054e6de…` / `c82fa1fc…`); a leading non-returning excursion
+  and a sustained end-of-call level change are still kept.
+  `DespikeParams` defaults:
+  `enabled = True`, `max_slope_oct_per_s = 6.0`, `max_spike_frames = 12`,
+  `max_trailing_trim_frames = 4`;
+  `enabled = False` makes v6 byte-identical to v5. Harmonic ribbons are
+  corrected for free because harmonic presence is searched at
+  `n · (cleaned f0)` and bends reuse the cleaned F0 cents. v6 inherits
+  v5's worker defaults (30 Hz STFT floor, `min_break_frames = 6`,
+  `pad_seconds = 0.25`) and emits `event_notes_v6.parquet` /
+  `event_note_contours_v6.parquet` (schemas identical to v3–v5;
+  `subharmonic_octave` reserved / written as 0). No auto-backfill of v6
+  for completed v5 jobs.
 - The MIDI export resolver picks the highest `complete` notes-job
   version by lexicographic ordering on `extractor_version`
   (`desc(extractor_version)`), so `"v4" > "v3" > "v2" > "v1"`. A
@@ -132,7 +163,16 @@
 - Harmonic notes inherit their parent F0's bend trajectory in cents
   (cents conservation): `1200 · log₂(n·f / n·f_nominal) =
   1200 · log₂(f / f_nominal)`. The CQT peak is used to validate harmonic
-  presence only and never drives the bend stream.
+  presence only and never drives the bend stream. The harmonic contour
+  reads the F0 cents keyed by the **original segment frame index**, not
+  the 0-based `ContourFrame.frame_index` row position (ADR-073). The
+  earlier key mismatch made harmonics of any event whose segment started
+  after leading silence/pad borrow F0 cents from a time-shifted frame
+  (or fall back to 0), producing an upper-harmonic "slope spike" ladder
+  while the F0 itself was fine. The fix lives in the shared
+  `_build_harmonic_notes`, so it corrects v3–v6 alike; on-disk parquet is
+  untouched, but re-running v3/v4/v5 now yields corrected harmonics (the
+  "byte-identical on re-run" property no longer holds for harmonic rows).
 - Piano Roll Notes v3 rows carry a deterministic `note_uid` (UUID v5 of
   `(job_id, event_id, partial_index, track_id, start_utc_rounded_ms)`)
   plus `f0_track_id` and `contour_frame_count`. The MIDI pitch range
