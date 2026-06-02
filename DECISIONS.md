@@ -1243,9 +1243,9 @@ removes the bad frames and interpolates across the gap.
    out-of-envelope frames) when `|Δlog₂f|` from the anchor is within
    `max_slope_oct_per_s · dt · (frames since anchor)`. If an excursion
    has not returned after `max_spike_frames`, re-anchor at that point
-   without bridging (level change, per #3). Edge excursions that never
-   return (a non-returning lead-in or tail) are left untouched rather
-   than flattened.
+   without bridging (level change, per #3). A non-returning lead-in is
+   left untouched; a short non-returning *tail* is trimmed (see the
+   trailing-trim amendment below).
 5. **`DespikeParams`**: `enabled = True`, `max_slope_oct_per_s = 6.0`
    (≈72 semitones/s), `max_spike_frames = 12` (~140 ms). `enabled = False`
    makes v6 byte-identical to v5.
@@ -1302,6 +1302,38 @@ and stay bridged) while no longer joining across genuine register jumps
 or signal drops. The leading-reseed and trailing-hold edge handlers
 (which flattened non-returning edge excursions) are removed for the same
 reason. Decisions #3 and #4 above reflect the amended algorithm.
+
+**Amendment 2 (2026-06-02) — trailing trim**:
+
+Manual review of events `2054e6de171b4a99a50914a1201a8d67` and
+`c82fa1fc451547d3b4f4528a3c5e1137` showed a downward slope drop at the
+very end of the call. In both, the body is healthy (~270 Hz / ~220 Hz,
+emission ~8–10), then the last 1–2 voiced frames plunge ~2 octaves to a
+sub-fundamental (~59–60 Hz) at low, fading energy (~5–6), after a short
+unvoiced gap. As the call's energy fades the tracker drops to a
+sub-fundamental / noise, and Amendment 1's "leave non-returning
+excursions" rule left that spurious tail in the contour (and the
+harmonics inherit it).
+
+Fix: a **trailing trim**. A non-returning excursion at the very end of a
+segment (no frames accepted after it) that is no longer than
+`max_trailing_trim_frames` (default 4) is dropped, so the note ends at
+the call. Guards keep it safe:
+
+- `anchor > 0`: the walk must have established a body anchor. If the
+  anchor never advanced past frame 0 (a *leading* spike makes the body
+  out-of-envelope of frame 0), trimming would delete the body — so leave
+  it untouched.
+- length cap: a *sustained* end-of-call level change is longer than the
+  cap (and is re-anchored by the `max_spike_frames` guard during the
+  walk, so the anchor reaches the final frame and nothing is trimmed).
+
+This trims only the short spurious tail; a real sustained ending and the
+cb23 mid-segment register jump are preserved. `despike_f0_segments` may
+now return a shorter segment; the F0 note and its harmonics end at the
+trimmed length. Regression:
+`tests/processing/test_note_extractor_v6.py::test_trailing_drop_regression_2054`
+and `::test_long_trailing_run_not_trimmed`.
 
 ## ADR-073: Piano Roll Notes — harmonic contour cents key alignment
 

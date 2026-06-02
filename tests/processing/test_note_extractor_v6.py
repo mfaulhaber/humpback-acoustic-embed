@@ -13,6 +13,8 @@ Two layers:
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from humpback.processing.note_extractor_v3 import STFTParams, _RefinedFrame
@@ -89,14 +91,37 @@ def test_sustained_legal_glide_is_unchanged() -> None:
     assert [f.log_frequency for f in out[0]] == glide
 
 
-def test_trailing_excursion_left_untouched() -> None:
-    # A trailing excursion that never returns to the trajectory is a
-    # level change, not an out-and-back spike: leave it untouched rather
-    # than flattening (joining) it back to the prior level.
-    result = _despike([6.0] * 8 + [7.0, 7.0])
-    assert result[8] == 7.0
-    assert result[9] == 7.0
-    assert all(abs(v - 6.0) < 1e-9 for v in result[:8])
+def test_trailing_excursion_is_trimmed() -> None:
+    # A short non-returning excursion at the very end of a segment is a
+    # spurious tail (energy fades, tracker drops), so it is trimmed: the
+    # note ends at the body rather than carrying the drop.
+    result = _despike([6.0] * 8 + [4.0, 4.0])
+    assert len(result) == 8
+    assert all(abs(v - 6.0) < 1e-9 for v in result)
+
+
+def test_trailing_drop_regression_2054() -> None:
+    # Mirrors events 2054e6de / c82fa1fc: a healthy body then a 2-frame
+    # plunge ~2 octaves to a sub-fundamental at the end. The tail is
+    # trimmed so the note no longer has the end slope-drop.
+    body = [math.log2(270.0)] * 18
+    tail = [math.log2(60.0), math.log2(59.0)]  # ~2 octaves down
+    out = despike_f0_segments(
+        [_mk(body + tail)], dt=_DT, params=DespikeParams(enabled=True)
+    )[0]
+    assert len(out) == 18
+    assert all(abs(f.log_frequency - math.log2(270.0)) < 1e-9 for f in out)
+
+
+def test_long_trailing_run_not_trimmed() -> None:
+    # A non-returning trailing run longer than max_trailing_trim_frames is
+    # treated as a (kept) level change, not an artifact tail.
+    result = _despike(
+        [6.0] * 8 + [4.0] * 6,  # 6-frame tail > default cap of 4
+        max_spike_frames=12,
+    )
+    assert len(result) == 14  # nothing trimmed
+    assert all(abs(v - 4.0) < 1e-9 for v in result[8:])
 
 
 def test_leading_excursion_left_untouched() -> None:

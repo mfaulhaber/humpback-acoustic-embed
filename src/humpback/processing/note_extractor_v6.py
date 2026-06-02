@@ -24,6 +24,11 @@ real-data finding on event ``cb23dfcd…`` where the original
 into a garbage ramp — ADR-072.) Bridged frames keep their timing,
 ``frame_index``, ``strength``, and ``subharmonic_octave``; only their
 log-frequency is rewritten, so the note stays one continuous contour.
+One exception to "leave non-returning excursions": a short non-returning
+excursion at the very *end* of a segment (no frames accepted after it) is
+a spurious tail — as a call's energy fades the tracker drops to a
+sub-fundamental — so up to ``max_trailing_trim_frames`` such frames are
+trimmed and the note ends at the call (ADR-072 trailing-trim amendment).
 
 See ``docs/specs/2026-05-29-piano-roll-notes-v6-f0-despike-design.md`` for
 the algorithm specification and ADR-072 for the design rationale.
@@ -94,12 +99,19 @@ class DespikeParams:
     spike width: an excursion that returns to the anchor's slope envelope
     within this many frames is bridged, while one that does not return is
     treated as a genuine level change and left untouched (the walk
-    re-anchors past it without bridging).
+    re-anchors past it without bridging). ``max_trailing_trim_frames`` is
+    the maximum length of a non-returning *trailing* excursion to trim: at
+    the end of a call the tracker often drops to a sub-fundamental as energy
+    fades, leaving a short spurious low-frequency tail; a trailing excursion
+    no longer than this is dropped so the note ends at the call. A sustained
+    end-of-call level change is longer than the cap (and re-anchored by the
+    ``max_spike_frames`` guard), so it is preserved.
     """
 
     enabled: bool = True
     max_slope_oct_per_s: float = 6.0
     max_spike_frames: int = 12
+    max_trailing_trim_frames: int = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,9 +254,10 @@ def despike_f0_segments(
 ) -> list[list[_RefinedFrame]]:
     """Apply the slew-rate de-spike to every decoded F0 segment.
 
-    Returns segments with the same length and frame timing; only the
-    ``log_frequency`` of excised frames is rewritten. A no-op when
-    ``params.enabled`` is ``False`` or ``dt`` is non-positive.
+    Bridged frames keep their timing; a short non-returning trailing
+    excursion may be trimmed from the end of a segment (so the returned
+    segment can be shorter than the input). A no-op when ``params.enabled``
+    is ``False`` or ``dt`` is non-positive.
     """
     if not params.enabled or dt <= 0.0:
         return segments
@@ -285,7 +298,25 @@ def _despike_segment(
             anchor = i
         i += 1
 
-    if np.array_equal(new_lf, lf):
+    # Trailing trim: frames past the last accepted anchor are a short,
+    # non-returning trailing excursion -- a steep tail the contour never
+    # came back from and that the max_spike_frames guard never re-anchored.
+    # These are spurious end-of-call pickups: as the call energy fades the
+    # tracker drops to a sub-fundamental / noise (e.g. ~60 Hz, two octaves
+    # below the body). Drop them so the note ends at the call. Guards:
+    #   * anchor > 0 -- the walk established a body anchor. If anchor == 0
+    #     the body itself is out-of-envelope of frame 0 (a leading spike),
+    #     and trimming would delete the body; leave it untouched instead.
+    #   * tail <= max_trailing_trim_frames -- only a short tail is an
+    #     artifact. A *sustained* end-of-call level change is preserved:
+    #     the guard re-anchors it during the walk (anchor reaches the final
+    #     frame), and a long non-returning tail exceeds the cap.
+    keep = n
+    tail = (n - 1) - anchor
+    if anchor > 0 and 0 < tail <= int(params.max_trailing_trim_frames):
+        keep = anchor + 1
+
+    if keep == n and np.array_equal(new_lf, lf):
         return frames
     return [
         _RefinedFrame(
@@ -295,7 +326,7 @@ def _despike_segment(
             strength=frame.strength,
             subharmonic_octave=frame.subharmonic_octave,
         )
-        for idx, frame in enumerate(frames)
+        for idx, frame in enumerate(frames[:keep])
     ]
 
 

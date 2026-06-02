@@ -308,6 +308,7 @@ class _ResolvedParams:
                 "enabled": self.despike.enabled,
                 "max_slope_oct_per_s": self.despike.max_slope_oct_per_s,
                 "max_spike_frames": self.despike.max_spike_frames,
+                "max_trailing_trim_frames": self.despike.max_trailing_trim_frames,
             },
         }
 
@@ -628,6 +629,9 @@ def _resolve_params(params_json: str, extractor_version: str = "") -> _ResolvedP
             enabled=bool(despike_raw.get("enabled", True)),
             max_slope_oct_per_s=float(despike_raw.get("max_slope_oct_per_s", 6.0)),
             max_spike_frames=int(despike_raw.get("max_spike_frames", 12)),
+            max_trailing_trim_frames=int(
+                despike_raw.get("max_trailing_trim_frames", 4)
+            ),
         ),
     )
 

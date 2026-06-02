@@ -122,8 +122,13 @@ full. Read the relevant domain section when planning or implementing.
   within `max_spike_frames` is a genuine level change (register jump /
   signal drop) and is left untouched, not joined (return-to-baseline
   guard added after the `cb23dfcd…` over-bridging finding — ADR-072
-  amendment). `DespikeParams`: `max_slope_oct_per_s = 6.0`,
-  `max_spike_frames = 12`, `enabled = True`; `enabled = False` is
+  amendment). A short non-returning excursion at the very *end* of a
+  segment is the exception: it is trimmed (≤ `max_trailing_trim_frames`)
+  so an energy-fade tail that drops to a sub-fundamental does not show as
+  an end slope-drop (ADR-072 Amendment 2, events `2054e6de…`/`c82fa1fc…`).
+  `DespikeParams`: `max_slope_oct_per_s = 6.0`,
+  `max_spike_frames = 12`, `max_trailing_trim_frames = 4`,
+  `enabled = True`; `enabled = False` is
   byte-identical to v5. v6 emits
   `event_notes_v6.parquet` / `event_note_contours_v6.parquet` (schemas
   identical to v3–v5; `subharmonic_octave` reserved / written as 0) and

@@ -110,9 +110,16 @@
   `max_spike_frames` is a genuine level change (register jump, or a
   signal drop that resumes at a different pitch) — the walk re-anchors
   past it WITHOUT bridging and the real contour is left intact (added
-  after the `cb23dfcd…` over-bridging finding, ADR-072 amendment).
+  after the `cb23dfcd…` over-bridging finding, ADR-072 amendment). The
+  one exception is a short non-returning excursion at the very end of a
+  segment (≤ `max_trailing_trim_frames`): as a call's energy fades the
+  tracker drops to a sub-fundamental, so that spurious tail is trimmed
+  and the note (and its harmonics) end at the call (ADR-072 Amendment 2,
+  events `2054e6de…` / `c82fa1fc…`); a leading non-returning excursion
+  and a sustained end-of-call level change are still kept.
   `DespikeParams` defaults:
-  `enabled = True`, `max_slope_oct_per_s = 6.0`, `max_spike_frames = 12`;
+  `enabled = True`, `max_slope_oct_per_s = 6.0`, `max_spike_frames = 12`,
+  `max_trailing_trim_frames = 4`;
   `enabled = False` makes v6 byte-identical to v5. Harmonic ribbons are
   corrected for free because harmonic presence is searched at
   `n · (cleaned f0)` and bends reuse the cleaned F0 cents. v6 inherits

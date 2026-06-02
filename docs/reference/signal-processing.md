@@ -209,11 +209,15 @@ log-frequency is rewritten, so the note stays one continuous contour. **Only
 out-and-back excursions are bridged (return-to-baseline):** if an excursion
 never returns within `max_spike_frames`, it is a genuine level change (a
 register jump, or a signal drop that resumes at a different pitch), so the walk
-re-anchors past it WITHOUT bridging and the real contour is left intact —
-including non-returning excursions at the segment edges. (This guard was added
-after event `cb23dfcd…` showed a pure "steep-is-always-an-error" rule
-over-bridging a real 60→530 Hz register jump into a garbage ramp — ADR-072
-amendment.)
+re-anchors past it WITHOUT bridging and the real contour is left intact. (This
+guard was added after event `cb23dfcd…` showed a pure "steep-is-always-an-error"
+rule over-bridging a real 60→530 Hz register jump into a garbage ramp — ADR-072
+amendment.) **Trailing trim:** the one exception is a short non-returning
+excursion at the very *end* of a segment (≤ `max_trailing_trim_frames`) — as a
+call's energy fades the tracker drops to a sub-fundamental, so that spurious
+low-frequency tail is trimmed and the note ends at the call (ADR-072 Amendment 2,
+events `2054e6de…` / `c82fa1fc…`). A non-returning *lead-in* and a *sustained*
+end-of-call level change are kept.
 
 **Harmonic correction is free:** harmonic presence is searched at `n · (cleaned
 f0)` and harmonic bends reuse the cleaned F0 cents (cents conservation), so the
@@ -226,6 +230,7 @@ harmonic ribbons inherit the de-spiked contour with no separate pass.
 | `enabled` | `True` | `False` makes v6 byte-identical to v5 |
 | `max_slope_oct_per_s` | 6.0 | Slope threshold (~72 semitones/s); ~4× above any real glide |
 | `max_spike_frames` | 12 | Excursion-width guard (~140 ms) |
+| `max_trailing_trim_frames` | 4 | Max length of a trimmed non-returning trailing excursion (~46 ms) |
 
 **Outputs:** `NotesV3Result`; the worker writes `event_notes_v6.parquet` and
 `event_note_contours_v6.parquet` (schemas identical to v3–v5). v6 inherits v5's

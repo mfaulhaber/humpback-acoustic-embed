@@ -86,12 +86,19 @@ Walk left → right holding a trusted `anchor` index (starts at 0):
    max_spike_frames` **without** bridging the intervening frames, so the
    real contour is preserved. This is the key difference from a pure
    slope filter: only excursions that *return* (step 4) are erased.
-6. **Edges.** A non-returning excursion at the start or end of the segment
-   has no confirming return, so it is left untouched (not flattened).
+6. **Edges.** A non-returning *lead-in* (the anchor never advanced past
+   frame 0) is left untouched — trimming there would delete the body.
+   A short non-returning *tail* (≤ `max_trailing_trim_frames`) is
+   **trimmed**: at the end of a call the tracker drops to a
+   sub-fundamental as energy fades, leaving a spurious low-frequency tail,
+   so the note is ended at the body instead (ADR-072 Amendment 2). A
+   *sustained* end-of-call level change is longer than the cap and is
+   re-anchored by the `max_spike_frames` guard, so it is preserved.
 
 The pass returns a new `list[_RefinedFrame]` (the dataclass is frozen);
 `strength` and `subharmonic_octave` (always 0 in v5/v6) are carried
-through unchanged.
+through unchanged, except a trimmed trailing tail drops those frames so
+the returned segment can be shorter than the input.
 
 ### 4.1 Harmonic inheritance
 
@@ -110,6 +117,7 @@ New `DespikeParams` dataclass on the v6 extractor params:
 | `enabled` | `True` | Master switch; `False` makes v6 byte-identical to v5. |
 | `max_slope_oct_per_s` | `6.0` | Slope threshold (≈ 72 semitones/s). Sits ~4× above the reference glide and ~4× below the reference spike. First knob to tune on the test-bed. |
 | `max_spike_frames` | `12` | Excursion-width guard (~140 ms; the reference spike is ~9 frames). |
+| `max_trailing_trim_frames` | `4` | Max length of a non-returning trailing excursion to trim (~46 ms; the reference end-drops are 1–2 frames). Longer non-returning tails are kept as level changes (ADR-072 Amendment 2). |
 
 ## 6. Packaging
 
