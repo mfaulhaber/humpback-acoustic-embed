@@ -15,13 +15,13 @@
 - Modify: `src/humpback/processing/note_extractor_v6.py` only if a small shared helper export is needed
 
 **Acceptance criteria:**
-- [ ] `extract_notes_v7` mirrors v6's decode and de-spike path before adding v7-only post-decode passes.
-- [ ] Residual discontinuity splitting cuts adjacent retained F0 frames whose actual slope exceeds `max_continuous_slope_oct_per_s`, and drops post-split fragments shorter than `segmentation.min_note_frames`.
-- [ ] Ridge rescue only rewrites flat decoded F0 fragments when the overlapping ridge has sufficient movement, sufficient frame coverage, and a stable harmonic ratio.
-- [ ] Rewritten ridge-rescue frames preserve original timing, frame indexes, strength, and `subharmonic_octave = 0`.
-- [ ] v7 returns the existing `NotesV3Result` shape and writes data compatible with the v3-v6 note and contour parquet schemas.
-- [ ] v7 reuses `_build_f0_note` and `_build_harmonic_notes` so harmonic bends continue to inherit F0 cents by conservation.
-- [ ] Disabled v7 sub-passes reduce to v6 behavior for the same input and params.
+- [x] `extract_notes_v7` mirrors v6's decode and de-spike path before adding v7-only post-decode passes.
+- [x] Residual discontinuity splitting cuts adjacent retained F0 frames whose actual slope exceeds `max_continuous_slope_oct_per_s`, and drops post-split fragments shorter than `segmentation.min_note_frames`.
+- [x] Ridge rescue only rewrites flat decoded F0 fragments when the overlapping ridge has sufficient movement, sufficient frame coverage, and a stable harmonic ratio.
+- [x] Rewritten ridge-rescue frames preserve original timing, frame indexes, strength, and `subharmonic_octave = 0`.
+- [x] v7 returns the existing `NotesV3Result` shape and writes data compatible with the v3-v6 note and contour parquet schemas.
+- [x] v7 reuses `_build_f0_note` and `_build_harmonic_notes` so harmonic bends continue to inherit F0 cents by conservation.
+- [x] Disabled v7 sub-passes reduce to v6 behavior for the same input and params.
 
 **Tests needed:**
 - Pure helper coverage for residual branch-jump splitting, smooth legal glide preservation, short-fragment dropping, ridge-rescue acceptance, ridge-rescue rejection for non-flat decoded contours, ridge-rescue rejection for unstable ridge/F0 ratios, and disabled-pass parity against v6.
@@ -40,13 +40,13 @@
 - Modify: `tests/integration/test_sequence_models_api.py`
 
 **Acceptance criteria:**
-- [ ] `DEFAULT_EXTRACTOR_VERSION` is bumped from `"v6"` to `"v7"`.
-- [ ] Worker dispatch recognizes `"v7"` and writes `event_notes_v7.parquet` plus `event_note_contours_v7.parquet`.
-- [ ] v7 remains in the ridge-aware worker path and receives the Event Encoder ridge sidecar when present.
-- [ ] `_resolve_params(..., "v7")` parses `discontinuity` and `ridge_rescue` sections while inheriting v6's v5-style defaults: 30 Hz STFT floor, `min_break_frames = 6`, and `pad_seconds = 0.25`.
-- [ ] `to_json_dict` persists v7 parameter sections in `params_json`.
-- [ ] Existing service/API expectations that name the latest default version now expect v7.
-- [ ] MIDI export version resolution continues to rely on existing lexicographic latest-complete behavior and needs no synthesizer contract change.
+- [x] `DEFAULT_EXTRACTOR_VERSION` is bumped from `"v6"` to `"v7"`.
+- [x] Worker dispatch recognizes `"v7"` and writes `event_notes_v7.parquet` plus `event_note_contours_v7.parquet`.
+- [x] v7 remains in the ridge-aware worker path and receives the Event Encoder ridge sidecar when present.
+- [x] `_resolve_params(..., "v7")` parses `discontinuity` and `ridge_rescue` sections while inheriting v6's v5-style defaults: 30 Hz STFT floor, `min_break_frames = 6`, and `pad_seconds = 0.25`.
+- [x] `to_json_dict` persists v7 parameter sections in `params_json`.
+- [x] Existing service/API expectations that name the latest default version now expect v7.
+- [x] MIDI export version resolution continues to rely on existing lexicographic latest-complete behavior and needs no synthesizer contract change.
 
 **Tests needed:**
 - Worker unit coverage for v7 dispatch, parameter parsing, default inheritance, sidecar path status, and parquet path/version naming.
@@ -61,9 +61,9 @@
 - Modify: `tests/tools/test_piano_roll_notes_debug.py`
 
 **Acceptance criteria:**
-- [ ] The debug registry exposes a `"v7"` variant that calls `extract_notes_v7`.
-- [ ] The debug CLI can render v5/v6/v7 comparisons for an Event Encoder event without special-case changes.
-- [ ] Registry tests assert `"v7"` is available.
+- [x] The debug registry exposes a `"v7"` variant that calls `extract_notes_v7`.
+- [x] The debug CLI can render v5/v6/v7 comparisons for an Event Encoder event without special-case changes.
+- [x] Registry tests assert `"v7"` is available.
 
 **Tests needed:**
 - Focused registry/debug test coverage matching the existing v5/v6 test style.
@@ -81,11 +81,11 @@
 - Modify: `docs/reference/storage-layout.md`
 
 **Acceptance criteria:**
-- [ ] Add an ADR for Piano Roll Notes v7 that records residual discontinuity splitting, ridge-guided flat-segment rescue, defaults, sidecar compatibility, and no frontend/MIDI schema change.
-- [ ] Current-state and sequence-models domain context name v7 as the default extractor.
-- [ ] Sequence Models invariants document v7's split and rescue behavior and preserve v3-v7 schema compatibility.
-- [ ] Signal-processing reference documents v7's pipeline and parameter defaults.
-- [ ] Storage-layout reference lists `event_notes_v7.parquet` and `event_note_contours_v7.parquet`.
+- [x] Add an ADR for Piano Roll Notes v7 that records residual discontinuity splitting, ridge-guided flat-segment rescue, defaults, sidecar compatibility, and no frontend/MIDI schema change.
+- [x] Current-state and sequence-models domain context name v7 as the default extractor.
+- [x] Sequence Models invariants document v7's split and rescue behavior and preserve v3-v7 schema compatibility.
+- [x] Signal-processing reference documents v7's pipeline and parameter defaults.
+- [x] Storage-layout reference lists `event_notes_v7.parquet` and `event_note_contours_v7.parquet`.
 
 **Tests needed:**
 - No dedicated doc tests unless an existing reference assertion covers version strings; otherwise rely on review plus standard verification.
@@ -98,12 +98,12 @@
 - No source files expected; generated visual outputs should stay under `.tmp/` and must not be committed.
 
 **Acceptance criteria:**
-- [ ] `5a50b01f7a014ceaaf5ca52e81e6ad42` no longer has one continuous bend between low and high branches.
-- [ ] `dad6357550ba4a9cadcf05e103f923ee` branch changes become note boundaries rather than violent pitch bends.
-- [ ] `0d698411766142ee908fa6a4c2ac81ec` no longer bends from the offscreen low branch into the visible harmonic stack.
-- [ ] `e3e8e9c4b5c0403a91ef3f50e965fdf0` remains a smooth continuous pitch change.
-- [ ] `f470e42f95974358885c9392dffd83ee` gains an upsweep contour from ridge rescue instead of staying flat.
-- [ ] Generated debug renders are reviewed manually and left untracked.
+- [x] `5a50b01f7a014ceaaf5ca52e81e6ad42` no longer has one continuous bend between low and high branches.
+- [x] `dad6357550ba4a9cadcf05e103f923ee` branch changes become note boundaries rather than violent pitch bends.
+- [x] `0d698411766142ee908fa6a4c2ac81ec` no longer bends from the offscreen low branch into the visible harmonic stack.
+- [x] `e3e8e9c4b5c0403a91ef3f50e965fdf0` remains a smooth continuous pitch change.
+- [x] `f470e42f95974358885c9392dffd83ee` gains an upsweep contour from ridge rescue instead of staying flat.
+- [x] Generated debug renders are reviewed manually and left untracked.
 
 **Tests needed:**
 - Run the debug CLI against the listed events with v6 and v7 variants and inspect the PNGs.

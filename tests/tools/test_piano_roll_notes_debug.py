@@ -193,7 +193,7 @@ def _patch_for_cli(monkeypatch, buffer: np.ndarray, settings) -> None:
 
 
 def test_registry_has_expected_phase1_keys() -> None:
-    assert set(EXTRACTORS) == {"v3", "v4", "v5", "v6"}
+    assert set(EXTRACTORS) == {"v3", "v4", "v5", "v6", "v7"}
     assert all(callable(fn) for fn in EXTRACTORS.values())
 
 

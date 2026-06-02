@@ -178,8 +178,8 @@ byte-identical to pre-v5 outputs at their respective defaults.
 
 ## Piano Roll Notes — Slope De-spike v6
 
-`note_extractor_v6` is the current default Piano Roll Notes extractor (ADR-072,
-`extractor_version = "v6"`). It is v5's decode plus a slope-based F0 contour
+`note_extractor_v6` is the predecessor to the current default Piano Roll Notes
+extractor (ADR-072, `extractor_version = "v6"`). It is v5's decode plus a slope-based F0 contour
 de-spike pass applied to each decoded F0 segment *before* note building. v5's
 Viterbi contour is usually smooth, but a strong-enough wrong-octave /
 wrong-harmonic emission over a short run of frames can still leave a surviving
@@ -238,3 +238,54 @@ worker defaults (30 Hz STFT floor, `segmentation.min_break_frames = 6`,
 `pad_seconds = 0.25`). v3–v5 sidecars remain reachable by explicit
 `extractor_version` pinning; there is no auto-backfill of v6.
 
+## Piano Roll Notes — Residual Discontinuity v7
+
+`note_extractor_v7` is the current default Piano Roll Notes extractor (ADR-074,
+`extractor_version = "v7"`). It keeps v6's harmonic-Viterbi decode and
+return-to-baseline de-spike, then adds two post-decode passes before the shared
+F0/harmonic note builders run.
+
+**Pipeline:**
+
+```
+v5 decode (CQT -> emission -> voicing -> Viterbi -> contour segmentation)
+  -> v6 despike_f0_segments (out-and-back bridge + trailing trim)
+  -> ridge-guided flat-segment rescue
+  -> residual discontinuity splitting
+  -> harmonic-sibling note synthesis (n·final f0)
+  -> NotesV3Result
+```
+
+**Residual discontinuity split:** adjacent retained F0 frames whose actual slope
+exceeds `max_continuous_slope_oct_per_s` become note boundaries. This is the
+complement to v6's non-returning-excursion guard: v6 preserves a branch jump
+rather than incorrectly bridging it, and v7 prevents that preserved jump from
+being rendered as one continuous MPE pitch bend. Fragments shorter than
+`segmentation.min_note_frames` are dropped.
+
+**Ridge-guided flat-segment rescue:** v7 can use the persisted Event Encoder
+STFT ridge sidecar when the decoded F0 segment is nearly flat but the aligned
+ridge carries a smooth pitch sweep. The ridge must overlap enough frames, move
+enough in log-frequency, and be smooth after a linear trend fit. The rescued F0
+is the ridge divided by a median carrier harmonic, preserving the original
+decoded segment timing, frame indexes, strength, and `subharmonic_octave = 0`.
+
+**v7 parameter defaults:**
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `discontinuity.enabled` | `True` | `False` disables residual branch-jump splitting |
+| `discontinuity.max_continuous_slope_oct_per_s` | 6.0 | Same slope budget as v6 de-spike |
+| `ridge_rescue.enabled` | `True` | `False` disables ridge-guided flat-segment rescue |
+| `ridge_rescue.max_decoded_span_semitones` | 2.0 | Segment must be nearly flat |
+| `ridge_rescue.min_ridge_span_semitones` | 5.0 | Ridge must show a meaningful bend |
+| `ridge_rescue.min_overlap_frames` | 8 | Minimum aligned ridge/F0 coverage |
+| `ridge_rescue.max_ratio_mad_semitones` | 2.0 | Smoothness threshold after ridge trend fit |
+| `ridge_rescue.min_carrier_harmonic` | 1 | Lowest accepted ridge carrier harmonic |
+| `ridge_rescue.max_carrier_harmonic` | 32 | Highest accepted ridge carrier harmonic |
+
+**Outputs:** `NotesV3Result`; the worker writes `event_notes_v7.parquet` and
+`event_note_contours_v7.parquet` (schemas identical to v3–v6). v7 inherits v5/v6
+worker defaults (30 Hz STFT floor, `segmentation.min_break_frames = 6`,
+`pad_seconds = 0.25`). v3–v6 sidecars remain reachable by explicit
+`extractor_version` pinning; there is no auto-backfill of v7.

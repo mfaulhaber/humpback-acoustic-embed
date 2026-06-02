@@ -56,7 +56,7 @@
   outputs. A complete Event Encoder job auto-enqueues a Piano Roll Notes job at
   the current default `extractor_version`; the auto-enqueue hook swallows
   conflicts so an in-flight or completed sidecar never blocks the encoder
-  completion. `DEFAULT_EXTRACTOR_VERSION = "v6"` (ADR-072). Legacy
+  completion. `DEFAULT_EXTRACTOR_VERSION = "v7"` (ADR-074). Legacy
   `v1`, `v2`, `v3`, `v4`, and `v5` rows remain queryable through the existing
   API and pinned exports.
 - Piano Roll Notes v4 (ADR-070) drops the STFT ridge band floor from
@@ -128,14 +128,30 @@
   `event_note_contours_v6.parquet` (schemas identical to v3–v5;
   `subharmonic_octave` reserved / written as 0). No auto-backfill of v6
   for completed v5 jobs.
+- Piano Roll Notes v7 (ADR-074) is v6's decode/de-spike plus two
+  post-decode passes before note building. Residual discontinuity splitting
+  cuts adjacent retained F0 frames whose actual slope exceeds
+  `max_continuous_slope_oct_per_s` (default 6.0 octaves/s), dropping
+  fragments shorter than `segmentation.min_note_frames`; this turns
+  surviving non-returning branch jumps into note boundaries rather than
+  continuous MPE pitch bends. Ridge rescue rewrites flat decoded F0
+  segments (`max_decoded_span_semitones = 2.0`) from the persisted Event
+  Encoder STFT ridge when the overlap has at least `min_overlap_frames = 8`,
+  the ridge span is at least 5 semitones, and the ridge is smooth after a
+  linear trend fit (`max_ratio_mad_semitones = 2.0`). Rewritten frames
+  preserve original timing, `frame_index`, strength, and
+  `subharmonic_octave = 0`; harmonic siblings inherit the final F0 cents
+  through the shared note builders. v7 inherits v5/v6 worker defaults
+  (30 Hz STFT floor, `min_break_frames = 6`, `pad_seconds = 0.25`) and
+  emits `event_notes_v7.parquet` / `event_note_contours_v7.parquet` with
+  schemas identical to v3–v6.
 - The MIDI export resolver picks the highest `complete` notes-job
   version by lexicographic ordering on `extractor_version`
-  (`desc(extractor_version)`), so `"v4" > "v3" > "v2" > "v1"`. A
-  complete v4 row wins automatically when present; explicit version
+  (`desc(extractor_version)`), so `"v7" > "v6" > "v5" > "v4" > "v3" >
+  "v2" > "v1"`. A complete v7 row wins automatically when present; explicit version
   pinning via the `extractor_version=` argument still selects an older
   row. The MPE Lower Zone synthesizer detects MPE by the presence of
-  the `note_uid` column (unchanged in v4), so v4 sidecars route to the
-  MPE path identically to v3.
+  the `note_uid` column, so v3-v7 sidecars route to the MPE path.
 - Piano Roll Notes v3 uses the shared STFT ridge tracker
   (`humpback.processing.ridge_path.compute_ridge_path()`) as the canonical
   F0 source. The Event Encoder worker persists per-event ridge contours to
